@@ -1,0 +1,9 @@
+.vscode/
+__pycache__/
+*.pyc
+*.blend1
+node_modules/
+dist/
+.env
+.env.local
+

@@ -1,0 +1,1390 @@
+{
+  "generator": "export_glb.py (Blender SSoT Pipeline)",
+  "blender_version": "5.2.3 LTS",
+  "scene_name": "Scene",
+  "unit_system": "METRIC",
+  "ha_entities": {
+    "switch.switch_casa_interruttore_1": {
+      "entity_id": "switch.switch_casa_interruttore_1",
+      "domain": "switch",
+      "name": "Cancello Carraio",
+      "action": "toggle",
+      "ui_type": "sliding_gate",
+      "objects": [
+        {
+          "object_name": "Gate_Leaf_L",
+          "type": "MESH",
+          "centroid": [
+            -7.175,
+            -0.2,
+            0.8
+          ],
+          "dimensions": [
+            1.15,
+            0.04,
+            1.3
+          ]
+        },
+        {
+          "object_name": "Gate_Leaf_R",
+          "type": "MESH",
+          "centroid": [
+            -6.025,
+            -0.2,
+            0.8
+          ],
+          "dimensions": [
+            1.15,
+            0.04,
+            1.3
+          ]
+        }
+      ],
+      "centroid_blender": [
+        -7.175,
+        -0.2,
+        0.8
+      ],
+      "centroid_gltf": [
+        -7.175,
+        0.8,
+        0.2
+      ]
+    },
+    "light.bancone": {
+      "entity_id": "light.bancone",
+      "domain": "light",
+      "name": "Luce Bancone Ovest (HA: Bancone)",
+      "action": "toggle",
+      "ui_type": "light_emissive",
+      "objects": [
+        {
+          "object_name": "Isola_Lampada_Cono_1",
+          "type": "MESH",
+          "centroid": [
+            7.65,
+            -5.58,
+            2.2
+          ],
+          "dimensions": [
+            0.28,
+            0.28,
+            0.18
+          ]
+        },
+        {
+          "object_name": "Isola_Lampada_Cono_2",
+          "type": "MESH",
+          "centroid": [
+            8.25,
+            -5.58,
+            2.2
+          ],
+          "dimensions": [
+            0.28,
+            0.28,
+            0.18
+          ]
+        }
+      ],
+      "centroid_blender": [
+        7.65,
+        -5.58,
+        2.2
+      ],
+      "centroid_gltf": [
+        7.65,
+        2.2,
+        5.58
+      ]
+    },
+    "light.forno": {
+      "entity_id": "light.forno",
+      "domain": "light",
+      "name": "Lampadario Tavolo (HA: Forno)",
+      "action": "toggle",
+      "ui_type": "light_emissive",
+      "objects": [
+        {
+          "object_name": "Lampadario_Coppa_1",
+          "type": "MESH",
+          "centroid": [
+            11.3,
+            -5.4,
+            2.1
+          ],
+          "dimensions": [
+            0.18,
+            0.18,
+            0.1
+          ]
+        },
+        {
+          "object_name": "Lampadario_Coppa_2",
+          "type": "MESH",
+          "centroid": [
+            11.8,
+            -5.4,
+            2.1
+          ],
+          "dimensions": [
+            0.18,
+            0.18,
+            0.1
+          ]
+        },
+        {
+          "object_name": "Lampadario_Coppa_3",
+          "type": "MESH",
+          "centroid": [
+            11.55,
+            -5.65,
+            2.1
+          ],
+          "dimensions": [
+            0.18,
+            0.18,
+            0.1
+          ]
+        },
+        {
+          "object_name": "Lampadario_Coppa_4",
+          "type": "MESH",
+          "centroid": [
+            11.55,
+            -5.15,
+            2.1
+          ],
+          "dimensions": [
+            0.18,
+            0.18,
+            0.1
+          ]
+        },
+        {
+          "object_name": "Lampadario_Pranzo_Asta",
+          "type": "MESH",
+          "centroid": [
+            11.55,
+            -5.4,
+            2.6
+          ],
+          "dimensions": [
+            0.02,
+            0.02,
+            0.8
+          ]
+        }
+      ],
+      "centroid_blender": [
+        11.3,
+        -5.4,
+        2.1
+      ],
+      "centroid_gltf": [
+        11.3,
+        2.1,
+        5.4
+      ]
+    },
+    "light.portico": {
+      "entity_id": "light.portico",
+      "domain": "light",
+      "name": "Luce Portico",
+      "action": "toggle",
+      "ui_type": "light_emissive",
+      "objects": [
+        {
+          "object_name": "Pillar_Portico_1",
+          "type": "MESH",
+          "centroid": [
+            5.4,
+            -12.58,
+            1.35
+          ],
+          "dimensions": [
+            0.3,
+            0.3,
+            2.7
+          ]
+        }
+      ],
+      "centroid_blender": [
+        5.4,
+        -12.58,
+        1.35
+      ],
+      "centroid_gltf": [
+        5.4,
+        1.35,
+        12.58
+      ]
+    },
+    "media_player.smart_tv_lg_oled_2": {
+      "entity_id": "media_player.smart_tv_lg_oled_2",
+      "domain": "media_player",
+      "name": "Smart TV Frame",
+      "action": "modal",
+      "ui_type": "tv_frame",
+      "objects": [
+        {
+          "object_name": "TV_Salotto_Bezel",
+          "type": "MESH",
+          "centroid": [
+            0.325,
+            -4.0,
+            1.25
+          ],
+          "dimensions": [
+            0.01,
+            1.44,
+            0.84
+          ]
+        },
+        {
+          "object_name": "TV_Salotto_Screen",
+          "type": "MESH",
+          "centroid": [
+            0.345,
+            -4.0,
+            1.25
+          ],
+          "dimensions": [
+            0.03,
+            1.4,
+            0.8
+          ]
+        }
+      ],
+      "centroid_blender": [
+        0.325,
+        -4.0,
+        1.25
+      ],
+      "centroid_gltf": [
+        0.325,
+        1.25,
+        4.0
+      ]
+    }
+  },
+  "cameras": {
+    "Cam_Carraio": {
+      "name": "Cam_Carraio",
+      "ha_camera_entity": "camera.carraio_scorrevole",
+      "ha_label": "Telecamera Carraio (Cancelli)",
+      "coverage_zone": "outdoor_gates_street",
+      "is_real_security_camera": true,
+      "lens_mm": 24.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 58.72,
+      "fov_h_deg": 73.74,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 250.0,
+      "blender_transform": {
+        "position": [
+          -5.3,
+          -0.2,
+          2.1
+        ],
+        "quaternion": [
+          0.62932,
+          0.0,
+          0.0,
+          0.77715
+        ],
+        "rotation_euler_deg": [
+          78.0,
+          -0.0,
+          0.0
+        ],
+        "matrix_world": [
+          1.0,
+          0.0,
+          0.0,
+          -5.3,
+          0.0,
+          0.207912,
+          -0.978148,
+          -0.2,
+          0.0,
+          0.978148,
+          0.207912,
+          2.1,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          -5.3,
+          2.1,
+          0.2
+        ]
+      }
+    },
+    "Cam_Cooktop_Hood_Detail": {
+      "name": "Cam_Cooktop_Hood_Detail",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Cooktop_Hood_Detail",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 26.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 54.88,
+      "fov_h_deg": 69.39,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          8.2,
+          -6.0,
+          1.45
+        ],
+        "quaternion": [
+          0.26548,
+          0.6242,
+          0.67616,
+          0.28758
+        ],
+        "rotation_euler_deg": [
+          85.42,
+          -0.0,
+          133.92
+        ],
+        "matrix_world": [
+          -0.693642,
+          -0.057468,
+          0.718024,
+          8.2,
+          0.72032,
+          -0.055339,
+          0.691431,
+          -6.0,
+          0.0,
+          0.996812,
+          0.079781,
+          1.45,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          8.2,
+          1.45,
+          6.0
+        ]
+      }
+    },
+    "Cam_Furn_Axon_House": {
+      "name": "Cam_Furn_Axon_House",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Furn_Axon_House",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 38.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 39.12,
+      "fov_h_deg": 50.69,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          16.0,
+          -14.0,
+          11.5
+        ],
+        "quaternion": [
+          0.39223,
+          0.15629,
+          0.33555,
+          0.8421
+        ],
+        "rotation_euler_deg": [
+          49.95,
+          0.0,
+          43.45
+        ],
+        "matrix_world": [
+          0.725953,
+          -0.44253,
+          0.52646,
+          16.0,
+          0.687745,
+          0.467115,
+          -0.555708,
+          -14.0,
+          -0.0,
+          0.765487,
+          0.643451,
+          11.5,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          16.0,
+          11.5,
+          14.0
+        ]
+      }
+    },
+    "Cam_Furn_Dining": {
+      "name": "Cam_Furn_Dining",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Furn_Dining",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 24.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 58.72,
+      "fov_h_deg": 73.74,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          9.6,
+          -7.2,
+          1.9
+        ],
+        "quaternion": [
+          0.53957,
+          -0.24695,
+          -0.33497,
+          0.7319
+        ],
+        "rotation_euler_deg": [
+          72.8,
+          0.0,
+          -49.18
+        ],
+        "matrix_world": [
+          0.65362,
+          0.223837,
+          -0.722965,
+          9.6,
+          -0.756823,
+          0.193314,
+          -0.624379,
+          -7.2,
+          -0.0,
+          0.955263,
+          0.295758,
+          1.9,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          9.6,
+          1.9,
+          7.2
+        ]
+      }
+    },
+    "Cam_Furn_Kitchen": {
+      "name": "Cam_Furn_Kitchen",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Furn_Kitchen",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 22.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 63.07,
+      "fov_h_deg": 78.58,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          9.3,
+          -4.5,
+          1.45
+        ],
+        "quaternion": [
+          0.23922,
+          0.62444,
+          0.69433,
+          0.26599
+        ],
+        "rotation_euler_deg": [
+          83.93,
+          -0.0,
+          138.08
+        ],
+        "matrix_world": [
+          -0.744049,
+          -0.070619,
+          0.664383,
+          9.3,
+          0.668125,
+          -0.078644,
+          0.739881,
+          -4.5,
+          0.0,
+          0.994398,
+          0.105697,
+          1.45,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          9.3,
+          1.45,
+          4.5
+        ]
+      }
+    },
+    "Cam_Furn_Salotto_View": {
+      "name": "Cam_Furn_Salotto_View",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Furn_Salotto_View",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 26.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 54.88,
+      "fov_h_deg": 69.39,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          4.8,
+          -4.8,
+          1.6
+        ],
+        "quaternion": [
+          0.41405,
+          -0.4866,
+          -0.58588,
+          0.49853
+        ],
+        "rotation_euler_deg": [
+          79.42,
+          0.0,
+          -99.21
+        ],
+        "matrix_world": [
+          -0.160071,
+          0.181209,
+          -0.97033,
+          4.8,
+          -0.987105,
+          -0.029385,
+          0.157351,
+          -4.8,
+          -0.0,
+          0.983006,
+          0.183576,
+          1.6,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          4.8,
+          1.6,
+          4.8
+        ]
+      }
+    },
+    "Cam_Furn_Vitrine_Stairs": {
+      "name": "Cam_Furn_Vitrine_Stairs",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Furn_Vitrine_Stairs",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 26.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 54.88,
+      "fov_h_deg": 69.39,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          12.2,
+          -4.2,
+          1.7
+        ],
+        "quaternion": [
+          0.53303,
+          0.30616,
+          0.39285,
+          0.68397
+        ],
+        "rotation_euler_deg": [
+          75.86,
+          -0.0,
+          59.74
+        ],
+        "matrix_world": [
+          0.503871,
+          -0.211023,
+          0.837606,
+          12.2,
+          0.863779,
+          0.123096,
+          -0.488603,
+          -4.2,
+          0.0,
+          0.969699,
+          0.244301,
+          1.7,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          12.2,
+          1.7,
+          4.2
+        ]
+      }
+    },
+    "Cam_Sink_Detail": {
+      "name": "Cam_Sink_Detail",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Sink_Detail",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 32.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 45.75,
+      "fov_h_deg": 58.72,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          9.11,
+          -6.1,
+          1.4
+        ],
+        "quaternion": [
+          0.0,
+          0.5547,
+          0.83205,
+          0.0
+        ],
+        "rotation_euler_deg": [
+          67.38,
+          0.0,
+          180.0
+        ],
+        "matrix_world": [
+          -1.0,
+          -0.0,
+          0.0,
+          9.11,
+          0.0,
+          -0.384615,
+          0.923077,
+          -6.1,
+          -0.0,
+          0.923077,
+          0.384615,
+          1.4,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          9.11,
+          1.4,
+          6.1
+        ]
+      }
+    },
+    "Cam_Stairs_Fireplace": {
+      "name": "Cam_Stairs_Fireplace",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Stairs_Fireplace",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 28.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 51.48,
+      "fov_h_deg": 65.47,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          11.5,
+          -8.0,
+          3.6
+        ],
+        "quaternion": [
+          0.54976,
+          0.02111,
+          0.03205,
+          0.83444
+        ],
+        "rotation_euler_deg": [
+          66.76,
+          -0.0,
+          4.4
+        ],
+        "matrix_world": [
+          0.997054,
+          -0.030268,
+          0.070471,
+          11.5,
+          0.076697,
+          0.393478,
+          -0.916129,
+          -8.0,
+          0.0,
+          0.918836,
+          0.39464,
+          3.6,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          11.5,
+          3.6,
+          8.0
+        ]
+      }
+    },
+    "Cam_User_Feedback_View": {
+      "name": "Cam_User_Feedback_View",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_User_Feedback_View",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 24.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 58.72,
+      "fov_h_deg": 73.74,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          9.8,
+          -4.8,
+          2.5
+        ],
+        "quaternion": [
+          0.22449,
+          0.4921,
+          0.76523,
+          0.34909
+        ],
+        "rotation_euler_deg": [
+          65.49,
+          -0.0,
+          130.96
+        ],
+        "matrix_world": [
+          -0.655473,
+          -0.313329,
+          0.687154,
+          9.8,
+          0.755219,
+          -0.271946,
+          0.596398,
+          -4.8,
+          0.0,
+          0.909874,
+          0.414885,
+          2.5,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          9.8,
+          2.5,
+          4.8
+        ]
+      }
+    },
+    "Cam_Walkway_Gate": {
+      "name": "Cam_Walkway_Gate",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Walkway_Gate",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 32.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 45.75,
+      "fov_h_deg": 58.72,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          -10.5,
+          4.0,
+          8.5
+        ],
+        "quaternion": [
+          0.17209,
+          -0.43286,
+          -0.82228,
+          0.32692
+        ],
+        "rotation_euler_deg": [
+          55.53,
+          0.0,
+          -136.64
+        ],
+        "matrix_world": [
+          -0.727013,
+          0.388655,
+          -0.566038,
+          -10.5,
+          -0.686623,
+          -0.411517,
+          0.599334,
+          4.0,
+          -0.0,
+          0.824379,
+          0.566038,
+          8.5,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          -10.5,
+          8.5,
+          -4.0
+        ]
+      }
+    },
+    "Cam_West_Counter_Detail": {
+      "name": "Cam_West_Counter_Detail",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_West_Counter_Detail",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 28.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 51.48,
+      "fov_h_deg": 65.47,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          7.8,
+          -5.2,
+          1.35
+        ],
+        "quaternion": [
+          0.26335,
+          0.57799,
+          0.70286,
+          0.32025
+        ],
+        "rotation_euler_deg": [
+          78.86,
+          -0.0,
+          131.01
+        ],
+        "matrix_world": [
+          -0.656179,
+          -0.14575,
+          0.740396,
+          7.8,
+          0.754605,
+          -0.126739,
+          0.643823,
+          -5.2,
+          0.0,
+          0.98117,
+          0.193147,
+          1.35,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          7.8,
+          1.35,
+          5.2
+        ]
+      }
+    },
+    "Camera_Revit_Isometric_NW": {
+      "name": "Camera_Revit_Isometric_NW",
+      "ha_camera_entity": "",
+      "ha_label": "Camera_Revit_Isometric_NW",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 32.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 45.75,
+      "fov_h_deg": 58.72,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          -32.0,
+          16.0,
+          28.0
+        ],
+        "quaternion": [
+          0.20616,
+          -0.44338,
+          -0.79098,
+          0.36778
+        ],
+        "rotation_euler_deg": [
+          58.55,
+          -0.0,
+          -130.13
+        ],
+        "matrix_world": [
+          -0.644472,
+          0.398996,
+          -0.652272,
+          -32.0,
+          -0.764628,
+          -0.336296,
+          0.549771,
+          16.0,
+          0.0,
+          0.853057,
+          0.521817,
+          28.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          -32.0,
+          28.0,
+          -16.0
+        ]
+      }
+    },
+    "Camera_Revit_Isometric_SW": {
+      "name": "Camera_Revit_Isometric_SW",
+      "ha_camera_entity": "",
+      "ha_label": "Camera_Revit_Isometric_SW",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 32.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 45.75,
+      "fov_h_deg": 58.72,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 200.0,
+      "blender_transform": {
+        "position": [
+          -26.0,
+          -44.0,
+          30.0
+        ],
+        "quaternion": [
+          0.42532,
+          -0.16993,
+          -0.32981,
+          0.8255
+        ],
+        "rotation_euler_deg": [
+          54.52,
+          -0.0,
+          -43.56
+        ],
+        "matrix_world": [
+          0.724703,
+          0.399965,
+          -0.561101,
+          -26.0,
+          -0.689062,
+          0.420653,
+          -0.590123,
+          -44.0,
+          0.0,
+          0.814297,
+          0.580449,
+          30.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          -26.0,
+          30.0,
+          44.0
+        ]
+      }
+    },
+    "Camera_Revit_Plan_Top": {
+      "name": "Camera_Revit_Plan_Top",
+      "ha_camera_entity": "",
+      "ha_label": "Camera_Revit_Plan_Top",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 28.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 51.48,
+      "fov_h_deg": 65.47,
+      "aspect_ratio": 1.3333,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          3.0,
+          -13.5,
+          34.0
+        ],
+        "quaternion": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "rotation_euler_deg": [
+          0.0,
+          -0.0,
+          0.0
+        ],
+        "matrix_world": [
+          1.0,
+          0.0,
+          0.0,
+          3.0,
+          0.0,
+          1.0,
+          0.0,
+          -13.5,
+          0.0,
+          0.0,
+          1.0,
+          34.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          3.0,
+          34.0,
+          13.5
+        ]
+      }
+    }
+  },
+  "ground_colliders": [
+    {
+      "object_name": "Driveway_Gravel",
+      "centroid": [
+        -0.83,
+        -10.525,
+        -0.025
+      ],
+      "dimensions": [
+        14.44,
+        21.05,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Antibagno",
+      "centroid": [
+        9.07,
+        -2.81,
+        -0.025
+      ],
+      "dimensions": [
+        0.76,
+        1.5,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Bagno",
+      "centroid": [
+        7.415,
+        -1.93,
+        -0.025
+      ],
+      "dimensions": [
+        2.09,
+        3.26,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Dining_Main",
+      "centroid": [
+        10.135,
+        -5.8,
+        -0.025
+      ],
+      "dimensions": [
+        7.53,
+        3.9,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Dining_NorthWing",
+      "centroid": [
+        11.975,
+        -2.075,
+        -0.025
+      ],
+      "dimensions": [
+        3.85,
+        3.55,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Dining_Passage",
+      "centroid": [
+        8.21,
+        -3.705,
+        -0.025
+      ],
+      "dimensions": [
+        3.68,
+        0.29,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Garage_EastStair",
+      "centroid": [
+        13.355,
+        -22.98,
+        -0.025
+      ],
+      "dimensions": [
+        1.09,
+        0.9,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Garage_Main",
+      "centroid": [
+        10.295,
+        -20.48,
+        -0.025
+      ],
+      "dimensions": [
+        7.21,
+        4.1,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Garage_WestStair",
+      "centroid": [
+        8.045,
+        -22.98,
+        -0.025
+      ],
+      "dimensions": [
+        2.71,
+        0.9,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Lavanderia",
+      "centroid": [
+        2.375,
+        -13.93,
+        -0.025
+      ],
+      "dimensions": [
+        4.15,
+        2.6,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Floor_Salotto",
+      "centroid": [
+        3.185,
+        -3.555,
+        -0.025
+      ],
+      "dimensions": [
+        5.77,
+        6.51,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Giardino_Area_1_Prato",
+      "centroid": [
+        2.925,
+        -21.45,
+        -0.025
+      ],
+      "dimensions": [
+        21.95,
+        11.9,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Giardino_Area_2_Prato",
+      "centroid": [
+        10.145,
+        -12.59,
+        -0.025
+      ],
+      "dimensions": [
+        7.51,
+        9.08,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Giardino_Area_3A_Prato",
+      "centroid": [
+        -2.02,
+        -3.025,
+        -0.025
+      ],
+      "dimensions": [
+        4.04,
+        6.05,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Giardino_Area_3B_Prato",
+      "centroid": [
+        -5.305,
+        -3.555,
+        -0.025
+      ],
+      "dimensions": [
+        0.29,
+        7.11,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Giardino_Area_3C_Prato",
+      "centroid": [
+        -0.4,
+        -12.81,
+        -0.025
+      ],
+      "dimensions": [
+        10.1,
+        11.28,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Portico_Pavement_Unified",
+      "centroid": [
+        7.1,
+        -12.62,
+        -0.025
+      ],
+      "dimensions": [
+        13.6,
+        11.02,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Site_Foundation_Earth",
+      "centroid": [
+        3.0,
+        -13.25,
+        -0.125
+      ],
+      "dimensions": [
+        23.0,
+        29.5,
+        0.15
+      ]
+    },
+    {
+      "object_name": "Terrazza_All_Aperto",
+      "centroid": [
+        -6.75,
+        -2.5,
+        -0.025
+      ],
+      "dimensions": [
+        2.6,
+        5.0,
+        0.05
+      ]
+    },
+    {
+      "object_name": "Walkway_Pedestrian_Pavement",
+      "centroid": [
+        -2.4,
+        -3.555,
+        -0.025
+      ],
+      "dimensions": [
+        5.4,
+        7.11,
+        0.05
+      ]
+    }
+  ]
+}

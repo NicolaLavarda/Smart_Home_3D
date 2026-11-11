@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Home 3D - Digital Twin & Spatial CV Engine</title>
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- 3D Canvas Layer -->
+      <div id="canvas-container"></div>
+      
+      <!-- CSS2D HTML Overlay Layer -->
+      <div id="css2d-container"></div>
+
+      <!-- User Interface Layer -->
+      <div class="ui-layer">
+        <!-- Top Navigation Bar -->
+        <header class="top-bar glass" id="top-bar"></header>
+
+        <!-- Right Side Device Modal / Drawer -->
+        <aside class="modal-drawer glass" id="device-modal-drawer"></aside>
+
+        <!-- Bottom Timeline & Replay Scrubber -->
+        <footer class="timeline-bar glass" id="timeline-container"></footer>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
+
