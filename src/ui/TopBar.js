@@ -83,17 +83,22 @@ export class TopBar {
     quicknav.className = 'side-quicknav glass';
     quicknav.innerHTML = `
       <div class="side-header">Viste Rapide</div>
-      <button class="quicknav-btn" data-preset="overview">🌐 Panoramica</button>
+      <button class="quicknav-btn active" data-preset="overview">🌐 Panoramica</button>
       <button class="quicknav-btn" data-preset="carraio_cam">📹 POV Telecamera Carraio</button>
       <button class="quicknav-btn" data-preset="gate">🚪 Cancello & Accessi</button>
-      <button class="quicknav-btn" data-preset="kitchen">🍳 Cucina & Bancone</button>
+      <button class="quicknav-btn" data-preset="garden">🌳 Giardino & Lampioncini</button>
       <button class="quicknav-btn" data-preset="living">🛋️ Salotto</button>
+      <button class="quicknav-btn" data-preset="kitchen">🍳 Cucina</button>
+      <button class="quicknav-btn" data-preset="laundry">🧺 Impianto Termico</button>
       <button class="quicknav-btn" data-preset="topdown">📐 Pianta Zenitale</button>
     `;
     document.querySelector('.ui-layer').appendChild(quicknav);
 
-    quicknav.querySelectorAll('.quicknav-btn').forEach((btn) => {
+    const buttons = quicknav.querySelectorAll('.quicknav-btn');
+    buttons.forEach((btn) => {
       btn.addEventListener('click', () => {
+        buttons.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
         const preset = btn.dataset.preset;
         this.cameraController.flyToPreset(preset);
       });

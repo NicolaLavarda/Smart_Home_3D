@@ -4,12 +4,293 @@
   "scene_name": "Scene",
   "unit_system": "METRIC",
   "ha_entities": {
+    "light.1": {
+      "entity_id": "light.1",
+      "domain": "light",
+      "name": "Applique Salotto Est",
+      "action": "toggle",
+      "ui_type": "light",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Applique_Salotto_Est",
+          "type": "MESH",
+          "centroid": [
+            6.05,
+            -2.07,
+            1.95
+          ],
+          "dimensions": [
+            0.08,
+            0.16,
+            0.18
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        6.05,
+        -2.07,
+        1.95
+      ],
+      "centroid_gltf": [
+        6.05,
+        1.95,
+        2.07
+      ]
+    },
+    "light.2": {
+      "entity_id": "light.2",
+      "domain": "light",
+      "name": "Applique Salotto Nord",
+      "action": "toggle",
+      "ui_type": "light",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Applique_Salotto_Nord",
+          "type": "MESH",
+          "centroid": [
+            3.14,
+            -0.32,
+            1.95
+          ],
+          "dimensions": [
+            0.16,
+            0.08,
+            0.18
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        3.14,
+        -0.32,
+        1.95
+      ],
+      "centroid_gltf": [
+        3.14,
+        1.95,
+        0.32
+      ]
+    },
+    "light.luci_esterne": {
+      "entity_id": "light.luci_esterne",
+      "domain": "light",
+      "name": "Lampioncino Giardino",
+      "action": "toggle",
+      "ui_type": "light",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Bollard_Garden_1",
+          "type": "MESH",
+          "centroid": [
+            -4.0,
+            -5.9,
+            0.65
+          ],
+          "dimensions": [
+            0.145,
+            0.145,
+            0.22
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Bollard_Garden_2",
+          "type": "MESH",
+          "centroid": [
+            -1.0,
+            -5.9,
+            0.65
+          ],
+          "dimensions": [
+            0.145,
+            0.145,
+            0.22
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Bollard_Garden_3",
+          "type": "MESH",
+          "centroid": [
+            -3.8,
+            -18.0,
+            0.65
+          ],
+          "dimensions": [
+            0.145,
+            0.145,
+            0.22
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Bollard_Garden_4",
+          "type": "MESH",
+          "centroid": [
+            2.2,
+            -18.25,
+            0.65
+          ],
+          "dimensions": [
+            0.145,
+            0.145,
+            0.22
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Wall_Garden_Light_1",
+          "type": "MESH",
+          "centroid": [
+            13.88,
+            -9.87,
+            0.58
+          ],
+          "dimensions": [
+            0.02,
+            0.12,
+            0.06
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Wall_Garden_Light_2",
+          "type": "MESH",
+          "centroid": [
+            13.88,
+            -11.68,
+            0.58
+          ],
+          "dimensions": [
+            0.02,
+            0.12,
+            0.06
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Wall_Garden_Light_3",
+          "type": "MESH",
+          "centroid": [
+            13.88,
+            -13.5,
+            0.58
+          ],
+          "dimensions": [
+            0.02,
+            0.12,
+            0.06
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Wall_Garden_Light_4",
+          "type": "MESH",
+          "centroid": [
+            13.88,
+            -15.31,
+            0.58
+          ],
+          "dimensions": [
+            0.02,
+            0.12,
+            0.06
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        -4.0,
+        -5.9,
+        0.65
+      ],
+      "centroid_gltf": [
+        -4.0,
+        0.65,
+        5.9
+      ]
+    },
+    "camera.carraio_scorrevole": {
+      "entity_id": "camera.carraio_scorrevole",
+      "domain": "camera",
+      "name": "Telecamera Carraio",
+      "action": "stream",
+      "ui_type": "camera",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Cam_Carraio",
+          "type": "CAMERA",
+          "centroid": [
+            -5.3,
+            -0.2,
+            2.1
+          ],
+          "dimensions": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        -5.3,
+        -0.2,
+        2.1
+      ],
+      "centroid_gltf": [
+        -5.3,
+        2.1,
+        0.2
+      ]
+    },
+    "camera.carraio_trasparente": {
+      "entity_id": "camera.carraio_trasparente",
+      "domain": "camera",
+      "name": "Telecamera Carraio",
+      "action": "stream",
+      "ui_type": "camera",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Cam_Carraio",
+          "type": "CAMERA",
+          "centroid": [
+            -5.3,
+            -0.2,
+            2.1
+          ],
+          "dimensions": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        -5.3,
+        -0.2,
+        2.1
+      ],
+      "centroid_gltf": [
+        -5.3,
+        2.1,
+        0.2
+      ]
+    },
     "switch.switch_casa_interruttore_1": {
       "entity_id": "switch.switch_casa_interruttore_1",
       "domain": "switch",
       "name": "Cancello Carraio",
       "action": "toggle",
       "ui_type": "sliding_gate",
+      "badge_style": "",
       "objects": [
         {
           "object_name": "Gate_Leaf_L",
@@ -23,7 +304,8 @@
             1.15,
             0.04,
             1.3
-          ]
+          ],
+          "badge_style": ""
         },
         {
           "object_name": "Gate_Leaf_R",
@@ -37,7 +319,23 @@
             1.15,
             0.04,
             1.3
-          ]
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Switch_Gate_Carraio",
+          "type": "MESH",
+          "centroid": [
+            -6.6,
+            -0.2,
+            0.85
+          ],
+          "dimensions": [
+            0.08,
+            0.06,
+            0.14
+          ],
+          "badge_style": ""
         }
       ],
       "centroid_blender": [
@@ -57,6 +355,7 @@
       "name": "Luce Bancone Ovest (HA: Bancone)",
       "action": "toggle",
       "ui_type": "light_emissive",
+      "badge_style": "",
       "objects": [
         {
           "object_name": "Isola_Lampada_Cono_1",
@@ -70,7 +369,8 @@
             0.28,
             0.28,
             0.18
-          ]
+          ],
+          "badge_style": ""
         },
         {
           "object_name": "Isola_Lampada_Cono_2",
@@ -84,7 +384,8 @@
             0.28,
             0.28,
             0.18
-          ]
+          ],
+          "badge_style": ""
         }
       ],
       "centroid_blender": [
@@ -104,6 +405,7 @@
       "name": "Lampadario Tavolo (HA: Forno)",
       "action": "toggle",
       "ui_type": "light_emissive",
+      "badge_style": "",
       "objects": [
         {
           "object_name": "Lampadario_Coppa_1",
@@ -117,7 +419,8 @@
             0.18,
             0.18,
             0.1
-          ]
+          ],
+          "badge_style": ""
         },
         {
           "object_name": "Lampadario_Coppa_2",
@@ -131,7 +434,8 @@
             0.18,
             0.18,
             0.1
-          ]
+          ],
+          "badge_style": ""
         },
         {
           "object_name": "Lampadario_Coppa_3",
@@ -145,7 +449,8 @@
             0.18,
             0.18,
             0.1
-          ]
+          ],
+          "badge_style": ""
         },
         {
           "object_name": "Lampadario_Coppa_4",
@@ -159,7 +464,8 @@
             0.18,
             0.18,
             0.1
-          ]
+          ],
+          "badge_style": ""
         },
         {
           "object_name": "Lampadario_Pranzo_Asta",
@@ -173,7 +479,8 @@
             0.02,
             0.02,
             0.8
-          ]
+          ],
+          "badge_style": ""
         }
       ],
       "centroid_blender": [
@@ -187,37 +494,439 @@
         5.4
       ]
     },
-    "light.portico": {
-      "entity_id": "light.portico",
-      "domain": "light",
-      "name": "Luce Portico",
-      "action": "toggle",
-      "ui_type": "light_emissive",
+    "sensor.lavastoviglie_stato_di_funzionamento": {
+      "entity_id": "sensor.lavastoviglie_stato_di_funzionamento",
+      "domain": "sensor",
+      "name": "Lavastoviglie",
+      "action": "modal",
+      "ui_type": "dishwasher",
+      "badge_style": "",
       "objects": [
         {
-          "object_name": "Pillar_Portico_1",
+          "object_name": "Lavastoviglie",
           "type": "MESH",
           "centroid": [
-            5.4,
-            -12.58,
-            1.35
+            8.465,
+            -7.09,
+            0.45
           ],
           "dimensions": [
-            0.3,
-            0.3,
-            2.7
-          ]
+            0.59,
+            0.02,
+            0.64
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Lavastoviglie_Display",
+          "type": "MESH",
+          "centroid": [
+            8.465,
+            -7.076,
+            0.81
+          ],
+          "dimensions": [
+            0.16,
+            0.005,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Lavastoviglie_Pannello_Comandi",
+          "type": "MESH",
+          "centroid": [
+            8.465,
+            -7.089,
+            0.81
+          ],
+          "dimensions": [
+            0.59,
+            0.022,
+            0.08
+          ],
+          "badge_style": ""
         }
       ],
       "centroid_blender": [
-        5.4,
-        -12.58,
-        1.35
+        8.465,
+        -7.09,
+        0.45
       ],
       "centroid_gltf": [
-        5.4,
-        1.35,
-        12.58
+        8.465,
+        0.45,
+        7.09
+      ]
+    },
+    "light.portico": {
+      "entity_id": "light.portico",
+      "domain": "light",
+      "name": "Luce Portico Est",
+      "action": "toggle",
+      "ui_type": "light",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Portico_Wall_Light_NE",
+          "type": "MESH",
+          "centroid": [
+            4.4,
+            -7.13,
+            2.2
+          ],
+          "dimensions": [
+            0.14,
+            0.08,
+            0.16
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Portico_Wall_Light_SW",
+          "type": "MESH",
+          "centroid": [
+            0.8,
+            -12.41,
+            2.2
+          ],
+          "dimensions": [
+            0.14,
+            0.08,
+            0.16
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        4.4,
+        -7.13,
+        2.2
+      ],
+      "centroid_gltf": [
+        4.4,
+        2.2,
+        7.13
+      ]
+    },
+    "sensor.temperatura_caldaia": {
+      "entity_id": "sensor.temperatura_caldaia",
+      "domain": "sensor",
+      "name": "Temp. Caldaia",
+      "action": "toggle",
+      "ui_type": "sensor",
+      "badge_style": "caldaia",
+      "objects": [
+        {
+          "object_name": "Sensor_Caldaia_Temp",
+          "type": "MESH",
+          "centroid": [
+            0.65,
+            -14.788,
+            1.05
+          ],
+          "dimensions": [
+            0.1,
+            0.1,
+            0.015
+          ],
+          "badge_style": "caldaia"
+        }
+      ],
+      "centroid_blender": [
+        0.65,
+        -14.788,
+        1.05
+      ],
+      "centroid_gltf": [
+        0.65,
+        1.05,
+        14.788
+      ]
+    },
+    "sensor.temperatura_accumulo_alto": {
+      "entity_id": "sensor.temperatura_accumulo_alto",
+      "domain": "sensor",
+      "name": "Temp. Accumulo Alto",
+      "action": "toggle",
+      "ui_type": "sensor",
+      "badge_style": "puffer_high",
+      "objects": [
+        {
+          "object_name": "Sensor_Puffer_High",
+          "type": "MESH",
+          "centroid": [
+            1.25,
+            -14.54,
+            1.18
+          ],
+          "dimensions": [
+            0.1,
+            0.1,
+            0.015
+          ],
+          "badge_style": "puffer_high"
+        }
+      ],
+      "centroid_blender": [
+        1.25,
+        -14.54,
+        1.18
+      ],
+      "centroid_gltf": [
+        1.25,
+        1.18,
+        14.54
+      ]
+    },
+    "sensor.temperatura_accumulo_basso": {
+      "entity_id": "sensor.temperatura_accumulo_basso",
+      "domain": "sensor",
+      "name": "Temp. Accumulo Basso",
+      "action": "toggle",
+      "ui_type": "sensor",
+      "badge_style": "puffer_low",
+      "objects": [
+        {
+          "object_name": "Sensor_Puffer_Low",
+          "type": "MESH",
+          "centroid": [
+            1.25,
+            -14.54,
+            0.48
+          ],
+          "dimensions": [
+            0.1,
+            0.1,
+            0.015
+          ],
+          "badge_style": "puffer_low"
+        }
+      ],
+      "centroid_blender": [
+        1.25,
+        -14.54,
+        0.48
+      ],
+      "centroid_gltf": [
+        1.25,
+        0.48,
+        14.54
+      ]
+    },
+    "light.smart_plug_in_unit_switch_3": {
+      "entity_id": "light.smart_plug_in_unit_switch_3",
+      "domain": "light",
+      "name": "Faretto Salotto",
+      "action": "toggle",
+      "ui_type": "light",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Spot_Salotto_1",
+          "type": "MESH",
+          "centroid": [
+            2.0,
+            -1.6,
+            2.98
+          ],
+          "dimensions": [
+            0.16,
+            0.16,
+            0.02
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Spot_Salotto_2",
+          "type": "MESH",
+          "centroid": [
+            4.4,
+            -1.6,
+            2.98
+          ],
+          "dimensions": [
+            0.16,
+            0.16,
+            0.02
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Spot_Salotto_3",
+          "type": "MESH",
+          "centroid": [
+            2.0,
+            -3.55,
+            2.98
+          ],
+          "dimensions": [
+            0.16,
+            0.16,
+            0.02
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Spot_Salotto_4",
+          "type": "MESH",
+          "centroid": [
+            4.4,
+            -3.55,
+            2.98
+          ],
+          "dimensions": [
+            0.16,
+            0.16,
+            0.02
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Spot_Salotto_5",
+          "type": "MESH",
+          "centroid": [
+            2.0,
+            -5.4,
+            2.98
+          ],
+          "dimensions": [
+            0.16,
+            0.16,
+            0.02
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Spot_Salotto_6",
+          "type": "MESH",
+          "centroid": [
+            4.4,
+            -5.4,
+            2.98
+          ],
+          "dimensions": [
+            0.16,
+            0.16,
+            0.02
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        2.0,
+        -1.6,
+        2.98
+      ],
+      "centroid_gltf": [
+        2.0,
+        2.98,
+        1.6
+      ]
+    },
+    "switch.smart_switch_caldaia": {
+      "entity_id": "switch.smart_switch_caldaia",
+      "domain": "switch",
+      "name": "Interruttore Caldaia",
+      "action": "toggle",
+      "ui_type": "switch",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Switch_Caldaia_Wall",
+          "type": "MESH",
+          "centroid": [
+            0.9,
+            -12.6,
+            1.2
+          ],
+          "dimensions": [
+            0.1,
+            0.02,
+            0.1
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        0.9,
+        -12.6,
+        1.2
+      ],
+      "centroid_gltf": [
+        0.9,
+        1.2,
+        12.6
+      ]
+    },
+    "switch.switch_casa_interruttore_3": {
+      "entity_id": "switch.switch_casa_interruttore_3",
+      "domain": "switch",
+      "name": "Serranda Garage",
+      "action": "toggle",
+      "ui_type": "switch",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Switch_Garage_Door",
+          "type": "MESH",
+          "centroid": [
+            6.54,
+            -20.73,
+            1.15
+          ],
+          "dimensions": [
+            0.03,
+            0.1,
+            0.14
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        6.54,
+        -20.73,
+        1.15
+      ],
+      "centroid_gltf": [
+        6.54,
+        1.15,
+        20.73
+      ]
+    },
+    "switch.switch_casa_interruttore_2": {
+      "entity_id": "switch.switch_casa_interruttore_2",
+      "domain": "switch",
+      "name": "Serratura Cancelletto",
+      "action": "toggle",
+      "ui_type": "switch",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Switch_Gate_Ped",
+          "type": "MESH",
+          "centroid": [
+            -4.24,
+            -0.2,
+            1.05
+          ],
+          "dimensions": [
+            0.04,
+            0.06,
+            0.12
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        -4.24,
+        -0.2,
+        1.05
+      ],
+      "centroid_gltf": [
+        -4.24,
+        1.05,
+        0.2
       ]
     },
     "media_player.smart_tv_lg_oled_2": {
@@ -226,6 +935,7 @@
       "name": "Smart TV Frame",
       "action": "modal",
       "ui_type": "tv_frame",
+      "badge_style": "",
       "objects": [
         {
           "object_name": "TV_Salotto_Bezel",
@@ -239,7 +949,8 @@
             0.01,
             1.44,
             0.84
-          ]
+          ],
+          "badge_style": ""
         },
         {
           "object_name": "TV_Salotto_Screen",
@@ -253,7 +964,8 @@
             0.03,
             1.4,
             0.8
-          ]
+          ],
+          "badge_style": ""
         }
       ],
       "centroid_blender": [

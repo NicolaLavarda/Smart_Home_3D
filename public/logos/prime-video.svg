@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="600" height="200">
+  <!-- Prime Video text in white/light -->
+  <text x="20" y="105" font-family="'Inter', -apple-system, sans-serif" font-weight="800" font-size="92" fill="#ffffff" letter-spacing="-2">prime</text>
+  <text x="290" y="105" font-family="'Inter', -apple-system, sans-serif" font-weight="400" font-size="92" fill="#00A8E1" letter-spacing="-1">video</text>
+  <!-- Amazon Cyan smile arrow -->
+  <path d="M 40 135 C 130 175, 230 175, 320 142" fill="none" stroke="#00A8E1" stroke-width="14" stroke-linecap="round"/>
+  <path d="M 315 130 L 332 145 L 310 156 Z" fill="#00A8E1"/>
+</svg>
+

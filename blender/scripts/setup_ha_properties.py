@@ -79,14 +79,7 @@ ENTITY_MAPPINGS = {
         "ha_ui_type": "light_emissive",
         "ha_name": "Luce Bancone Est (HA: Bancone)",
     },
-    # 3. Luci Portico -> entità "light.portico"
-    "Pillar_Portico_1": {
-        "ha_entity": "light.portico",
-        "ha_action": "toggle",
-        "ha_ui_type": "light_emissive",
-        "ha_name": "Luce Portico",
-    },
-    # 4. Cancello -> switch reale su HA: switch.switch_casa_interruttore_1
+    # 3. Cancello -> switch reale su HA: switch.switch_casa_interruttore_1
     "Gate_Leaf_L": {
         "ha_entity": "switch.switch_casa_interruttore_1",
         "ha_action": "toggle",

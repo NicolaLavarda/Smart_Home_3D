@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 180" width="512" height="180">
+  <!-- YouTube red badge -->
+  <rect x="10" y="25" width="180" height="130" rx="36" fill="#FF0000"/>
+  <!-- White play triangle -->
+  <polygon points="80,55 130,90 80,125" fill="#FFFFFF"/>
+  <!-- YouTube text -->
+  <text x="210" y="115" font-family="'Inter', -apple-system, sans-serif" font-weight="800" font-size="94" fill="#FFFFFF" letter-spacing="-3">YouTube</text>
+</svg>
+

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 200" width="512" height="200">
+  <defs>
+    <linearGradient id="mediaset-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6600"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+  <!-- Mediaset flower/spiral -->
+  <circle cx="100" cy="100" r="70" fill="url(#mediaset-bg)"/>
+  <circle cx="100" cy="100" r="40" fill="#0f172a"/>
+  <circle cx="120" cy="85" r="22" fill="url(#mediaset-bg)"/>
+  <!-- Text -->
+  <text x="195" y="105" font-family="'Inter', sans-serif" font-weight="900" font-size="64" fill="#FFFFFF" letter-spacing="-1">MEDIASET</text>
+  <text x="195" y="150" font-family="'Inter', sans-serif" font-weight="600" font-size="40" fill="#ff6600" letter-spacing="3">INFINITY</text>
+</svg>
+

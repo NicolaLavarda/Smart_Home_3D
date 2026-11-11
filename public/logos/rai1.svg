@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 200" width="512" height="200">
+  <defs>
+    <linearGradient id="rai1-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#0369a1"/>
+    </linearGradient>
+  </defs>
+  <rect x="20" y="20" width="160" height="160" rx="24" fill="url(#rai1-bg)"/>
+  <text x="35" y="132" font-family="'Inter', sans-serif" font-weight="900" font-size="94" fill="#FFFFFF" letter-spacing="-2">Rai</text>
+  <rect x="200" y="20" width="120" height="160" rx="24" fill="url(#rai1-bg)"/>
+  <text x="240" y="136" font-family="'Inter', sans-serif" font-weight="900" font-size="108" fill="#FFFFFF">1</text>
+  <text x="345" y="128" font-family="'Inter', sans-serif" font-weight="800" font-size="64" fill="#38bdf8">HD</text>
+</svg>
+

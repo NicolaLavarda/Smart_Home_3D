@@ -87,6 +87,7 @@ async function bootstrap() {
     cameraController.update(delta);
     entityBinder.update(delta);
     timelineController.update(delta);
+    interactionManager.update(sceneManager.camera);
   });
 }
 

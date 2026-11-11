@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 200" width="512" height="200">
+  <!-- LG Red circle -->
+  <circle cx="100" cy="100" r="75" fill="#A50034"/>
+  <!-- Stylized L & G face -->
+  <circle cx="70" cy="78" r="10" fill="#FFFFFF"/>
+  <path d="M 98 62 L 98 108 L 126 108" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 148 100 C 148 128, 126 150, 98 150 C 70 150, 48 128, 48 100 C 48 72, 70 50, 98 50 C 114 50, 130 58, 140 70" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
+  <!-- webOS text -->
+  <text x="200" y="125" font-family="'Inter', sans-serif" font-weight="700" font-size="76" fill="#FFFFFF" letter-spacing="-1">web<tspan fill="#A50034">OS</tspan></text>
+</svg>
+

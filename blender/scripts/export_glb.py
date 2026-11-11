@@ -28,6 +28,17 @@ MATERIAL_COLOR_OVERRIDES = {
     "Mat_Gres_Lavanderia": (0.55, 0.54, 0.51, 1.0),            # Gres lavanderia
     "Mat_Portone_Garage": (0.60, 0.62, 0.65, 1.0),             # Portone garage
     "Mat_Cordolo_Pietra": (0.85, 0.86, 0.87, 1.0),             # Cordolo pietra chiaro
+    "Mat_Bollard_Dark": (0.13, 0.14, 0.15, 1.0),               # Alluminio scuro lampioncini
+    "Mat_Frosted_Diffuser": (0.95, 0.94, 0.90, 1.0),           # Diffusore satinato bianco
+    "Mat_Spot_Metal": (0.90, 0.90, 0.92, 1.0),                 # Metallo faretti incassati
+    "Mat_Spot_Glass": (0.98, 0.97, 0.95, 1.0),                 # Vetro satinato faretti
+    "Mat_Puffer_Grey": (0.28, 0.30, 0.32, 1.0),                # Grigio antracite puffer
+    "Mat_Puffer_Cap": (0.08, 0.08, 0.09, 1.0),                 # Calotta nera puffer
+    "Mat_Caldaia_White": (0.94, 0.94, 0.95, 1.0),              # Bianco lucido caldaia
+    "Mat_Caldaia_Display": (0.05, 0.05, 0.05, 1.0),            # Display caldaia
+    "Mat_Switch_Plate": (0.92, 0.92, 0.94, 1.0),               # Placca interruttori
+    "Mat_Laccato_Bianco": (0.82, 0.81, 0.79, 1.0),             # Bianco caldo opaco satinato mobili/termoarredo
+    "Mat_Lampada_Isola": (0.95, 0.94, 0.90, 1.0),              # Diffusore sospensione isola
 }
 
 
@@ -81,10 +92,22 @@ def prepare_materials_for_gltf():
                 roughness_input.default_value = 0.90
             elif mat.name == "Mat_Parquet_Rovere_PBR":
                 roughness_input.default_value = 0.40
+            elif mat.name == "Mat_Laccato_Bianco":
+                roughness_input.default_value = 0.65
             elif "Dark" in mat.name:
                 roughness_input.default_value = 0.85
             elif "Light" in mat.name:
                 roughness_input.default_value = 0.90
+
+        # Calibra emissione per evitare auto-illuminazione su arredi e mobili bianchi
+        emission_input = bsdf.inputs.get("Emission Color")
+        if emission_input:
+            if mat.name == "Mat_Laccato_Bianco":
+                for link in list(emission_input.links):
+                    mat.node_tree.links.remove(link)
+                emission_input.default_value = (0.0, 0.0, 0.0, 1.0)
+                if "Emission Strength" in bsdf.inputs:
+                    bsdf.inputs["Emission Strength"].default_value = 0.0
 
     print(f"Materiali calibrati per glTF: {fixed_count}\n")
 
@@ -167,8 +190,13 @@ def generate_manifest(manifest_path):
 
     # 1. Raggruppa entità HA
     for obj in bpy.data.objects:
-        ent = obj.get("ha_entity")
-        if ent:
+        entities = []
+        if obj.get("ha_entity"):
+            entities.append(obj.get("ha_entity"))
+        if obj.get("ha_alt_entity"):
+            entities.append(obj.get("ha_alt_entity"))
+
+        for ent in entities:
             domain = ent.split(".")[0] if "." in ent else "unknown"
             centroid = get_world_centroid(obj)
             dims = [round(obj.dimensions.x, 3), round(obj.dimensions.y, 3), round(obj.dimensions.z, 3)]
@@ -180,6 +208,7 @@ def generate_manifest(manifest_path):
                     "name": obj.get("ha_name", ent),
                     "action": obj.get("ha_action", "toggle"),
                     "ui_type": obj.get("ha_ui_type", "default"),
+                    "badge_style": obj.get("ha_badge_style", ""),
                     "objects": [],
                     "centroid_blender": centroid,
                     "centroid_gltf": blender_to_gltf_coords(centroid),
@@ -190,6 +219,7 @@ def generate_manifest(manifest_path):
                 "type": obj.type,
                 "centroid": centroid,
                 "dimensions": dims,
+                "badge_style": obj.get("ha_badge_style", ""),
             })
 
     # 2. Raccogli telecamere

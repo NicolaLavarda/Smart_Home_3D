@@ -1,3 +1,5 @@
+import { deviceRegistry } from '../devices/DeviceRegistry.js';
+
 export class DeviceModals {
   constructor(modalContainer, haClient, cameraController, assetLoader) {
     this.container = modalContainer;
@@ -36,6 +38,31 @@ export class DeviceModals {
 
   open(entityId) {
     this.currentEntityId = entityId;
+
+    // 1. Verifica se esiste un controller dedicato nel registro decentralizzato (es. Smart TV, Lavastoviglie)
+    const customController = deviceRegistry.findControllerForEntity(entityId);
+    if (customController) {
+      const entity = customController.getEntity ? customController.getEntity() : (this.haClient.getEntity(entityId) || {
+        entity_id: entityId,
+        state: 'unknown',
+        attributes: { friendly_name: customController.name || entityId },
+      });
+
+      this.modalTitle.textContent = customController.name || entity.attributes.friendly_name || entityId;
+      this.modalSubtitle.textContent = customController.primaryEntityId || entityId;
+
+      customController.renderModal(this.modalContent, entity, {
+        haClient: this.haClient,
+        cameraController: this.cameraController,
+        assetLoader: this.assetLoader,
+        modal: this,
+      });
+
+      this.container.classList.add('open');
+      return;
+    }
+
+    // 2. Fallback sui controlli standard di dominio
     const entity = this.haClient.getEntity(entityId) || {
       entity_id: entityId,
       state: 'unknown',
@@ -61,6 +88,12 @@ export class DeviceModals {
 
   close() {
     this.container.classList.remove('open');
+    if (this.currentEntityId) {
+      const customController = deviceRegistry.findControllerForEntity(this.currentEntityId);
+      if (customController && typeof customController.onModalClose === 'function') {
+        customController.onModalClose();
+      }
+    }
     this.currentEntityId = null;
   }
 

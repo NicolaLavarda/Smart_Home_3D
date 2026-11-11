@@ -178,36 +178,55 @@ export class AssetLoader {
       await this.loadManifest();
     }
 
-    // Cache busting per evitare che il browser ricarichi il vecchio file bianco
-    const finalUrl = `${modelUrl}?t=${Date.now()}`;
+    const tryLoad = (url) => {
+      // Cache busting per evitare che il browser ricarichi il vecchio file
+      const finalUrl = `${url}?t=${Date.now()}`;
+      return new Promise((resolve, reject) => {
+        this.gltfLoader.load(
+          finalUrl,
+          (gltf) => {
+            try {
+              this.model = gltf.scene;
+              this.processScene(gltf);
+              resolve({
+                model: this.model,
+                manifest: this.manifest,
+                haEntitiesMap: this.haEntitiesMap,
+                groundColliders: this.groundColliders,
+                cameras: this.cameras,
+              });
+            } catch (procErr) {
+              console.error('[AssetLoader] Errore in processScene:', procErr);
+              reject(procErr);
+            }
+          },
+          null,
+          (error) => {
+            console.error(`[AssetLoader] Errore caricamento modello da ${url}:`, error);
+            reject(error);
+          }
+        );
+      });
+    };
 
-    return new Promise((resolve, reject) => {
-      this.gltfLoader.load(
-        finalUrl,
-        (gltf) => {
-          this.model = gltf.scene;
-          this.processScene(gltf);
-          resolve({
-            model: this.model,
-            manifest: this.manifest,
-            haEntitiesMap: this.haEntitiesMap,
-            groundColliders: this.groundColliders,
-            cameras: this.cameras,
-          });
-        },
-        null,
-        (error) => {
-          console.error('[AssetLoader] Errore caricamento modello:', error);
-          reject(error);
-        }
-      );
-    });
+    try {
+      return await tryLoad(modelUrl);
+    } catch (err) {
+      if (modelUrl !== '/models/house_raw.glb') {
+        console.warn('[AssetLoader] Tentativo fallback automatico su /models/house_raw.glb...');
+        return await tryLoad('/models/house_raw.glb');
+      }
+      throw err;
+    }
   }
 
   /**
-   * Genera coordinate UV planari (X, Z) per geometrie prive di UV map.
+   * Genera coordinate UV planari (X, Z) per geometrie prive di UV map (pavimenti, prati, strade).
    */
-  ensurePlanarUVs(geometry) {
+  ensurePlanarUVs(geometry, nodeName = '') {
+    // Non applicare proiezione orizzontale su pareti verticali o schermi TV (lo schermo gestisce UV verticali proprie)
+    if (nodeName.includes('TV_Salotto') || nodeName.includes('Screen')) return;
+
     if (geometry && !geometry.attributes.uv && geometry.attributes.position) {
       const pos = geometry.attributes.position;
       const count = pos.count;
@@ -247,8 +266,8 @@ export class AssetLoader {
         node.castShadow = true;
         node.receiveShadow = true;
 
-        // Genera UV se mancanti
-        this.ensurePlanarUVs(node.geometry);
+        // Genera UV se mancanti (esclusi schermi verticali)
+        this.ensurePlanarUVs(node.geometry, node.name);
 
         // Clona e assegna materiale PBR distintivo
         if (node.material) {
@@ -402,13 +421,42 @@ export class AssetLoader {
               metalness: 0.05,
             });
           }
-          // 13. Testi e Etichette Blueprint 3D sul pavimento -> TONALITÀ GRIGIO ARDESIA SOTTILE (non bianchi abbaglianti!)
+          // 13. Mobili laccati bianchi, mensole Kallax e termosifoni / termoarredi (opachi e non-riflettenti, mai abbaglianti)
+          else if (
+            matName.includes('Laccato') ||
+            objName.startsWith('Kallax_') ||
+            objName.includes('Termoarredo_') ||
+            objName.includes('Radiator')
+          ) {
+            node.material = new THREE.MeshStandardMaterial({
+              name: 'Mat_Laccato_Bianco_Soft',
+              color: 0xc4c2bc, // Bianco caldo satinato opaco soft (non abbagliante)
+              roughness: 0.70,
+              metalness: 0.0,
+              emissive: new THREE.Color(0x000000),
+              emissiveIntensity: 0.0,
+            });
+            node.material.needsUpdate = true;
+          }
+          // 13b. Diffusori lampada sospensione Isola Bancone (separati da Kallax e termosifone)
+          else if (matName.includes('Lampada_Isola') || objName.includes('Isola_Lampada_Cono')) {
+            node.material = new THREE.MeshStandardMaterial({
+              name: 'Mat_Diffusore_Isola',
+              color: 0xf2eee6,
+              roughness: 0.35,
+              metalness: 0.0,
+              emissive: new THREE.Color(0x000000),
+              emissiveIntensity: 0.0,
+            });
+            node.material.needsUpdate = true;
+          }
+          // 14. Testi e Etichette Blueprint 3D sul pavimento -> TONALITÀ GRIGIO ARDESIA SOTTILE (non bianchi abbaglianti!)
           else if (objName.startsWith('Label_')) {
             node.material = new THREE.MeshBasicMaterial({
               color: 0x475569, // Slate 600 discreto
             });
           }
-          // 14. Altri materiali
+          // 15. Altri materiali
           else {
             node.material.roughness = Math.max(node.material.roughness ?? 0.5, 0.3);
           }
@@ -432,12 +480,25 @@ export class AssetLoader {
       }
 
       // Registrazione Entità Home Assistant
-      const haEntity = node.userData.ha_entity;
+      let haEntity = node.userData.ha_entity;
+      if (node.name === 'TV_Salotto_Screen' || node.name === 'TV_Salotto_Bezel' || haEntity === 'media_player.smart_tv_lg_oled_2') {
+        haEntity = 'media_player.lg_webos_smart_tv';
+        node.userData.ha_entity = 'media_player.lg_webos_smart_tv';
+      }
+
       if (haEntity) {
         if (!this.haEntitiesMap.has(haEntity)) {
           this.haEntitiesMap.set(haEntity, []);
         }
         this.haEntitiesMap.get(haEntity).push(node);
+      }
+
+      const haAltEntity = node.userData.ha_alt_entity;
+      if (haAltEntity) {
+        if (!this.haEntitiesMap.has(haAltEntity)) {
+          this.haEntitiesMap.set(haAltEntity, []);
+        }
+        this.haEntitiesMap.get(haAltEntity).push(node);
       }
     });
 

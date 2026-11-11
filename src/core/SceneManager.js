@@ -16,7 +16,7 @@ export class SceneManager {
 
     // Setup Camera
     this.camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 1000);
-    this.camera.position.set(22, 18, 22);
+    this.camera.position.set(23.0, 18.0, 25.0);
 
     // WebGL Renderer calibrato
     this.renderer = new THREE.WebGLRenderer({
