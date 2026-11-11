@@ -10,7 +10,7 @@ Agisci come Senior Full-Stack IoT Architect, Computer Vision Spaziale Engineer e
 ## 1. Contesto e Stato Attuale del Repository
 In questa repository è già operativo e collaudato il nucleo del **Digital Twin 3D** della mia casa (giardino + piano terra), con le seguenti caratteristiche:
 1. **Blender come Single Source of Truth (SSoT):** Tutte le Custom Properties (`ha_entity`, `collider_role: "ground"`, `ha_camera_entity`) sono definite nel file `.blend`, esportate headless tramite `npm run build:model` in `public/models/house_optimized.glb` e cataloga nel manifesto `public/models/scene_manifest.json`.
-2. **Home Assistant Bidirezionale Live:** Connessione WebSocket attiva su `http://192.168.86.24:8123` via `home-assistant-js-websocket`, con controllo interattivo di luci (`light.bancone`, `light.forno`), cancello motorizzato animato (`switch.switch_casa_interruttore_1`), smart TV e telecamera carraio.
+2. **Home Assistant Bidirezionale Live:** Connessione WebSocket attiva su `http://192.168.86.24:8123` via `home-assistant-js-websocket`, con controllo interattivo di luci (come `light.bancone`, `light.forno`), interruttori (come `switch.switch_casa_interruttore_1`, `switch.smart_switch_caldaia`), smart TV, telecamera carraio e altro ancora.
 3. **Motore Spazio-Temporale 3D (Frontend Ready):** `src/spatial/CameraProjector.js`, `TrajectoryRenderer.js` e `TimelineController.js` sono già implementati con raycasting 2D $(u,v) \to 3D\,(x,y,z)$ sulle mesh calpestabili, frustum ottico della telecamera `Cam_Carraio` e scrubber temporale (attualmente alimentato da dati sintetici di test).
 
 ---

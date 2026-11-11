@@ -178,9 +178,12 @@ for s in range(4, 18):
     objs_to_remove.append(f"Stair_Upper_Step_{s}")
 objs_to_remove.append("Stair_Top_Arrival")
 
-# Remove any existing fireplace or landing objects if script is re-run
+# Remove any existing fireplace or landing objects if script is re-run (strictly matching prefixes, never switches/devices)
+prefixes_to_clean = ("Fireplace_", "Bench_North_", "Pianerottolo_", "Walkway_Pedestrian_", "Gate_Ped_")
 for o in list(bpy.data.objects):
-    if any(k in o.name for k in ["Fireplace", "Bench_North", "Pianerottolo", "Walkway_Pedestrian", "Gate_Ped"]):
+    if o.name.startswith("Switch_"):
+        continue
+    if o.name.startswith(prefixes_to_clean):
         bpy.data.objects.remove(o, do_unlink=True)
 
 for name in objs_to_remove:

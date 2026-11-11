@@ -92,6 +92,25 @@ ENTITY_MAPPINGS = {
         "ha_ui_type": "sliding_gate",
         "ha_name": "Cancello Carraio",
     },
+    # 4. Lavastoviglie -> sensor reale su HA: sensor.lavastoviglie_stato_di_funzionamento
+    "Lavastoviglie": {
+        "ha_entity": "sensor.lavastoviglie_stato_di_funzionamento",
+        "ha_action": "modal",
+        "ha_ui_type": "dishwasher",
+        "ha_name": "Lavastoviglie",
+    },
+    "Lavastoviglie_Pannello_Comandi": {
+        "ha_entity": "sensor.lavastoviglie_stato_di_funzionamento",
+        "ha_action": "modal",
+        "ha_ui_type": "dishwasher",
+        "ha_name": "Lavastoviglie Comandi",
+    },
+    "Lavastoviglie_Display": {
+        "ha_entity": "sensor.lavastoviglie_stato_di_funzionamento",
+        "ha_action": "modal",
+        "ha_ui_type": "dishwasher",
+        "ha_name": "Lavastoviglie Display",
+    },
     # 5. Smart TV -> media_player reale su HA: media_player.smart_tv_lg_oled_2
     "TV_Salotto_Screen": {
         "ha_entity": "media_player.smart_tv_lg_oled_2",
@@ -104,6 +123,162 @@ ENTITY_MAPPINGS = {
         "ha_action": "modal",
         "ha_ui_type": "tv_frame",
         "ha_name": "Smart TV Frame",
+    },
+    # 6. Salotto - Applique Parete Est -> light.1
+    "Applique_Salotto_Est": {
+        "ha_entity": "light.1",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Applique Salotto Est",
+    },
+    # 7. Salotto - Applique Parete Nord -> light.2
+    "Applique_Salotto_Nord": {
+        "ha_entity": "light.2",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Applique Salotto Nord",
+    },
+    # 8. Salotto - Faretti a Soffitto 2x3 -> light.smart_plug_in_unit_switch_3
+    "Salotto_Faretto_1": {
+        "ha_entity": "light.smart_plug_in_unit_switch_3",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Faretto Soffitto Salotto 1",
+    },
+    "Salotto_Faretto_2": {
+        "ha_entity": "light.smart_plug_in_unit_switch_3",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Faretto Soffitto Salotto 2",
+    },
+    "Salotto_Faretto_3": {
+        "ha_entity": "light.smart_plug_in_unit_switch_3",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Faretto Soffitto Salotto 3",
+    },
+    "Salotto_Faretto_4": {
+        "ha_entity": "light.smart_plug_in_unit_switch_3",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Faretto Soffitto Salotto 4",
+    },
+    "Salotto_Faretto_5": {
+        "ha_entity": "light.smart_plug_in_unit_switch_3",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Faretto Soffitto Salotto 5",
+    },
+    "Salotto_Faretto_6": {
+        "ha_entity": "light.smart_plug_in_unit_switch_3",
+        "ha_action": "toggle",
+        "ha_ui_type": "light_emissive",
+        "ha_name": "Faretto Soffitto Salotto 6",
+    },
+    # 9. Giardino e Portico (Luci esterne)
+    "Bollard_Garden_1": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Lampioncino Giardino 1",
+    },
+    "Bollard_Garden_2": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Lampioncino Giardino 2",
+    },
+    "Bollard_Garden_3": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Lampioncino Giardino 3",
+    },
+    "Bollard_Garden_4": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Lampioncino Giardino 4",
+    },
+    "Wall_Garden_Light_1": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Luce Muro Giardino 1",
+    },
+    "Wall_Garden_Light_2": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Luce Muro Giardino 2",
+    },
+    "Wall_Garden_Light_3": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Luce Muro Giardino 3",
+    },
+    "Wall_Garden_Light_4": {
+        "ha_entity": "light.luci_esterne",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Luce Muro Giardino 4",
+    },
+    "Portico_Wall_Light_SW": {
+        "ha_entity": "light.portico",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Luce Portico Ovest",
+    },
+    "Portico_Wall_Light_NE": {
+        "ha_entity": "light.portico",
+        "ha_action": "toggle",
+        "ha_ui_type": "light",
+        "ha_name": "Luce Portico Est",
+    },
+    # 10. Interruttori Cancelli e Garage
+    "Switch_Gate_Carraio": {
+        "ha_entity": "switch.switch_casa_interruttore_1",
+        "ha_action": "toggle",
+        "ha_ui_type": "switch",
+        "ha_name": "Cancello Carraio",
+    },
+    "Switch_Gate_Ped": {
+        "ha_entity": "switch.switch_casa_interruttore_2",
+        "ha_action": "toggle",
+        "ha_ui_type": "switch",
+        "ha_name": "Serratura Cancelletto",
+    },
+    "Switch_Garage_Door": {
+        "ha_entity": "switch.switch_casa_interruttore_3",
+        "ha_action": "toggle",
+        "ha_ui_type": "switch",
+        "ha_name": "Serranda Garage",
+    },
+    # 11. Centrale Termica Lavanderia
+    "Sensor_Puffer_High": {
+        "ha_entity": "sensor.temperatura_accumulo_alto",
+        "ha_ui_type": "sensor",
+        "ha_name": "Temp. Accumulo Alto",
+        "ha_badge_style": "puffer_high",
+    },
+    "Sensor_Puffer_Low": {
+        "ha_entity": "sensor.temperatura_accumulo_basso",
+        "ha_ui_type": "sensor",
+        "ha_name": "Temp. Accumulo Basso",
+        "ha_badge_style": "puffer_low",
+    },
+    "Sensor_Caldaia_Temp": {
+        "ha_entity": "sensor.temperatura_caldaia",
+        "ha_ui_type": "sensor",
+        "ha_name": "Temp. Caldaia",
+        "ha_badge_style": "caldaia",
+    },
+    "Switch_Caldaia_Wall": {
+        "ha_entity": "switch.smart_switch_caldaia",
+        "ha_action": "toggle",
+        "ha_ui_type": "switch",
+        "ha_name": "Interruttore Caldaia",
     },
 }
 

@@ -122,6 +122,18 @@ if not col_furniture:
     bpy.context.scene.collection.children.link(col_furniture)
 
 # Clean previous furniture objects
+# SAFETY GUARD: col_furniture now contains hundreds of detailed, refined objects
+# (e.g. refined kitchen, refined salotto, 6 dining chairs, dishwasher, etc.).
+# Blindly deleting all objects in col_furniture will cause severe regression.
+if len(col_furniture.objects) > 0:
+    import sys
+    if "--force-wipe-furniture" not in sys.argv:
+        raise RuntimeError(
+            f"SAFETY ABORT: col_furniture '{col_name}' already contains {len(col_furniture.objects)} objects! "
+            "Running this legacy monolithic script would wipe out all refined furniture (salotto, cucina, sedie pranzo, ecc.). "
+            "If you truly wish to wipe and regenerate, re-run with --force-wipe-furniture."
+        )
+
 for o in list(col_furniture.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 

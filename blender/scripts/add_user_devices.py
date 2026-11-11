@@ -79,12 +79,12 @@ def build_all():
     # 0. RIDIMENSIONA I MURETTI INTERNI DEL BOX DOCCIA IN LAVANDERIA
     # Muretti molto meno spessi (8cm invece di 22cm), box doccia più compatto
     # -------------------------------------------------------------
-    # Parete ovest doccia: X=[1.65, 1.73] (8cm spessore)
-    update_wall_box('Wall_Lav_Part_V1', 1.65, 1.73, -15.23, -14.33, 0.0, 2.70)
-    # Parete nord doccia: Y=[-14.41, -14.33] (8cm spessore)
-    update_wall_box('Wall_Lav_Part_H1', 1.65, 2.55, -14.41, -14.33, 0.0, 2.70)
-    # Parete est doccia: X=[2.55, 2.63] (8cm spessore)
-    update_wall_box('Wall_Lav_Part_V2', 2.55, 2.63, -15.23, -14.33, 0.0, 2.70)
+    # Parete ovest doccia: X=[1.76, 1.87] (11cm spessore, ridotta all'80% in X)
+    update_wall_box('Wall_Lav_Part_V1', 1.760, 1.870, -15.230, -14.350, 0.0, 2.70)
+    # Parete nord doccia: Y=[-14.46, -14.35] (11cm spessore), apertura 47cm
+    update_wall_box('Wall_Lav_Part_H1', 1.760, 2.500, -14.460, -14.350, 0.0, 2.70)
+    # Parete est doccia: X=[2.97, 3.08] (11cm spessore)
+    update_wall_box('Wall_Lav_Part_V2', 2.970, 3.080, -15.230, -14.350, 0.0, 2.70)
 
     coll_devices = get_or_create_collection("HA_SSoT_Devices")
 

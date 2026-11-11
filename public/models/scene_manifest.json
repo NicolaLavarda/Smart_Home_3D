@@ -9,34 +9,34 @@
       "domain": "light",
       "name": "Applique Salotto Est",
       "action": "toggle",
-      "ui_type": "light",
+      "ui_type": "light_emissive",
       "badge_style": "",
       "objects": [
         {
           "object_name": "Applique_Salotto_Est",
           "type": "MESH",
           "centroid": [
-            6.05,
-            -2.07,
+            6.03,
+            -2.2,
             1.95
           ],
           "dimensions": [
             0.08,
-            0.16,
-            0.18
+            0.12,
+            0.28
           ],
           "badge_style": ""
         }
       ],
       "centroid_blender": [
-        6.05,
-        -2.07,
+        6.03,
+        -2.2,
         1.95
       ],
       "centroid_gltf": [
-        6.05,
+        6.03,
         1.95,
-        2.07
+        2.2
       ]
     },
     "light.2": {
@@ -44,40 +44,40 @@
       "domain": "light",
       "name": "Applique Salotto Nord",
       "action": "toggle",
-      "ui_type": "light",
+      "ui_type": "light_emissive",
       "badge_style": "",
       "objects": [
         {
           "object_name": "Applique_Salotto_Nord",
           "type": "MESH",
           "centroid": [
-            3.14,
-            -0.32,
+            3.13,
+            -0.34,
             1.95
           ],
           "dimensions": [
-            0.16,
+            0.12,
             0.08,
-            0.18
+            0.28
           ],
           "badge_style": ""
         }
       ],
       "centroid_blender": [
-        3.14,
-        -0.32,
+        3.13,
+        -0.34,
         1.95
       ],
       "centroid_gltf": [
-        3.14,
+        3.13,
         1.95,
-        0.32
+        0.34
       ]
     },
     "light.luci_esterne": {
       "entity_id": "light.luci_esterne",
       "domain": "light",
-      "name": "Lampioncino Giardino",
+      "name": "Lampioncino Giardino 1",
       "action": "toggle",
       "ui_type": "light",
       "badge_style": "",
@@ -212,76 +212,6 @@
         -4.0,
         0.65,
         5.9
-      ]
-    },
-    "camera.carraio_scorrevole": {
-      "entity_id": "camera.carraio_scorrevole",
-      "domain": "camera",
-      "name": "Telecamera Carraio",
-      "action": "stream",
-      "ui_type": "camera",
-      "badge_style": "",
-      "objects": [
-        {
-          "object_name": "Cam_Carraio",
-          "type": "CAMERA",
-          "centroid": [
-            -5.3,
-            -0.2,
-            2.1
-          ],
-          "dimensions": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "badge_style": ""
-        }
-      ],
-      "centroid_blender": [
-        -5.3,
-        -0.2,
-        2.1
-      ],
-      "centroid_gltf": [
-        -5.3,
-        2.1,
-        0.2
-      ]
-    },
-    "camera.carraio_trasparente": {
-      "entity_id": "camera.carraio_trasparente",
-      "domain": "camera",
-      "name": "Telecamera Carraio",
-      "action": "stream",
-      "ui_type": "camera",
-      "badge_style": "",
-      "objects": [
-        {
-          "object_name": "Cam_Carraio",
-          "type": "CAMERA",
-          "centroid": [
-            -5.3,
-            -0.2,
-            2.1
-          ],
-          "dimensions": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "badge_style": ""
-        }
-      ],
-      "centroid_blender": [
-        -5.3,
-        -0.2,
-        2.1
-      ],
-      "centroid_gltf": [
-        -5.3,
-        2.1,
-        0.2
       ]
     },
     "switch.switch_casa_interruttore_1": {
@@ -507,12 +437,12 @@
           "type": "MESH",
           "centroid": [
             8.465,
-            -7.09,
+            -7.091,
             0.45
           ],
           "dimensions": [
             0.59,
-            0.02,
+            0.018,
             0.64
           ],
           "badge_style": ""
@@ -522,7 +452,7 @@
           "type": "MESH",
           "centroid": [
             8.465,
-            -7.076,
+            -7.074,
             0.81
           ],
           "dimensions": [
@@ -537,12 +467,12 @@
           "type": "MESH",
           "centroid": [
             8.465,
-            -7.089,
+            -7.088,
             0.81
           ],
           "dimensions": [
             0.59,
-            0.022,
+            0.024,
             0.08
           ],
           "badge_style": ""
@@ -550,13 +480,13 @@
       ],
       "centroid_blender": [
         8.465,
-        -7.09,
+        -7.091,
         0.45
       ],
       "centroid_gltf": [
         8.465,
         0.45,
-        7.09
+        7.091
       ]
     },
     "light.portico": {
@@ -607,6 +537,116 @@
         4.4,
         2.2,
         7.13
+      ]
+    },
+    "light.smart_plug_in_unit_switch_3": {
+      "entity_id": "light.smart_plug_in_unit_switch_3",
+      "domain": "light",
+      "name": "Faretto Soffitto Salotto 1",
+      "action": "toggle",
+      "ui_type": "light_emissive",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Salotto_Faretto_1",
+          "type": "MESH",
+          "centroid": [
+            2.05,
+            -1.6,
+            2.814
+          ],
+          "dimensions": [
+            0.076,
+            0.076,
+            0.004
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Salotto_Faretto_2",
+          "type": "MESH",
+          "centroid": [
+            4.35,
+            -1.6,
+            2.814
+          ],
+          "dimensions": [
+            0.076,
+            0.076,
+            0.004
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Salotto_Faretto_3",
+          "type": "MESH",
+          "centroid": [
+            2.05,
+            -3.35,
+            2.814
+          ],
+          "dimensions": [
+            0.076,
+            0.076,
+            0.004
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Salotto_Faretto_4",
+          "type": "MESH",
+          "centroid": [
+            4.35,
+            -3.35,
+            2.814
+          ],
+          "dimensions": [
+            0.076,
+            0.076,
+            0.004
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Salotto_Faretto_5",
+          "type": "MESH",
+          "centroid": [
+            2.05,
+            -5.1,
+            2.814
+          ],
+          "dimensions": [
+            0.076,
+            0.076,
+            0.004
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Salotto_Faretto_6",
+          "type": "MESH",
+          "centroid": [
+            4.35,
+            -5.1,
+            2.814
+          ],
+          "dimensions": [
+            0.076,
+            0.076,
+            0.004
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        2.05,
+        -1.6,
+        2.814
+      ],
+      "centroid_gltf": [
+        2.05,
+        2.814,
+        1.6
       ]
     },
     "sensor.temperatura_caldaia": {
@@ -712,116 +752,6 @@
         1.25,
         0.48,
         14.54
-      ]
-    },
-    "light.smart_plug_in_unit_switch_3": {
-      "entity_id": "light.smart_plug_in_unit_switch_3",
-      "domain": "light",
-      "name": "Faretto Salotto",
-      "action": "toggle",
-      "ui_type": "light",
-      "badge_style": "",
-      "objects": [
-        {
-          "object_name": "Spot_Salotto_1",
-          "type": "MESH",
-          "centroid": [
-            2.0,
-            -1.6,
-            2.98
-          ],
-          "dimensions": [
-            0.16,
-            0.16,
-            0.02
-          ],
-          "badge_style": ""
-        },
-        {
-          "object_name": "Spot_Salotto_2",
-          "type": "MESH",
-          "centroid": [
-            4.4,
-            -1.6,
-            2.98
-          ],
-          "dimensions": [
-            0.16,
-            0.16,
-            0.02
-          ],
-          "badge_style": ""
-        },
-        {
-          "object_name": "Spot_Salotto_3",
-          "type": "MESH",
-          "centroid": [
-            2.0,
-            -3.55,
-            2.98
-          ],
-          "dimensions": [
-            0.16,
-            0.16,
-            0.02
-          ],
-          "badge_style": ""
-        },
-        {
-          "object_name": "Spot_Salotto_4",
-          "type": "MESH",
-          "centroid": [
-            4.4,
-            -3.55,
-            2.98
-          ],
-          "dimensions": [
-            0.16,
-            0.16,
-            0.02
-          ],
-          "badge_style": ""
-        },
-        {
-          "object_name": "Spot_Salotto_5",
-          "type": "MESH",
-          "centroid": [
-            2.0,
-            -5.4,
-            2.98
-          ],
-          "dimensions": [
-            0.16,
-            0.16,
-            0.02
-          ],
-          "badge_style": ""
-        },
-        {
-          "object_name": "Spot_Salotto_6",
-          "type": "MESH",
-          "centroid": [
-            4.4,
-            -5.4,
-            2.98
-          ],
-          "dimensions": [
-            0.16,
-            0.16,
-            0.02
-          ],
-          "badge_style": ""
-        }
-      ],
-      "centroid_blender": [
-        2.0,
-        -1.6,
-        2.98
-      ],
-      "centroid_gltf": [
-        2.0,
-        2.98,
-        1.6
       ]
     },
     "switch.smart_switch_caldaia": {
@@ -941,14 +871,14 @@
           "object_name": "TV_Salotto_Bezel",
           "type": "MESH",
           "centroid": [
-            0.325,
-            -4.0,
-            1.25
+            0.5765,
+            -2.65,
+            1.135
           ],
           "dimensions": [
-            0.01,
-            1.44,
-            0.84
+            0.017,
+            1.466,
+            0.846
           ],
           "badge_style": ""
         },
@@ -956,27 +886,27 @@
           "object_name": "TV_Salotto_Screen",
           "type": "MESH",
           "centroid": [
-            0.345,
-            -4.0,
-            1.25
+            0.588,
+            -2.65,
+            1.135
           ],
           "dimensions": [
-            0.03,
-            1.4,
-            0.8
+            0.008,
+            1.45,
+            0.83
           ],
           "badge_style": ""
         }
       ],
       "centroid_blender": [
-        0.325,
-        -4.0,
-        1.25
+        0.5765,
+        -2.65,
+        1.135
       ],
       "centroid_gltf": [
-        0.325,
-        1.25,
-        4.0
+        0.5765,
+        1.135,
+        2.65
       ]
     }
   },
@@ -989,9 +919,9 @@
       "is_real_security_camera": true,
       "lens_mm": 24.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 58.72,
+      "fov_v_deg": 45.75,
       "fov_h_deg": 73.74,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 250.0,
       "blender_transform": {
@@ -1046,9 +976,9 @@
       "is_real_security_camera": true,
       "lens_mm": 26.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 54.88,
+      "fov_v_deg": 42.55,
       "fov_h_deg": 69.39,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1103,9 +1033,9 @@
       "is_real_security_camera": true,
       "lens_mm": 38.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 39.12,
+      "fov_v_deg": 29.84,
       "fov_h_deg": 50.69,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1160,9 +1090,9 @@
       "is_real_security_camera": true,
       "lens_mm": 24.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 58.72,
+      "fov_v_deg": 45.75,
       "fov_h_deg": 73.74,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1217,9 +1147,9 @@
       "is_real_security_camera": true,
       "lens_mm": 22.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 63.07,
+      "fov_v_deg": 49.43,
       "fov_h_deg": 78.58,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1274,9 +1204,9 @@
       "is_real_security_camera": true,
       "lens_mm": 26.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 54.88,
+      "fov_v_deg": 42.55,
       "fov_h_deg": 69.39,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1331,9 +1261,9 @@
       "is_real_security_camera": true,
       "lens_mm": 26.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 54.88,
+      "fov_v_deg": 42.55,
       "fov_h_deg": 69.39,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1380,6 +1310,576 @@
         ]
       }
     },
+    "Cam_Hearth_Clearance": {
+      "name": "Cam_Hearth_Clearance",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Hearth_Clearance",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 45.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 25.36,
+      "fov_h_deg": 43.6,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          2.2,
+          -2.6,
+          1.4
+        ],
+        "quaternion": [
+          0.46375,
+          0.24819,
+          0.40131,
+          0.74985
+        ],
+        "rotation_euler_deg": [
+          63.47,
+          -0.0,
+          56.31
+        ],
+        "matrix_world": [
+          0.5547,
+          -0.371646,
+          0.744438,
+          2.2,
+          0.832051,
+          0.247764,
+          -0.496291,
+          -2.6,
+          0.0,
+          0.894703,
+          0.446662,
+          1.4,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          2.2,
+          1.4,
+          2.6
+        ]
+      }
+    },
+    "Cam_Preview_Dishwasher": {
+      "name": "Cam_Preview_Dishwasher",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Preview_Dishwasher",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 50.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 22.9,
+      "fov_h_deg": 39.6,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 1000.0,
+      "blender_transform": {
+        "position": [
+          8.15,
+          -5.2,
+          1.25
+        ],
+        "quaternion": [
+          0.0,
+          0.6249,
+          0.78071,
+          0.0
+        ],
+        "rotation_euler_deg": [
+          77.35,
+          -0.0,
+          180.0
+        ],
+        "matrix_world": [
+          -1.0,
+          -1e-06,
+          2e-06,
+          8.15,
+          3e-06,
+          -0.219007,
+          0.975723,
+          -5.2,
+          0.0,
+          0.975723,
+          0.219007,
+          1.25,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          8.15,
+          1.25,
+          5.2
+        ]
+      }
+    },
+    "Cam_Salotto_Chair": {
+      "name": "Cam_Salotto_Chair",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_Chair",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 45.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 25.36,
+      "fov_h_deg": 43.6,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          3.6,
+          -5.5,
+          1.2
+        ],
+        "quaternion": [
+          0.17054,
+          0.43618,
+          0.82289,
+          0.32174
+        ],
+        "rotation_euler_deg": [
+          55.85,
+          -0.0,
+          137.29
+        ],
+        "matrix_world": [
+          -0.734804,
+          -0.380743,
+          0.561336,
+          3.6,
+          0.67828,
+          -0.412472,
+          0.608115,
+          -5.5,
+          0.0,
+          0.827588,
+          0.561336,
+          1.2,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          3.6,
+          1.2,
+          5.5
+        ]
+      }
+    },
+    "Cam_Salotto_Chair_South": {
+      "name": "Cam_Salotto_Chair_South",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_Chair_South",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 38.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 29.84,
+      "fov_h_deg": 50.69,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          3.8,
+          -5.3,
+          1.1
+        ],
+        "quaternion": [
+          0.20216,
+          0.49856,
+          0.78117,
+          0.31676
+        ],
+        "rotation_euler_deg": [
+          65.09,
+          0.0,
+          135.86
+        ],
+        "matrix_world": [
+          -0.717581,
+          -0.29331,
+          0.631702,
+          3.8,
+          0.696475,
+          -0.302198,
+          0.650844,
+          -5.3,
+          -0.0,
+          0.906998,
+          0.421134,
+          1.1,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          3.8,
+          1.1,
+          5.3
+        ]
+      }
+    },
+    "Cam_Salotto_FromKitchen": {
+      "name": "Cam_Salotto_FromKitchen",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_FromKitchen",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 24.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 45.75,
+      "fov_h_deg": 73.74,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          6.8,
+          -5.8,
+          1.45
+        ],
+        "quaternion": [
+          0.57626,
+          0.34323,
+          0.37954,
+          0.63723
+        ],
+        "rotation_euler_deg": [
+          84.25,
+          -0.0,
+          61.56
+        ],
+        "matrix_world": [
+          0.476283,
+          -0.088144,
+          0.874863,
+          6.8,
+          0.879292,
+          0.047745,
+          -0.473884,
+          -5.8,
+          0.0,
+          0.994963,
+          0.100245,
+          1.45,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          6.8,
+          1.45,
+          5.8
+        ]
+      }
+    },
+    "Cam_Salotto_Overview": {
+      "name": "Cam_Salotto_Overview",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_Overview",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 28.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 39.76,
+      "fov_h_deg": 65.47,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          5.2,
+          -6.5,
+          1.6
+        ],
+        "quaternion": [
+          0.62366,
+          0.24213,
+          0.269,
+          0.69287
+        ],
+        "rotation_euler_deg": [
+          83.98,
+          -0.0,
+          42.44
+        ],
+        "matrix_world": [
+          0.738029,
+          -0.07075,
+          0.67105,
+          5.2,
+          0.674769,
+          0.077383,
+          -0.733961,
+          -6.5,
+          0.0,
+          0.994488,
+          0.104851,
+          1.6,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          5.2,
+          1.6,
+          6.5
+        ]
+      }
+    },
+    "Cam_Salotto_Sofas": {
+      "name": "Cam_Salotto_Sofas",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_Sofas",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 24.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 45.75,
+      "fov_h_deg": 73.74,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          1.8,
+          -4.5,
+          1.35
+        ],
+        "quaternion": [
+          0.61386,
+          -0.25427,
+          -0.286,
+          0.69045
+        ],
+        "rotation_euler_deg": [
+          83.28,
+          0.0,
+          -45.0
+        ],
+        "matrix_world": [
+          0.707107,
+          0.082761,
+          -0.702247,
+          1.8,
+          -0.707107,
+          0.08276,
+          -0.702247,
+          -4.5,
+          -0.0,
+          0.993127,
+          0.117041,
+          1.35,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          1.8,
+          1.35,
+          4.5
+        ]
+      }
+    },
+    "Cam_Salotto_South": {
+      "name": "Cam_Salotto_South",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_South",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 35.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 32.27,
+      "fov_h_deg": 54.43,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          3.2,
+          -4.5,
+          1.4
+        ],
+        "quaternion": [
+          0.30494,
+          0.60053,
+          0.65907,
+          0.33467
+        ],
+        "rotation_euler_deg": [
+          84.68,
+          0.0,
+          126.16
+        ],
+        "matrix_world": [
+          -0.590017,
+          -0.074892,
+          0.80391,
+          3.2,
+          0.807391,
+          -0.054729,
+          0.587473,
+          -4.5,
+          -0.0,
+          0.995689,
+          0.092759,
+          1.4,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          3.2,
+          1.4,
+          4.5
+        ]
+      }
+    },
+    "Cam_Salotto_Stove": {
+      "name": "Cam_Salotto_Stove",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_Stove",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 30.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 37.3,
+      "fov_h_deg": 61.93,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          2.8,
+          -2.6,
+          1.5
+        ],
+        "quaternion": [
+          0.64632,
+          0.28683,
+          0.28683,
+          0.64632
+        ],
+        "rotation_euler_deg": [
+          90.0,
+          -0.0,
+          47.86
+        ],
+        "matrix_world": [
+          0.670913,
+          0.0,
+          0.741536,
+          2.8,
+          0.741536,
+          -0.0,
+          -0.670913,
+          -2.6,
+          0.0,
+          1.0,
+          -0.0,
+          1.5,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          2.8,
+          1.5,
+          2.6
+        ]
+      }
+    },
+    "Cam_Salotto_TV_Wall": {
+      "name": "Cam_Salotto_TV_Wall",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Salotto_TV_Wall",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 24.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 45.75,
+      "fov_h_deg": 73.74,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          2.8,
+          -3.8,
+          1.2
+        ],
+        "quaternion": [
+          0.56318,
+          0.3286,
+          0.38209,
+          0.65487
+        ],
+        "rotation_euler_deg": [
+          81.39,
+          -0.0,
+          60.52
+        ],
+        "matrix_world": [
+          0.492057,
+          -0.13032,
+          0.860753,
+          2.8,
+          0.870563,
+          0.073659,
+          -0.486513,
+          -3.8,
+          0.0,
+          0.988732,
+          0.149696,
+          1.2,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          2.8,
+          1.2,
+          3.8
+        ]
+      }
+    },
     "Cam_Sink_Detail": {
       "name": "Cam_Sink_Detail",
       "ha_camera_entity": "",
@@ -1388,9 +1888,9 @@
       "is_real_security_camera": true,
       "lens_mm": 32.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 45.75,
+      "fov_v_deg": 35.12,
       "fov_h_deg": 58.72,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1445,9 +1945,9 @@
       "is_real_security_camera": true,
       "lens_mm": 28.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 51.48,
+      "fov_v_deg": 39.76,
       "fov_h_deg": 65.47,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1494,6 +1994,63 @@
         ]
       }
     },
+    "Cam_Stove_Profile": {
+      "name": "Cam_Stove_Profile",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_Stove_Profile",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 38.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 29.84,
+      "fov_h_deg": 50.69,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          2.6,
+          -0.4,
+          1.8
+        ],
+        "quaternion": [
+          0.45936,
+          0.53758,
+          0.53758,
+          0.45936
+        ],
+        "rotation_euler_deg": [
+          90.0,
+          -0.0,
+          98.97
+        ],
+        "matrix_world": [
+          -0.155963,
+          -0.0,
+          0.987763,
+          2.6,
+          0.987763,
+          -0.0,
+          0.155963,
+          -0.4,
+          0.0,
+          1.0,
+          0.0,
+          1.8,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          2.6,
+          1.8,
+          0.4
+        ]
+      }
+    },
     "Cam_User_Feedback_View": {
       "name": "Cam_User_Feedback_View",
       "ha_camera_entity": "",
@@ -1502,9 +2059,9 @@
       "is_real_security_camera": true,
       "lens_mm": 24.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 58.72,
+      "fov_v_deg": 45.75,
       "fov_h_deg": 73.74,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1559,9 +2116,9 @@
       "is_real_security_camera": true,
       "lens_mm": 32.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 45.75,
+      "fov_v_deg": 35.12,
       "fov_h_deg": 58.72,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1608,6 +2165,63 @@
         ]
       }
     },
+    "Cam_WebUI_Perspective": {
+      "name": "Cam_WebUI_Perspective",
+      "ha_camera_entity": "",
+      "ha_label": "Cam_WebUI_Perspective",
+      "coverage_zone": "general",
+      "is_real_security_camera": true,
+      "lens_mm": 32.0,
+      "sensor_width_mm": 36.0,
+      "fov_v_deg": 35.12,
+      "fov_h_deg": 58.72,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 100.0,
+      "blender_transform": {
+        "position": [
+          5.8,
+          -4.6,
+          3.2
+        ],
+        "quaternion": [
+          0.43306,
+          0.35241,
+          0.52364,
+          0.64348
+        ],
+        "rotation_euler_deg": [
+          67.88,
+          -0.0,
+          78.27
+        ],
+        "matrix_world": [
+          0.203216,
+          -0.368666,
+          0.907077,
+          5.8,
+          0.979134,
+          0.076515,
+          -0.188261,
+          -4.6,
+          0.0,
+          0.926407,
+          0.376523,
+          3.2,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          5.8,
+          3.2,
+          4.6
+        ]
+      }
+    },
     "Cam_West_Counter_Detail": {
       "name": "Cam_West_Counter_Detail",
       "ha_camera_entity": "",
@@ -1616,9 +2230,9 @@
       "is_real_security_camera": true,
       "lens_mm": 28.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 51.48,
+      "fov_v_deg": 39.76,
       "fov_h_deg": 65.47,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1673,9 +2287,9 @@
       "is_real_security_camera": true,
       "lens_mm": 32.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 45.75,
+      "fov_v_deg": 35.12,
       "fov_h_deg": 58.72,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1730,9 +2344,9 @@
       "is_real_security_camera": true,
       "lens_mm": 32.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 45.75,
+      "fov_v_deg": 35.12,
       "fov_h_deg": 58.72,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 200.0,
       "blender_transform": {
@@ -1787,9 +2401,9 @@
       "is_real_security_camera": true,
       "lens_mm": 28.0,
       "sensor_width_mm": 36.0,
-      "fov_v_deg": 51.48,
+      "fov_v_deg": 39.76,
       "fov_h_deg": 65.47,
-      "aspect_ratio": 1.3333,
+      "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 1000.0,
       "blender_transform": {
@@ -1960,12 +2574,12 @@
       "centroid": [
         2.375,
         -13.93,
-        -0.025
+        -0.024
       ],
       "dimensions": [
         4.15,
         2.6,
-        0.05
+        0.052
       ]
     },
     {

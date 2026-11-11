@@ -7,7 +7,7 @@ export class CameraProjector {
 
     this.raycaster = new THREE.Raycaster();
     this.frustumHelpers = new Map();
-    this.frustumsVisible = true; // Visibile di default per evidenziare la copertura reale
+    this.frustumsVisible = false; // Nascosto di default all'avvio su richiesta dell'utente
     this.groundColliders = [];
   }
 

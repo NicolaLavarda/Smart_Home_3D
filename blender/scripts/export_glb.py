@@ -39,6 +39,8 @@ MATERIAL_COLOR_OVERRIDES = {
     "Mat_Switch_Plate": (0.92, 0.92, 0.94, 1.0),               # Placca interruttori
     "Mat_Laccato_Bianco": (0.82, 0.81, 0.79, 1.0),             # Bianco caldo opaco satinato mobili/termoarredo
     "Mat_Lampada_Isola": (0.95, 0.94, 0.90, 1.0),              # Diffusore sospensione isola
+    "Mat_Macchina_Caffe_Corpo": (0.14, 0.14, 0.16, 1.0),       # Antracite scuro opaco macchina caffe
+    "Mat_Vetro_Nero_TV": (0.02, 0.02, 0.02, 1.0),              # Nero lucido display/TV/schermi
 }
 
 

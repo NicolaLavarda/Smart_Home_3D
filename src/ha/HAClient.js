@@ -567,6 +567,19 @@ export class HAClient {
     this.notifyEntities({ ...this.mockEntities });
   }
 
+  setMockEntityState(entityId, state, attributes = {}) {
+    if (this.mockEntities && this.mockEntities[entityId]) {
+      this.mockEntities[entityId].state = state;
+      if (attributes && Object.keys(attributes).length > 0) {
+        this.mockEntities[entityId].attributes = {
+          ...this.mockEntities[entityId].attributes,
+          ...attributes,
+        };
+      }
+      this.notifyEntities({ ...this.mockEntities });
+    }
+  }
+
   getEntity(entityId) {
     if (this.entities && this.entities[entityId]) {
       return this.entities[entityId];

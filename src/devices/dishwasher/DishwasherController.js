@@ -39,6 +39,10 @@ export class DishwasherController extends BaseDeviceController {
 
     this.modalView = new DishwasherModal(this);
     this.displayMesh = null;
+    this.doorPivot = null;
+    this.currentDoorAngle = 0.0;
+    this.targetDoorAngle = 0.0;
+    this.maxDoorAngle = -THREE.MathUtils.degToRad(40); // -40 gradi di rotazione verso l'esterno
     this.animationTimer = 0;
     this.isModalOpen = false;
   }
@@ -98,8 +102,30 @@ export class DishwasherController extends BaseDeviceController {
   isDoorOpen() {
     const door = this.getEntity('sensor.lavastoviglie_porta');
     if (!door) return false;
-    const s = String(door.state).toLowerCase();
-    return s === 'on' || s === 'open' || s === 'aperta';
+    const s = String(door.state).toLowerCase().trim();
+    return s === 'on' || s === 'open' || s === 'aperta' || s === 'true' || s === 'opened';
+  }
+
+  updateDoorState() {
+    const isOpen = this.isDoorOpen();
+    this.targetDoorAngle = isOpen ? this.maxDoorAngle : 0.0;
+  }
+
+  toggleDoor() {
+    const isOpen = this.isDoorOpen();
+    const nextState = isOpen ? 'closed' : 'open';
+    if (this.haClient) {
+      if (typeof this.haClient.setMockEntityState === 'function') {
+        this.haClient.setMockEntityState('sensor.lavastoviglie_porta', nextState);
+      } else if (this.haClient.isMockMode && this.haClient.mockEntities && this.haClient.mockEntities['sensor.lavastoviglie_porta']) {
+        this.haClient.mockEntities['sensor.lavastoviglie_porta'].state = nextState;
+        this.haClient.notifyEntities({ ...this.haClient.mockEntities });
+      } else {
+        this.haClient.callService('homeassistant', 'toggle', {
+          entity_id: 'sensor.lavastoviglie_porta',
+        });
+      }
+    }
   }
 
   isSaltLow() {
@@ -152,25 +178,49 @@ export class DishwasherController extends BaseDeviceController {
     });
   }
 
-  // --- BINDING 3D & FEEDBACK LUMINOSO ---
+  // --- BINDING 3D & FEEDBACK LUMINOSO & APERTURA PORTA ---
 
   bind3D(meshes, scene, context) {
     super.bind3D(meshes, scene, context);
 
-    // Cerca la mesh del display LED / pannello comandi
-    meshes.forEach((mesh) => {
-      if (mesh.name === 'Lavastoviglie_Display') {
-        this.displayMesh = mesh;
-      }
-    });
+    if (context && context.haClient) {
+      this.haClient = context.haClient;
+    }
 
-    if (!this.displayMesh) {
-      scene.traverse((node) => {
-        if (node.isMesh && node.name === 'Lavastoviglie_Display') {
-          this.displayMesh = node;
+    // Assicura che le matrici world della scena siano aggiornate
+    scene.updateMatrixWorld(true);
+
+    // 1. Configura cerniera inferiore e pivot per l'apertura dello sportello a 40°
+    if (!this.doorPivot) {
+      // Hinge alla base dell'anta (Y = 0.130, Z = 7.090, centrato a X = 8.465)
+      const hingePos = new THREE.Vector3(8.465, 0.130, 7.090);
+      this.doorPivot = new THREE.Group();
+      this.doorPivot.name = 'Lavastoviglie_Door_Pivot';
+      this.doorPivot.position.copy(hingePos);
+      scene.add(this.doorPivot);
+      this.doorPivot.updateMatrixWorld(true);
+
+      const doorMeshNames = [
+        'Lavastoviglie',
+        'Lavastoviglie_Bugna',
+        'Lavastoviglie_Pannello_Comandi',
+        'Lavastoviglie_Display',
+        'Lavastoviglie_Maniglia'
+      ];
+
+      doorMeshNames.forEach((name) => {
+        const mesh = scene.getObjectByName(name);
+        if (mesh) {
+          mesh.updateMatrixWorld(true);
+          this.doorPivot.attach(mesh);
         }
       });
+
+      console.log(`[DishwasherController] Cerniera porta configurata con ${this.doorPivot.children.length} componenti dell'anta.`);
     }
+
+    // Cerca la mesh del display LED / pannello comandi
+    this.displayMesh = scene.getObjectByName('Lavastoviglie_Display');
 
     if (this.displayMesh) {
       // Clona materiale per non condividere modifiche emissive accidentali
@@ -178,6 +228,13 @@ export class DishwasherController extends BaseDeviceController {
         this.displayMesh.material = this.displayMesh.material.clone();
       }
       this.update3DDisplayLighting();
+    }
+
+    // Inizializza stato porta in base ad HA
+    this.updateDoorState();
+    this.currentDoorAngle = this.targetDoorAngle;
+    if (this.doorPivot) {
+      this.doorPivot.rotation.x = this.currentDoorAngle;
     }
   }
 
@@ -211,6 +268,7 @@ export class DishwasherController extends BaseDeviceController {
   update3D(stateObj, allEntities) {
     super.update3D(stateObj, allEntities);
     this.update3DDisplayLighting();
+    this.updateDoorState();
     if (this.modalView && this.isModalOpen) {
       this.modalView.updateLive();
     }
@@ -225,6 +283,20 @@ export class DishwasherController extends BaseDeviceController {
       // Pulsazione sottile ed elegante del display cyan in funzione
       const pulse = Math.sin(this.animationTimer * 3.5) * 0.35 + 1.25;
       this.displayMesh.material.emissiveIntensity = pulse;
+    }
+
+    // Transizione fluida apertura / chiusura porta a 40° attorno alla cerniera inferiore
+    if (this.doorPivot) {
+      const diff = this.targetDoorAngle - this.currentDoorAngle;
+      if (Math.abs(diff) > 0.0002) {
+        // Damping fisico con decelerazione morbida
+        const t = Math.min(1.0, delta * 5.0);
+        this.currentDoorAngle += diff * t;
+        if (Math.abs(this.targetDoorAngle - this.currentDoorAngle) < 0.0005) {
+          this.currentDoorAngle = this.targetDoorAngle;
+        }
+        this.doorPivot.rotation.x = this.currentDoorAngle;
+      }
     }
   }
 

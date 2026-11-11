@@ -37,6 +37,10 @@ export class TopBar {
           📹 <span>Copertura Camere</span>
         </button>
 
+        <button class="btn-icon-text" id="btn-toggle-badges" title="Mostra/Nascondi badge dei dispositivi">
+          🏷️ <span>Badge Dispositivi</span>
+        </button>
+
         <div style="position: relative;">
           <button class="btn-icon-text" id="btn-view-menu">
             🧭 <span>Viste ▾</span>
@@ -50,6 +54,7 @@ export class TopBar {
     this.nightBtn = this.container.querySelector('#btn-toggle-night');
     this.nightText = this.container.querySelector('#night-text');
     this.frustumsBtn = this.container.querySelector('#btn-toggle-frustums');
+    this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
 
     // Ascolta lo stato di HA
     this.haClient.onStatusChange((status, details) => {
@@ -72,6 +77,12 @@ export class TopBar {
     this.frustumsBtn.addEventListener('click', () => {
       const isVisible = this.cameraProjector.toggleFrustums();
       this.frustumsBtn.classList.toggle('active', isVisible);
+    });
+
+    // Toggle Badges Dispositivi
+    this.badgesBtn.addEventListener('click', () => {
+      const isVisible = this.interactionManager.toggleBadges();
+      this.badgesBtn.classList.toggle('active', isVisible);
     });
 
     // Quicknav laterale per viste

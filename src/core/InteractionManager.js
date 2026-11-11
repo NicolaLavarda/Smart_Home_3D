@@ -17,6 +17,7 @@ export class InteractionManager {
     this.originalEmissive = new Map();
     this.deviceBadges = new Map(); // entity_id -> { element, dot, valEl, css2dObj, position }
     this.thermal3DBadges = new Map(); // entity_id -> { canvas, ctx, texture, material, decalMesh, ringColor, sublabel, currentVal }
+    this.badgesVisible = false; // Default nascosti all'avvio su richiesta dell'utente
 
     this.onPointerMove = this.onPointerMove.bind(this);
     this.onPointerDown = this.onPointerDown.bind(this);
@@ -75,8 +76,14 @@ export class InteractionManager {
         bbox.getCenter(center);
         center.y += 0.45;
       } else if (entityId === 'light.smart_plug_in_unit_switch_3') {
-        // Centro soffitto salotto sotto i 6 faretti
-        center.set(3.20, 2.75, 3.55);
+        // Centro soffitto salotto sotto i 6 faretti (griglia 2x3 centrata a X=3.20, Z=3.35)
+        center.set(3.20, 2.75, 3.35);
+      } else if (entityId === 'sensor.lavastoviglie_stato_di_funzionamento') {
+        // Ancorato esattamente sopra il top della lavastoviglie in cucina
+        center.set(8.465, 1.05, 7.085);
+      } else if (entityId === 'media_player.smart_tv_lg_oled_2' || entityId === 'media_player.lg_webos_smart_tv') {
+        // Ancorato sopra la Smart TV LG OLED in salotto
+        center.set(0.59, 1.85, 2.65);
       } else {
         const bbox = new THREE.Box3();
         meshes.forEach((m) => bbox.expandByObject(m));
@@ -104,6 +111,18 @@ export class InteractionManager {
           <span class="badge-val" style="color: #38bdf8; font-weight: 600;">Pronto</span>
         `;
         valEl = badgeEl.querySelector('.badge-val');
+      } else if (entityId === 'media_player.smart_tv_lg_oled_2' || entityId === 'media_player.lg_webos_smart_tv') {
+        // Badge Smart TV OLED
+        badgeEl = document.createElement('div');
+        badgeEl.className = 'device-badge-3d state-off badge-tv';
+        badgeEl.dataset.entityId = entityId;
+        badgeEl.innerHTML = `
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+            <polyline points="17 2 12 7 7 2"></polyline>
+          </svg>
+          <span class="badge-name">Smart TV OLED</span>
+        `;
       } else {
         // Badge standard interruttori / luci / telecamere
         badgeEl = document.createElement('div');
@@ -128,6 +147,10 @@ export class InteractionManager {
 
         const css2dObj = new CSS2DObject(badgeEl);
         css2dObj.position.copy(center);
+        css2dObj.visible = this.badgesVisible;
+        if (!this.badgesVisible) {
+          badgeEl.style.display = 'none';
+        }
         this.scene.add(css2dObj);
 
         this.deviceBadges.set(entityId, { element: badgeEl, dot: dotEl, valEl, css2dObj, position: center.clone() });
@@ -146,8 +169,12 @@ export class InteractionManager {
     const pos = new THREE.Vector3();
     sensorMesh.getWorldPosition(pos);
 
-    // Nasconde il cilindretto grezzo di placeholder di Blender
-    meshes.forEach((m) => (m.visible = false));
+    // Nasconde solo il cilindretto grezzo di placeholder di Blender (Sensor_*)
+    meshes.forEach((m) => {
+      if (m.name && m.name.startsWith('Sensor_')) {
+        m.visible = false;
+      }
+    });
 
     const isPuffer = badgeStyle === 'puffer_high' || badgeStyle === 'puffer_low';
     const isPufferLow = badgeStyle === 'puffer_low';
@@ -213,6 +240,7 @@ export class InteractionManager {
       ha_name: entData.name || entityId,
       isThermalBadge: true,
     };
+    decalMesh.visible = true; // Componente 3D reale con quadranti temperatura della centrale termica
 
     this.scene.add(decalMesh);
     this.interactiveObjects.push(decalMesh);
@@ -357,11 +385,38 @@ export class InteractionManager {
   }
 
   /**
+   * Mostra o nasconde i badge fluttuanti CSS2D dei dispositivi
+   */
+  setBadgesVisible(visible) {
+    this.badgesVisible = visible !== undefined ? visible : !this.badgesVisible;
+
+    // Badge CSS2D standard dei dispositivi (luci, cancelli, interruttori, elettrodomestici, TV)
+    this.deviceBadges.forEach((badge) => {
+      if (badge.css2dObj) {
+        badge.css2dObj.visible = this.badgesVisible;
+      }
+      if (badge.element) {
+        badge.element.style.display = this.badgesVisible ? '' : 'none';
+      }
+    });
+
+    console.log(`[InteractionManager] Visibilità badge dispositivi impostata a: ${this.badgesVisible}`);
+    return this.badgesVisible;
+  }
+
+  /**
+   * Alterna la visibilità dei badge
+   */
+  toggleBadges(visible) {
+    return this.setBadgesVisible(visible);
+  }
+
+  /**
    * Aggiorna la scala dei badge CSS2D in base alla distanza della camera
    * per evitare che diventino giganteschi nella vista Panoramica.
    */
   update(camera) {
-    if (!camera || this.deviceBadges.size === 0) return;
+    if (!camera || !this.badgesVisible || this.deviceBadges.size === 0) return;
 
     const camPos = camera.position;
     this.deviceBadges.forEach((badge) => {
@@ -397,8 +452,12 @@ export class InteractionManager {
         this.hoveredObject = topObj;
         this.domElement.style.cursor = 'pointer';
 
-        // Evidenzia materiale emissivo se presente
+        // Evidenzia materiale emissivo se presente (clona se condiviso per evitare side-effect grafici)
         if (topObj.material && 'emissive' in topObj.material) {
+          if (!topObj.userData._materialCloned) {
+            topObj.material = topObj.material.clone();
+            topObj.userData._materialCloned = true;
+          }
           if (!this.originalEmissive.has(topObj)) {
             this.originalEmissive.set(topObj, topObj.material.emissive.getHex());
           }

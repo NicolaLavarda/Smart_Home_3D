@@ -392,8 +392,14 @@ export class AssetLoader {
             });
             node.material.needsUpdate = true;
           }
-          // 10. Vetri -> TRASPARENTI E RIFLETTENTI
-          else if (matName.includes('Vetro') || objName.includes('_Glass')) {
+          // 10. Vetri -> TRASPARENTI E RIFLETTENTI (escludi Vetro_Nero / display / schermi / macchine da caffe)
+          else if (
+            ((matName.includes('Vetro') || objName.includes('_Glass')) &&
+             !matName.includes('Vetro_Nero') &&
+             !objName.includes('Screen') &&
+             !objName.includes('Display') &&
+             !objName.includes('Caffe'))
+          ) {
             node.material = new THREE.MeshStandardMaterial({
               name: 'Mat_Vetro_Render',
               color: 0x99ccff,
@@ -401,6 +407,22 @@ export class AssetLoader {
               opacity: 0.35,
               roughness: 0.05,
               metalness: 0.2,
+            });
+          }
+          // 10b. Schermi TV, Display digitali e Macchina del Caffè -> OPACHI NERI/ANTRACITE
+          else if (
+            matName.includes('Vetro_Nero') ||
+            matName.includes('Macchina_Caffe') ||
+            objName.includes('Macchina_Caffe') ||
+            matName.includes('Display')
+          ) {
+            node.material = new THREE.MeshStandardMaterial({
+              name: 'Mat_Vetro_Nero_Display_Opaque',
+              color: (matName.includes('Macchina_Caffe') || objName.includes('Caffe')) ? 0x222428 : 0x050508,
+              roughness: 0.25,
+              metalness: 0.35,
+              transparent: false,
+              opacity: 1.0,
             });
           }
           // 11. Recinzione e Cancelli metallici -> METALLO SCURO
@@ -411,6 +433,16 @@ export class AssetLoader {
               roughness: 0.40,
               metalness: 0.8,
             });
+          }
+          // 11b. Vasca interna lavastoviglie -> INOX SATINATO
+          else if (objName.includes('Lavastoviglie') && objName.includes('Scocca')) {
+            node.material = new THREE.MeshStandardMaterial({
+              name: 'Mat_Lavastoviglie_Vasca_Inox',
+              color: 0x475569, // Inox satinato scuro per la vasca interna
+              roughness: 0.25,
+              metalness: 0.85,
+            });
+            node.material.needsUpdate = true;
           }
           // 12. Porte e Arredi in Legno -> NOCE / ROVERE CALDO
           else if (matName.includes('Legno') || matName.includes('Porta') || objName.startsWith('Door_') || objName.includes('Tavolo') || objName.includes('Sedia')) {
@@ -481,9 +513,9 @@ export class AssetLoader {
 
       // Registrazione Entità Home Assistant
       let haEntity = node.userData.ha_entity;
-      if (node.name === 'TV_Salotto_Screen' || node.name === 'TV_Salotto_Bezel' || haEntity === 'media_player.smart_tv_lg_oled_2') {
-        haEntity = 'media_player.lg_webos_smart_tv';
-        node.userData.ha_entity = 'media_player.lg_webos_smart_tv';
+      if (node.name === 'TV_Salotto_Screen' || node.name === 'TV_Salotto_Bezel') {
+        haEntity = 'media_player.smart_tv_lg_oled_2';
+        node.userData.ha_entity = 'media_player.smart_tv_lg_oled_2';
       }
 
       if (haEntity) {
@@ -491,6 +523,14 @@ export class AssetLoader {
           this.haEntitiesMap.set(haEntity, []);
         }
         this.haEntitiesMap.get(haEntity).push(node);
+
+        // Alias retrocompatibile per TV
+        if (haEntity === 'media_player.smart_tv_lg_oled_2') {
+          if (!this.haEntitiesMap.has('media_player.lg_webos_smart_tv')) {
+            this.haEntitiesMap.set('media_player.lg_webos_smart_tv', []);
+          }
+          this.haEntitiesMap.get('media_player.lg_webos_smart_tv').push(node);
+        }
       }
 
       const haAltEntity = node.userData.ha_alt_entity;

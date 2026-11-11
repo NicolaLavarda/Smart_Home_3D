@@ -29,6 +29,14 @@ import math
 
 print("=== Starting Watertight Photorealistic Scene Generation v2 ===")
 
+import sys
+if len(bpy.data.objects) > 0 and "--force-rebuild-all" not in sys.argv:
+    raise RuntimeError(
+        f"SAFETY ABORT: Scene currently contains {len(bpy.data.objects)} objects! "
+        "Running build_clean_scene_v2.py would destroy the entire scene including all manual and refined modeling. "
+        "If you truly want to rebuild from scratch, pass '--force-rebuild-all' as an argument."
+    )
+
 # 1. Clean Scene
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.object.delete(use_global=False)

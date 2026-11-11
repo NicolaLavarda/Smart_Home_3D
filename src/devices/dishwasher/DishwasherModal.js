@@ -196,13 +196,13 @@ export class DishwasherModal {
             </div>
           </div>
 
-          <div class="consumable-pill ${isDoorOpen ? 'info' : 'ok'}">
+          <div class="consumable-pill ${isDoorOpen ? 'info' : 'ok'}" id="btn-toggle-door-modal" style="cursor: pointer;" title="Clicca per testare l'apertura/chiusura della porta 3D (40°)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 21h18M6 21V3h12v18M14 12v.01"></path>
             </svg>
             <div>
-              <div class="consumable-label">Sportello</div>
-              <div class="consumable-val">${isDoorOpen ? 'Aperto' : 'Chiuso'}</div>
+              <div class="consumable-label">Sportello (Porta)</div>
+              <div class="consumable-val">${isDoorOpen ? 'Aperto (40°)' : 'Chiuso'}</div>
             </div>
           </div>
         </div>
@@ -277,6 +277,15 @@ export class DishwasherModal {
         setTimeout(() => this.render(container), 200);
       });
     });
+
+    // 6. Test Sportello / Porta (40°)
+    const doorBtn = container.querySelector('#btn-toggle-door-modal');
+    if (doorBtn) {
+      doorBtn.addEventListener('click', () => {
+        this.controller.toggleDoor();
+        setTimeout(() => this.render(container), 150);
+      });
+    }
   }
 
   updateLive() {

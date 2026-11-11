@@ -94,7 +94,7 @@ export class TVModal {
           </div>
         </div>
         <button class="${isPoweredOn ? 'btn-power-off' : 'btn-power-on'}" id="tv-modal-power-btn">
-          ${isPoweredOn ? '⏻ Spegni TV' : '⚡ Accendi (WoL)'}
+          ${isPoweredOn ? '⏻ Spegni TV' : '⏻ Accendi'}
         </button>
       </div>
 

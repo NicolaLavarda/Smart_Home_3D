@@ -151,8 +151,8 @@ if not dish_scocca:
     bpy.ops.object.transform_apply(location=True, scale=True, rotation=True)
     if mat_noce:
         dish_scocca.data.materials.append(mat_noce)
-    # Assicura che sia nella collection Cucina
-    coll_cucina = bpy.data.collections.get("Cucina") or bpy.context.scene.collection
+    # Assicura che sia nella collection Arredi
+    coll_cucina = bpy.data.collections.get("09_Arredi_Principali") or bpy.data.collections.get("Cucina") or bpy.context.scene.collection
     if dish_scocca.name not in coll_cucina.objects:
         coll_cucina.objects.link(dish_scocca)
         if dish_scocca.name in bpy.context.scene.collection.objects and coll_cucina != bpy.context.scene.collection:
@@ -265,7 +265,7 @@ for o in [dish_obj, dish_panel, dish_disp]:
     o["ha_action"] = "modal"
 
 # Assicura che gli oggetti siano nella collection corretta
-coll_dev = bpy.data.collections.get("Devices") or bpy.data.collections.get("Cucina") or bpy.context.scene.collection
+coll_dev = bpy.data.collections.get("09_Arredi_Principali") or bpy.data.collections.get("Devices") or bpy.data.collections.get("Cucina") or bpy.context.scene.collection
 for o in [dish_obj, dish_bugna, dish_panel, dish_disp, dish_handle]:
     if o.name not in coll_dev.objects:
         coll_dev.objects.link(o)
