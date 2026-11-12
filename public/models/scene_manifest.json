@@ -214,6 +214,161 @@
         5.9
       ]
     },
+    "vacuum.deebot": {
+      "entity_id": "vacuum.deebot",
+      "domain": "vacuum",
+      "name": "Ecovacs Deebot",
+      "action": "modal",
+      "ui_type": "vacuum",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Ecovacs_Deebot_Body",
+          "type": "MESH",
+          "centroid": [
+            13.63,
+            -1.65,
+            0.051
+          ],
+          "dimensions": [
+            0.34,
+            0.34,
+            0.078
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Bumper",
+          "type": "MESH",
+          "centroid": [
+            13.625,
+            -1.65,
+            0.0393
+          ],
+          "dimensions": [
+            0.348,
+            0.348,
+            0.055
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Dock_Base",
+          "type": "MESH",
+          "centroid": [
+            13.72,
+            -1.65,
+            0.007
+          ],
+          "dimensions": [
+            0.36,
+            0.38,
+            0.014
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Dock_LED",
+          "type": "MESH",
+          "centroid": [
+            13.738,
+            -1.65,
+            0.339
+          ],
+          "dimensions": [
+            0.005,
+            0.05,
+            0.006
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Dock_Slot",
+          "type": "MESH",
+          "centroid": [
+            13.745,
+            -1.65,
+            0.084
+          ],
+          "dimensions": [
+            0.015,
+            0.22,
+            0.1
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Dock_Tower",
+          "type": "MESH",
+          "centroid": [
+            13.82,
+            -1.65,
+            0.194
+          ],
+          "dimensions": [
+            0.16,
+            0.32,
+            0.36
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Lidar",
+          "type": "MESH",
+          "centroid": [
+            13.645,
+            -1.65,
+            0.101
+          ],
+          "dimensions": [
+            0.084,
+            0.084,
+            0.022
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Lidar_Ring",
+          "type": "MESH",
+          "centroid": [
+            13.645,
+            -1.65,
+            0.101
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.008
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Ecovacs_Deebot_Power_Button",
+          "type": "MESH",
+          "centroid": [
+            13.545,
+            -1.65,
+            0.092
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.004
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        13.63,
+        -1.65,
+        0.051
+      ],
+      "centroid_gltf": [
+        13.63,
+        0.051,
+        1.65
+      ]
+    },
     "switch.switch_casa_interruttore_1": {
       "entity_id": "switch.switch_casa_interruttore_1",
       "domain": "switch",
@@ -752,6 +907,561 @@
         1.25,
         0.48,
         14.54
+      ]
+    },
+    "switch.smart_switch_area1": {
+      "entity_id": "switch.smart_switch_area1",
+      "domain": "switch",
+      "name": "Irrigatore Area 1 - 1 (Sud-Ovest)",
+      "action": "modal",
+      "ui_type": "irrigation",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Sprinkler_Area1_1",
+          "type": "MESH",
+          "centroid": [
+            -7.39,
+            -26.45,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_1_Base",
+          "type": "MESH",
+          "centroid": [
+            -7.39,
+            -26.45,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_1_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            -7.39,
+            -26.45,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_2",
+          "type": "MESH",
+          "centroid": [
+            -0.16,
+            -21.5,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_2_Base",
+          "type": "MESH",
+          "centroid": [
+            -0.16,
+            -21.5,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_2_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            -0.16,
+            -21.5,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_3",
+          "type": "MESH",
+          "centroid": [
+            5.0,
+            -24.69,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_3_Base",
+          "type": "MESH",
+          "centroid": [
+            5.0,
+            -24.69,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_3_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            5.0,
+            -24.69,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_4",
+          "type": "MESH",
+          "centroid": [
+            12.3,
+            -24.82,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_4_Base",
+          "type": "MESH",
+          "centroid": [
+            12.3,
+            -24.82,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area1_4_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            12.3,
+            -24.82,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        -7.39,
+        -26.45,
+        0.125
+      ],
+      "centroid_gltf": [
+        -7.39,
+        0.125,
+        26.45
+      ]
+    },
+    "switch.smart_switch_area2": {
+      "entity_id": "switch.smart_switch_area2",
+      "domain": "switch",
+      "name": "Irrigatore Area 2 - 1 (Nord-Ovest Portico)",
+      "action": "modal",
+      "ui_type": "irrigation",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Sprinkler_Area2_1",
+          "type": "MESH",
+          "centroid": [
+            6.89,
+            -8.57,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area2_1_Base",
+          "type": "MESH",
+          "centroid": [
+            6.89,
+            -8.57,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area2_1_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            6.89,
+            -8.57,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area2_2",
+          "type": "MESH",
+          "centroid": [
+            13.28,
+            -16.58,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area2_2_Base",
+          "type": "MESH",
+          "centroid": [
+            13.28,
+            -16.58,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area2_2_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            13.28,
+            -16.58,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        6.89,
+        -8.57,
+        0.125
+      ],
+      "centroid_gltf": [
+        6.89,
+        0.125,
+        8.57
+      ]
+    },
+    "switch.smart_switch_area3": {
+      "entity_id": "switch.smart_switch_area3",
+      "domain": "switch",
+      "name": "Irrigatore Area 3 - 1 (Nord Cancello)",
+      "action": "modal",
+      "ui_type": "irrigation",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Sprinkler_Area3_1",
+          "type": "MESH",
+          "centroid": [
+            -3.52,
+            -0.58,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_1_Base",
+          "type": "MESH",
+          "centroid": [
+            -3.52,
+            -0.58,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_1_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            -3.52,
+            -0.58,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_2",
+          "type": "MESH",
+          "centroid": [
+            -0.67,
+            -5.4,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_2_Base",
+          "type": "MESH",
+          "centroid": [
+            -0.67,
+            -5.4,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_2_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            -0.67,
+            -5.4,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_3",
+          "type": "MESH",
+          "centroid": [
+            -5.09,
+            -7.96,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_3_Base",
+          "type": "MESH",
+          "centroid": [
+            -5.09,
+            -7.96,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_3_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            -5.09,
+            -7.96,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_4",
+          "type": "MESH",
+          "centroid": [
+            -0.85,
+            -14.95,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_4_Base",
+          "type": "MESH",
+          "centroid": [
+            -0.85,
+            -14.95,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_4_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            -0.85,
+            -14.95,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_5",
+          "type": "MESH",
+          "centroid": [
+            4.15,
+            -16.02,
+            0.125
+          ],
+          "dimensions": [
+            0.032,
+            0.032,
+            0.25
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_5_Base",
+          "type": "MESH",
+          "centroid": [
+            4.15,
+            -16.02,
+            0.012
+          ],
+          "dimensions": [
+            0.09,
+            0.09,
+            0.025
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Sprinkler_Area3_5_Nozzle",
+          "type": "MESH",
+          "centroid": [
+            4.15,
+            -16.02,
+            0.235
+          ],
+          "dimensions": [
+            0.044,
+            0.044,
+            0.03
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        -3.52,
+        -0.58,
+        0.125
+      ],
+      "centroid_gltf": [
+        -3.52,
+        0.125,
+        0.58
       ]
     },
     "switch.smart_switch_caldaia": {

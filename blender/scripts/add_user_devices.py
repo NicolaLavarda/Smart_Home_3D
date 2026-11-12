@@ -16,7 +16,7 @@ def clear_previous_user_devices():
                                 "Applique_Salotto_", "Portico_Wall_Light_", "Thermal_",
                                 "Sensor_Puffer_", "Sensor_Caldaia_", "Switch_Caldaia_",
                                 "Switch_Gate_Ped", "Switch_Gate_Carraio", "Switch_Garage_Door",
-                                "Sensor_Dishwasher")):
+                                "Sensor_Dishwasher", "Sprinkler_")):
             to_delete.append(obj)
     for obj in to_delete:
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -102,28 +102,9 @@ def build_all():
 
     # -------------------------------------------------------------
     # 1. SALOTTO CEILING SPOTLIGHTS (light.smart_plug_in_unit_switch_3)
-    # ESATTAMENTE 6 faretti incassati singoli (NO parenting, NO duplicati in quota)
+    # Gestiti e raffinati in create_salotto_refined.py (Salotto_Faretto_1..6)
+    # I vecchi Spot_Salotto_1..6 sono stati rimossi per evitare duplicati scuri.
     # -------------------------------------------------------------
-    spot_positions = [
-        ("Spot_Salotto_1", 2.00, -1.60, 2.98),
-        ("Spot_Salotto_2", 4.40, -1.60, 2.98),
-        ("Spot_Salotto_3", 2.00, -3.55, 2.98),
-        ("Spot_Salotto_4", 4.40, -3.55, 2.98),
-        ("Spot_Salotto_5", 2.00, -5.40, 2.98),
-        ("Spot_Salotto_6", 4.40, -5.40, 2.98),
-    ]
-
-    for name, sx, sy, sz in spot_positions:
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.08, depth=0.02, vertices=24, location=(sx, sy, sz))
-        spot = bpy.context.active_object
-        spot.name = name
-        spot.data.materials.append(mat_spot_glass)
-        spot["ha_entity"] = "light.smart_plug_in_unit_switch_3"
-        spot["ha_ui_type"] = "light"
-        spot["ha_name"] = "Faretto Salotto"
-        spot["ha_action"] = "toggle"
-        coll_devices.objects.link(spot)
-        bpy.context.scene.collection.objects.unlink(spot)
 
     # -------------------------------------------------------------
     # 2. SALOTTO WALL SCONCES (light.1 and light.2)
@@ -455,6 +436,68 @@ def build_all():
         cam_carraio["ha_ui_type"] = "camera"
         cam_carraio["ha_name"] = "Telecamera Carraio"
         cam_carraio["ha_action"] = "stream"
+
+    # -------------------------------------------------------------
+    # 9. GETTINI / IRRIGATORI PRATO (switch.smart_switch_area1, area2, area3)
+    # 11 Irrigatori pop-up da giardino (torretta/stelo alta 25cm + ghiera a terra)
+    # - Area 1 (4 gettini): switch.smart_switch_area1 (Prato Sud)
+    # - Area 2 (2 gettini): switch.smart_switch_area2 (Corte Est)
+    # - Area 3 (5 gettini): switch.smart_switch_area3 (Prato Nord e Viale Ovest)
+    # -------------------------------------------------------------
+    mat_sprinkler_collar = get_or_create_material("Mat_Sprinkler_Collar", color=(0.11, 0.12, 0.13, 1.0), roughness=0.6, metallic=0.1)
+    mat_sprinkler_riser = get_or_create_material("Mat_Sprinkler_Riser", color=(0.18, 0.20, 0.22, 1.0), roughness=0.35, metallic=0.4)
+
+    sprinklers_data = [
+        # Area 1: Giardino Area 1 (Prato Sud) - 4 gettini
+        ("Sprinkler_Area1_1", -7.39, -26.45, 0.00, "switch.smart_switch_area1", "Irrigatore Area 1 - 1 (Sud-Ovest)", "Area 1"),
+        ("Sprinkler_Area1_2", -0.16, -21.50, 0.00, "switch.smart_switch_area1", "Irrigatore Area 1 - 2 (Nord Viale)", "Area 1"),
+        ("Sprinkler_Area1_3",  5.00, -24.69, 0.00, "switch.smart_switch_area1", "Irrigatore Area 1 - 3 (Centro Sud)", "Area 1"),
+        ("Sprinkler_Area1_4", 12.30, -24.82, 0.00, "switch.smart_switch_area1", "Irrigatore Area 1 - 4 (Est Garage)", "Area 1"),
+
+        # Area 2: Giardino Area 2 (Corte Est) - 2 gettini
+        ("Sprinkler_Area2_1",  6.89,  -8.57, 0.00, "switch.smart_switch_area2", "Irrigatore Area 2 - 1 (Nord-Ovest Portico)", "Area 2"),
+        ("Sprinkler_Area2_2", 13.28, -16.58, 0.00, "switch.smart_switch_area2", "Irrigatore Area 2 - 2 (Sud-Est Garage)", "Area 2"),
+
+        # Area 3: Giardino Area 3 (Prato Nord e Viale) - 5 gettini
+        ("Sprinkler_Area3_1", -3.52,  -0.58, 0.00, "switch.smart_switch_area3", "Irrigatore Area 3 - 1 (Nord Cancello)", "Area 3"),
+        ("Sprinkler_Area3_2", -0.67,  -5.40, 0.00, "switch.smart_switch_area3", "Irrigatore Area 3 - 2 (Nord-Est Casa)", "Area 3"),
+        ("Sprinkler_Area3_3", -5.09,  -7.96, 0.00, "switch.smart_switch_area3", "Irrigatore Area 3 - 3 (Ovest Viale)", "Area 3"),
+        ("Sprinkler_Area3_4", -0.85, -14.95, 0.00, "switch.smart_switch_area3", "Irrigatore Area 3 - 4 (Lavanderia Ovest)", "Area 3"),
+        ("Sprinkler_Area3_5",  4.15, -16.02, 0.00, "switch.smart_switch_area3", "Irrigatore Area 3 - 5 (Lavanderia Sud)", "Area 3"),
+    ]
+
+    for name, sx, sy, sz, ent_id, friendly_name, area_name in sprinklers_data:
+        # 1. Ghiera circolare a terra (collar flush con il prato)
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.045, depth=0.025, vertices=24, location=(sx, sy, sz + 0.012))
+        collar = bpy.context.active_object
+        collar.name = f"{name}_Base"
+        collar.data.materials.append(mat_sprinkler_collar)
+        coll_devices.objects.link(collar)
+        bpy.context.scene.collection.objects.unlink(collar)
+
+        # 2. Torretta pop-up alta 25cm (stelo cilindrico)
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.016, depth=0.25, vertices=24, location=(sx, sy, sz + 0.125))
+        riser = bpy.context.active_object
+        riser.name = name
+        riser.data.materials.append(mat_sprinkler_riser)
+        riser["ha_entity"] = ent_id
+        riser["ha_ui_type"] = "irrigation"
+        riser["ha_name"] = friendly_name
+        riser["ha_action"] = "modal"
+        riser["ha_area"] = area_name
+        riser["ha_riser_height"] = 0.25
+        coll_devices.objects.link(riser)
+        bpy.context.scene.collection.objects.unlink(riser)
+
+        # 3. Ugello superiore orientabile (nozzle)
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.022, depth=0.03, vertices=24, location=(sx, sy, sz + 0.25 - 0.015))
+        nozzle = bpy.context.active_object
+        nozzle.name = f"{name}_Nozzle"
+        nozzle.data.materials.append(mat_sprinkler_collar)
+        coll_devices.objects.link(nozzle)
+        bpy.context.scene.collection.objects.unlink(nozzle)
+
+    print(f"Created {len(sprinklers_data)} sprinklers/gettini across Garden Areas 1, 2, 3.")
 
     # Salva il file .blend
     bpy.ops.wm.save_mainfile()

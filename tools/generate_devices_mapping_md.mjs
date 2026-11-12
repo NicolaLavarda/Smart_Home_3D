@@ -4,26 +4,34 @@ import { createConnection, subscribeEntities, createLongLivedTokenAuth } from 'h
 
 // 1. Leggi .env
 const envContent = fs.readFileSync(path.resolve('.env'), 'utf8');
-let haUrl = 'http://192.168.86.24:8123';
+let haTailscaleUrl = '';
+let haUrl = '';
 let haToken = '';
 
 for (const line of envContent.split('\n')) {
   const trimmed = line.trim();
-  if (trimmed.startsWith('VITE_HA_URL=')) {
+  if (trimmed.startsWith('VITE_HA_TAILSCALE_URL=')) {
+    haTailscaleUrl = trimmed.replace('VITE_HA_TAILSCALE_URL=', '').trim();
+  } else if (trimmed.startsWith('VITE_HA_REMOTE_URL=')) {
+    haTailscaleUrl = trimmed.replace('VITE_HA_REMOTE_URL=', '').trim();
+  } else if (trimmed.startsWith('VITE_HA_URL=')) {
     haUrl = trimmed.replace('VITE_HA_URL=', '').trim();
+  } else if (trimmed.startsWith('VITE_HA_LOCAL_URL=')) {
+    haUrl = trimmed.replace('VITE_HA_LOCAL_URL=', '').trim();
   } else if (trimmed.startsWith('VITE_HA_TOKEN=')) {
     haToken = trimmed.replace('VITE_HA_TOKEN=', '').trim();
   }
 }
 
 // Pulizia URL
-let cleanUrl = haUrl
+const targetUrl = haTailscaleUrl || haUrl || 'http://homeassistant.local:8123';
+let cleanUrl = targetUrl
   .replace(/^ws:\/\//i, 'http://')
   .replace(/^wss:\/\//i, 'https://')
   .replace(/\/api\/websocket\/?$/i, '')
   .replace(/\/+$/, '');
 
-if (!cleanUrl) cleanUrl = 'http://192.168.86.24:8123';
+if (!cleanUrl) cleanUrl = 'http://homeassistant.local:8123';
 
 console.log(`[Mapping Generator] Connessione a: ${cleanUrl}`);
 
@@ -35,10 +43,12 @@ const ALREADY_MAPPED = {
   'switch.switch_casa_interruttore_1': 'Gate_Leaf_L, Gate_Leaf_R (Ante cancello carraio animato)',
   'media_player.smart_tv_lg_oled_2': 'TV_Salotto_Screen, TV_Salotto_Bezel (Smart TV salotto)',
   'camera.carraio_scorrevole': 'Cam_Carraio (Telecamera reale montata su palo pilastrino a Z=2.10m)',
+  'vacuum.deebot': 'Ecovacs_Deebot_Body, Ecovacs_Deebot_Dock_Base, Ecovacs_Deebot_Dock_Tower (Robot aspirapolvere e dock sala da pranzo)',
 };
 
 // Domini rilevanti per la domotica e il gemello 3D
 const TARGET_DOMAINS = [
+  'vacuum',
   'light',
   'switch',
   'cover',

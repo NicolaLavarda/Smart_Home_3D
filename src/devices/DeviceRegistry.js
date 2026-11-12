@@ -1,5 +1,7 @@
 import { TVController } from './tv/index.js';
 import { DishwasherController } from './dishwasher/index.js';
+import { IrrigationController } from './irrigation/index.js';
+import { VacuumController } from './vacuum/index.js';
 
 /**
  * DeviceRegistry
@@ -25,6 +27,12 @@ export class DeviceRegistry {
 
     // 2. Modulo Lavastoviglie Smart Cucina
     this.register(new DishwasherController());
+
+    // 3. Modulo Impianto Irrigazione Smart Giardino (3 Aree, 11 Gettini)
+    this.register(new IrrigationController());
+
+    // 4. Modulo Robot Aspirapolvere Ecovacs Deebot
+    this.register(new VacuumController());
   }
 
   /**
@@ -102,9 +110,21 @@ export class DeviceRegistry {
             if (!allMeshes.includes(node)) allMeshes.push(node);
           }
         });
+      } else if (allMeshes.length === 0 && controller.id === 'irrigation') {
+        scene.traverse((node) => {
+          if (node.isMesh && node.name.startsWith('Sprinkler_') && !node.name.includes('_Base') && !node.name.includes('_Nozzle')) {
+            if (!allMeshes.includes(node)) allMeshes.push(node);
+          }
+        });
+      } else if (allMeshes.length === 0 && controller.id === 'vacuum') {
+        scene.traverse((node) => {
+          if (node.isMesh && node.name.startsWith('Ecovacs_Deebot_')) {
+            if (!allMeshes.includes(node)) allMeshes.push(node);
+          }
+        });
       }
 
-      if (allMeshes.length > 0) {
+      if (allMeshes.length > 0 || controller.id === 'irrigation' || controller.id === 'vacuum') {
         controller.bind3D(allMeshes, scene, context);
         console.log(`[DeviceRegistry] Mesh 3D collegate a '${controller.id}': ${allMeshes.length} nodi.`);
       }

@@ -41,6 +41,10 @@ MATERIAL_COLOR_OVERRIDES = {
     "Mat_Lampada_Isola": (0.95, 0.94, 0.90, 1.0),              # Diffusore sospensione isola
     "Mat_Macchina_Caffe_Corpo": (0.14, 0.14, 0.16, 1.0),       # Antracite scuro opaco macchina caffe
     "Mat_Vetro_Nero_TV": (0.02, 0.02, 0.02, 1.0),              # Nero lucido display/TV/schermi
+    "Mat_Deebot_White": (0.92, 0.92, 0.94, 1.0),               # Bianco robottino Ecovacs Deebot
+    "Mat_Deebot_Dark": (0.12, 0.13, 0.14, 1.0),                # Antracite scuro dock / bumper Deebot
+    "Mat_Deebot_Chrome": (0.85, 0.85, 0.87, 1.0),              # Ghiera metallica sensore LDS
+    "Mat_Deebot_Glow": (0.15, 0.70, 1.0, 1.0),                 # LED cyan pulsante e dock
 }
 
 

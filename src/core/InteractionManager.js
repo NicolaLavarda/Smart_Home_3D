@@ -30,7 +30,7 @@ export class InteractionManager {
     this.interactiveObjects = [];
     haEntitiesMap.forEach((meshes, entityId) => {
       meshes.forEach((mesh) => {
-        if (mesh.isMesh) {
+        if (mesh.isMesh && !this.interactiveObjects.includes(mesh)) {
           this.interactiveObjects.push(mesh);
         }
       });
@@ -38,15 +38,45 @@ export class InteractionManager {
     console.log(`[InteractionManager] Registrati ${this.interactiveObjects.length} mesh interattivi.`);
   }
 
+  addInteractiveObject(object) {
+    if (!object) return;
+    if (object.isMesh && !this.interactiveObjects.includes(object)) {
+      this.interactiveObjects.push(object);
+    } else if (object.traverse) {
+      object.traverse((child) => {
+        if (child.isMesh && !this.interactiveObjects.includes(child)) {
+          this.interactiveObjects.push(child);
+        }
+      });
+    }
+  }
+
   createDeviceBadges(manifest, haEntitiesMap) {
     if (!manifest || !manifest.ha_entities) return;
+
+    // Assicura che le 3 aree di irrigazione siano sempre presenti nel manifest
+    const irrigationDefaults = {
+      'switch.smart_switch_area1': { name: 'Area 1 - Prato Sud', action: 'modal', ui_type: 'irrigation' },
+      'switch.smart_switch_area2': { name: 'Area 2 - Corte Est', action: 'modal', ui_type: 'irrigation' },
+      'switch.smart_switch_area3': { name: 'Area 3 - Prato Nord & Viale', action: 'modal', ui_type: 'irrigation' },
+    };
+    Object.entries(irrigationDefaults).forEach(([id, def]) => {
+      if (!manifest.ha_entities[id]) {
+        manifest.ha_entities[id] = { entity_id: id, domain: 'switch', ...def, objects: [] };
+      }
+    });
 
     Object.entries(manifest.ha_entities).forEach(([entityId, entData]) => {
       // Ignora sensori variazione rimossi su richiesta dell'utente
       if (entityId === 'sensor.variazione_temperatura_caldaia' || entityId === 'sensor.variazione2_temperatura_caldaia') return;
 
-      const meshes = haEntitiesMap.get(entityId);
-      if (!meshes || meshes.length === 0) return;
+      const meshes = haEntitiesMap ? haEntitiesMap.get(entityId) : null;
+      const isFixedPosEntity = entityId.startsWith('switch.smart_switch_area') ||
+                               entityId === 'switch.switch_casa_interruttore_1' ||
+                               entityId === 'switch.switch_casa_interruttore_2' ||
+                               entityId === 'switch.smart_switch_caldaia';
+
+      if (!isFixedPosEntity && (!meshes || meshes.length === 0)) return;
 
       const badgeStyle = entData.badge_style || '';
 
@@ -69,6 +99,15 @@ export class InteractionManager {
       } else if (entityId === 'switch.smart_switch_caldaia') {
         // Parete di fronte in lavanderia
         center.set(0.90, 1.25, 12.60);
+      } else if (entityId === 'switch.smart_switch_area1') {
+        // Giardino Area 1 (Prato Sud)
+        center.set(2.50, 0.45, 24.50);
+      } else if (entityId === 'switch.smart_switch_area2') {
+        // Giardino Area 2 (Corte Est)
+        center.set(10.00, 0.45, 12.60);
+      } else if (entityId === 'switch.smart_switch_area3') {
+        // Giardino Area 3 (Prato Nord & Viale)
+        center.set(-2.50, 0.45, 10.00);
       } else if (entityId === 'light.luci_esterne') {
         // Sopra il primo lampioncino
         const b1 = meshes.find((m) => m.name === 'Bollard_Garden_1') || meshes[0];
@@ -84,6 +123,9 @@ export class InteractionManager {
       } else if (entityId === 'media_player.smart_tv_lg_oled_2' || entityId === 'media_player.lg_webos_smart_tv') {
         // Ancorato sopra la Smart TV LG OLED in salotto
         center.set(0.59, 1.85, 2.65);
+      } else if (entityId === 'vacuum.deebot') {
+        // Ancorato sopra il robot aspirapolvere Ecovacs Deebot in sala da pranzo
+        center.set(13.63, 0.45, 1.65);
       } else {
         const bbox = new THREE.Box3();
         meshes.forEach((m) => bbox.expandByObject(m));
@@ -123,6 +165,36 @@ export class InteractionManager {
           </svg>
           <span class="badge-name">Smart TV OLED</span>
         `;
+      } else if (entityId === 'vacuum.deebot') {
+        // Badge Robot Aspirapolvere Ecovacs Deebot (100% SVG pulito)
+        badgeEl = document.createElement('div');
+        badgeEl.className = 'device-badge-3d badge-vacuum';
+        badgeEl.dataset.entityId = entityId;
+        badgeEl.innerHTML = `
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+            <circle cx="12" cy="12" r="9"></circle>
+            <circle cx="12" cy="9" r="2"></circle>
+            <path d="M7 16h10"></path>
+          </svg>
+          <span class="badge-name">Deebot:</span>
+          <span class="badge-val" style="color: #38bdf8; font-weight: 600;">Alla base</span>
+        `;
+        valEl = badgeEl.querySelector('.badge-val');
+      } else if (entityId.startsWith('switch.smart_switch_area')) {
+        // Badge Impianto Irrigazione Giardino
+        const areaNum = entityId.replace('switch.smart_switch_area', '');
+        const areaCounts = { '1': '4 gettini', '2': '2 gettini', '3': '5 gettini' };
+        badgeEl = document.createElement('div');
+        badgeEl.className = 'device-badge-3d state-off badge-irrigation';
+        badgeEl.dataset.entityId = entityId;
+        badgeEl.innerHTML = `
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+          </svg>
+          <span class="badge-name">Area ${areaNum} (${areaCounts[areaNum] || ''}):</span>
+          <span class="badge-val" style="color: #94a3b8; font-weight: 600;">Spento</span>
+        `;
+        valEl = badgeEl.querySelector('.badge-val');
       } else {
         // Badge standard interruttori / luci / telecamere
         badgeEl = document.createElement('div');
@@ -142,7 +214,8 @@ export class InteractionManager {
 
         badgeEl.addEventListener('click', (e) => {
           e.stopPropagation();
-          this.handleEntityAction(entityId, entData.action || 'toggle');
+          const action = entityId.startsWith('switch.smart_switch_area') ? 'modal' : (entData.action || 'toggle');
+          this.handleEntityAction(entityId, action);
         });
 
         const css2dObj = new CSS2DObject(badgeEl);
@@ -338,6 +411,26 @@ export class InteractionManager {
       badge.element.classList.remove('state-on');
       badge.element.classList.add('state-off');
     }
+
+    if (badge.valEl && entityId.startsWith('switch.smart_switch_area')) {
+      badge.valEl.textContent = isOn ? 'In funzione' : 'Spento';
+      badge.valEl.style.color = isOn ? '#38bdf8' : '#94a3b8';
+    } else if (badge.valEl && entityId === 'vacuum.deebot') {
+      const s = String(friendlyState || '').toLowerCase();
+      if (s === 'cleaning' || s === 'in pulizia') {
+        badge.valEl.textContent = 'In pulizia';
+        badge.valEl.style.color = '#38bdf8';
+      } else if (s === 'returning' || s === 'ritorno alla base') {
+        badge.valEl.textContent = 'Ritorno base';
+        badge.valEl.style.color = '#f59e0b';
+      } else if (s === 'paused' || s === 'in pausa') {
+        badge.valEl.textContent = 'In pausa';
+        badge.valEl.style.color = '#cbd5e1';
+      } else {
+        badge.valEl.textContent = 'Alla base';
+        badge.valEl.style.color = '#10b981';
+      }
+    }
   }
 
   updateSensorState(entityId, state, attributes = {}) {
@@ -443,7 +536,7 @@ export class InteractionManager {
 
   checkHover() {
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    const intersects = this.raycaster.intersectObjects(this.interactiveObjects, false);
+    const intersects = this.raycaster.intersectObjects(this.interactiveObjects, true);
 
     if (intersects.length > 0) {
       const topObj = intersects[0].object;
@@ -486,14 +579,36 @@ export class InteractionManager {
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    const intersects = this.raycaster.intersectObjects(this.interactiveObjects, false);
+    const intersects = this.raycaster.intersectObjects(this.interactiveObjects, true);
 
     if (intersects.length > 0) {
       const clickedObj = intersects[0].object;
-      const entityId = clickedObj.userData.ha_entity;
-      const action = clickedObj.userData.ha_action || 'toggle';
+      let entityId = clickedObj.userData?.ha_entity;
+      let action = clickedObj.userData?.ha_action || 'toggle';
+
+      // Risali la gerarchia se userData non è presente direttamente sul child
+      let curr = clickedObj;
+      while (curr && !entityId) {
+        if (curr.userData && curr.userData.ha_entity) {
+          entityId = curr.userData.ha_entity;
+          action = curr.userData.ha_action || action;
+          break;
+        }
+        curr = curr.parent;
+      }
+
+      // Riconoscimento intelligente per qualsiasi mesh gettino / irrigatore
+      if (!entityId && clickedObj.name && clickedObj.name.startsWith('Sprinkler_Area')) {
+        if (clickedObj.name.includes('Area1')) entityId = 'switch.smart_switch_area1';
+        else if (clickedObj.name.includes('Area2')) entityId = 'switch.smart_switch_area2';
+        else if (clickedObj.name.includes('Area3')) entityId = 'switch.smart_switch_area3';
+        action = 'modal';
+      }
 
       if (entityId) {
+        if (entityId.startsWith('switch.smart_switch_area')) {
+          action = 'modal';
+        }
         this.handleEntityAction(entityId, action);
       }
     }

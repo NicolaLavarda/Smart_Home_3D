@@ -47,6 +47,11 @@ export class CameraController {
         target: new THREE.Vector3(2.8, 1.2, 3.2),
         fov: 48,
       },
+      dining: {
+        eye: new THREE.Vector3(8.0, 1.30, 7.0),
+        target: new THREE.Vector3(12.8, 1.15, 3.6),
+        fov: 50,
+      },
       kitchen: {
         eye: new THREE.Vector3(11.2, 2.6, 3.4),
         target: new THREE.Vector3(7.8, 1.1, 6.2),
@@ -60,6 +65,21 @@ export class CameraController {
       garden: {
         eye: new THREE.Vector3(-19.1, 17.5, 30.5),
         target: new THREE.Vector3(3.5, 1.0, 8.9),
+        fov: 48,
+      },
+      irrigation_area1: {
+        eye: new THREE.Vector3(3.0, 12.0, 36.0),
+        target: new THREE.Vector3(3.0, 0.0, 24.5),
+        fov: 48,
+      },
+      irrigation_area2: {
+        eye: new THREE.Vector3(10.0, 11.0, 3.5),
+        target: new THREE.Vector3(10.0, 0.0, 13.0),
+        fov: 48,
+      },
+      irrigation_area3: {
+        eye: new THREE.Vector3(-14.0, 11.0, 8.5),
+        target: new THREE.Vector3(-2.0, 0.0, 8.5),
         fov: 48,
       },
       topdown: {

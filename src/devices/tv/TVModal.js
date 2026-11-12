@@ -271,7 +271,7 @@ export class TVModal {
   }
 
   updateLive() {
-    if (this.container) {
+    if (this.controller.isModalOpen && this.container) {
       this.render(this.container);
     }
   }

@@ -1,0 +1,11 @@
+{
+  "domain": "ecovacs_mqtt_bridge",
+  "name": "Ecovacs Deebot MQTT Telemetry Bridge",
+  "version": "1.0.0",
+  "documentation": "https://github.com/home-assistant/core/tree/dev/homeassistant/components/ecovacs",
+  "dependencies": ["ecovacs", "mqtt"],
+  "codeowners": ["@nicola-lavarda"],
+  "iot_class": "local_push",
+  "requirements": []
+}
+

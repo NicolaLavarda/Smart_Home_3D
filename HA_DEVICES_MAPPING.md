@@ -35,6 +35,10 @@
   - **Oggetto 3D / Ruolo:** Cam_Carraio (Telecamera reale montata su palo pilastrino a Z=2.10m)
   - **Azione:** `GIA_MAPPATO`
 
+* **`vacuum.deebot`** — *Ecovacs Deebot* (Stato live: `docked`)
+  - **Oggetto 3D / Ruolo:** Ecovacs_Deebot_Body, Ecovacs_Deebot_Dock_Base, Ecovacs_Deebot_Dock_Tower, Ecovacs_Deebot_Lidar (Robot aspirapolvere e stazione su parete Est sala da pranzo vicino al caminetto)
+  - **Azione:** `GIA_MAPPATO`
+
 ---
 
 ## 💡 1. Luci (light.*) (15 entità)
@@ -298,9 +302,14 @@
 ### `switch.smart_switch_area3`
 - **Nome HA:** Area 3
 - **Stato Live:** `off` (classe: outlet)
-- **Azione:** `ignora` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
-- **Posizione 3D:** 
-- **Funzionamento / Note:** 
+- **Azione:** `mappa` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
+- **Posizione 3D:** Giardino Area 3 (Prato Nord e Viale Ovest), 5 gettini pop-up da 25cm disposti lungo il prato alle coordinate:
+  1. `Sprinkler_Area3_1`: (-3.52, -0.58, 0.00) - Angolo Nord-Ovest vicino cancello pedonale
+  2. `Sprinkler_Area3_2`: (-0.67, -5.40, 0.00) - Angolo Nord-Est vicino facciata ovest casa
+  3. `Sprinkler_Area3_3`: (-5.09, -7.96, 0.00) - Bordo ovest lungo cordolo viale carrabile
+  4. `Sprinkler_Area3_4`: (-0.85, -14.95, 0.00) - Parete ovest lavanderia
+  5. `Sprinkler_Area3_5`: (4.15, -16.02, 0.00) - A sud della lavanderia vicino al portico
+- **Funzionamento / Note:** Controlla l'irrigazione dell'Area 3 del giardino. Quando acceso (`on`), alza in pop-up i 5 gettini di 25cm e attiva l'animazione particellare dei getti d'acqua ad arco balistico che bagnano il prato verde. Cliccando su qualsiasi gettino si apre il pannello modale con controlli live e inquadrature 3D dedicate. 
 
 ### `switch.albero`
 - **Nome HA:** Albero
@@ -333,9 +342,13 @@
 ### `switch.smart_switch_area1`
 - **Nome HA:** Area 1
 - **Stato Live:** `off` (classe: outlet)
-- **Azione:** `ignora` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
-- **Posizione 3D:** 
-- **Funzionamento / Note:** 
+- **Azione:** `mappa` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
+- **Posizione 3D:** Giardino Area 1 (Prato Sud), 4 gettini pop-up da 25cm disposti lungo il prato alle coordinate:
+  1. `Sprinkler_Area1_1`: (-7.39, -26.45, 0.00) - Angolo Sud-Ovest della proprietà
+  2. `Sprinkler_Area1_2`: (-0.16, -21.50, 0.00) - Bordo nord sotto la curva del viale carrabile
+  3. `Sprinkler_Area1_3`: (5.00, -24.69, 0.00) - Centro sud del prato
+  4. `Sprinkler_Area1_4`: (12.30, -24.82, 0.00) - Angolo est sotto la parete sud del garage
+- **Funzionamento / Note:** Controlla l'irrigazione dell'Area 1 del giardino (Prato Sud). Quando acceso (`on`), alza in pop-up i 4 gettini di 25cm e attiva l'animazione dei getti d'acqua con traiettoria parabolica e oscillazione angolare sul prato verde.
 
 ### `switch.smart_switch_2307180028397658070248e1e9d1bc12_config_overtemp_enable`
 - **Nome HA:** Area 2 Config overtemp enable
@@ -347,9 +360,11 @@
 ### `switch.smart_switch_area2`
 - **Nome HA:** Area 2
 - **Stato Live:** `off` (classe: outlet)
-- **Azione:** `ignora` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
-- **Posizione 3D:** 
-- **Funzionamento / Note:** 
+- **Azione:** `mappa` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
+- **Posizione 3D:** Giardino Area 2 (Corte Est tra casa e garage), 2 gettini pop-up da 25cm disposti agli angoli opposti:
+  1. `Sprinkler_Area2_1`: (6.89, -8.57, 0.00) - Angolo Nord-Ovest vicino al portico e facciata sud casa
+  2. `Sprinkler_Area2_2`: (13.28, -16.58, 0.00) - Angolo Sud-Est vicino al muro est e parete nord garage
+- **Funzionamento / Note:** Controlla l'irrigazione dell'Area 2 del giardino (Corte Est). Quando acceso (`on`), alza in pop-up i 2 gettini di 25cm e attiva l'animazione di irrigazione con getti d'acqua incrociati a 90° sul prato verde. 
 
 ### `switch.lavastoviglie_vario_speed`
 - **Nome HA:** Lavastoviglie Vario speed +

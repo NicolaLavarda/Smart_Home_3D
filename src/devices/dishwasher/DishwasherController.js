@@ -310,5 +310,8 @@ export class DishwasherController extends BaseDeviceController {
 
   onModalClose() {
     this.isModalOpen = false;
+    if (this.modalView) {
+      this.modalView.container = null;
+    }
   }
 }

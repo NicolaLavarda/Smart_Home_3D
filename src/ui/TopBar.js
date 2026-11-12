@@ -98,7 +98,9 @@ export class TopBar {
       <button class="quicknav-btn" data-preset="carraio_cam">📹 POV Telecamera Carraio</button>
       <button class="quicknav-btn" data-preset="gate">🚪 Cancello & Accessi</button>
       <button class="quicknav-btn" data-preset="garden">🌳 Giardino & Lampioncini</button>
+      <button class="quicknav-btn" data-preset="irrigation_area1">💧 Impianto Irrigazione</button>
       <button class="quicknav-btn" data-preset="living">🛋️ Salotto</button>
+      <button class="quicknav-btn" data-preset="dining">🍽️ Sala da pranzo</button>
       <button class="quicknav-btn" data-preset="kitchen">🍳 Cucina</button>
       <button class="quicknav-btn" data-preset="laundry">🧺 Impianto Termico</button>
       <button class="quicknav-btn" data-preset="topdown">📐 Pianta Zenitale</button>

@@ -37,9 +37,22 @@ export class DeviceModals {
   }
 
   open(entityId) {
+    if (!entityId) return;
+
+    // Se c'è già un modale aperto (anche per un altro dispositivo),
+    // chiudi e ripulisci prima completamente quello precedente
+    if (this.currentEntityId) {
+      this.close();
+    }
+
+    // Assicura che il contenitore sia completamente svuotato prima di iniettare il nuovo modale
+    if (this.modalContent) {
+      this.modalContent.innerHTML = '';
+    }
+
     this.currentEntityId = entityId;
 
-    // 1. Verifica se esiste un controller dedicato nel registro decentralizzato (es. Smart TV, Lavastoviglie)
+    // 1. Verifica se esiste un controller dedicato nel registro decentralizzato (es. Smart TV, Lavastoviglie, Irrigazione)
     const customController = deviceRegistry.findControllerForEntity(entityId);
     if (customController) {
       const entity = customController.getEntity ? customController.getEntity() : (this.haClient.getEntity(entityId) || {
@@ -48,8 +61,8 @@ export class DeviceModals {
         attributes: { friendly_name: customController.name || entityId },
       });
 
-      this.modalTitle.textContent = customController.name || entity.attributes.friendly_name || entityId;
-      this.modalSubtitle.textContent = customController.primaryEntityId || entityId;
+      this.modalTitle.textContent = customController.name || entity.attributes?.friendly_name || entityId;
+      this.modalSubtitle.textContent = customController.subtitle || customController.primaryEntityId || entityId;
 
       customController.renderModal(this.modalContent, entity, {
         haClient: this.haClient,
@@ -70,7 +83,7 @@ export class DeviceModals {
     };
 
     const domain = entityId.split('.')[0];
-    this.modalTitle.textContent = entity.attributes.friendly_name || entityId;
+    this.modalTitle.textContent = entity.attributes?.friendly_name || entityId;
     this.modalSubtitle.textContent = entityId;
 
     if (domain === 'media_player') {
@@ -93,6 +106,17 @@ export class DeviceModals {
       if (customController && typeof customController.onModalClose === 'function') {
         customController.onModalClose();
       }
+    }
+    // Per sicurezza difensiva, invoca onModalClose su tutti i controller registrati
+    if (deviceRegistry && deviceRegistry.controllers) {
+      for (const ctrl of deviceRegistry.controllers.values()) {
+        if (typeof ctrl.onModalClose === 'function') {
+          ctrl.onModalClose();
+        }
+      }
+    }
+    if (this.modalContent) {
+      this.modalContent.innerHTML = '';
     }
     this.currentEntityId = null;
   }

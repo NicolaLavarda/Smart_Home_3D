@@ -24,10 +24,12 @@ export class EntityBinder {
     // Registra posizioni iniziali dei cancelli per l'animazione di scorrimento
     this.setupGateTransforms();
 
-    // Collega i controller decentralizzati dei dispositivi smart (TV, ecc.)
+    // Collega i controller decentralizzati dei dispositivi smart (TV, Lavastoviglie, Irrigazione, Deebot)
     deviceRegistry.bind3D(haEntitiesMap, this.scene, {
       haClient: this.haClient,
       entityBinder: this,
+      interactionManager: this.interactionManager,
+      haEntitiesMap: this.haEntitiesMap,
     });
 
     // Sottoscrivi aggiornamenti in tempo reale da Home Assistant / Mock

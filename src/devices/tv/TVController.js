@@ -26,6 +26,7 @@ export class TVController extends BaseDeviceController {
     this.latestStateObj = null; // Cache dell'ultimo stato reale ricevuto via WebSocket da HA
     this.screenRenderer = new TVScreenRenderer();
     this.modalView = new TVModal(this);
+    this.isModalOpen = false;
     this.tvMeshes = [];
     this.isScreenTurnedOffManually = false;
   }
@@ -311,17 +312,27 @@ export class TVController extends BaseDeviceController {
     }
     this.latestStateObj = stateObj;
     this.screenRenderer.updateState(stateObj);
-    this.modalView.updateLive();
+    if (this.isModalOpen && this.modalView) {
+      this.modalView.updateLive();
+    }
   }
 
   /**
    * Renderizza il pannello modale quando l'utente clicca sulla TV
    */
   renderModal(container, entity, context) {
+    this.isModalOpen = true;
     if (context && context.haClient) {
       this.haClient = context.haClient;
     }
     this.modalView.render(container);
+  }
+
+  onModalClose() {
+    this.isModalOpen = false;
+    if (this.modalView) {
+      this.modalView.container = null;
+    }
   }
 
   onTick(delta) {
