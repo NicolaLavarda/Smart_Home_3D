@@ -8,6 +8,10 @@ import { DeviceModals } from './ha/DeviceModals.js';
 import { CameraProjector } from './spatial/CameraProjector.js';
 import { TrajectoryRenderer } from './spatial/TrajectoryRenderer.js';
 import { TimelineController } from './spatial/TimelineController.js';
+import { SpatialStreamClient } from './spatial/network/SpatialStreamClient.js';
+import { CalibrationAssistantUI } from './spatial/calibration/CalibrationAssistantUI.js';
+import { VideoStreamManager } from './video/VideoStreamManager.js';
+import { deviceRegistry } from './devices/DeviceRegistry.js';
 import { TopBar } from './ui/TopBar.js';
 
 async function bootstrap() {
@@ -46,10 +50,34 @@ async function bootstrap() {
   );
   entityBinder.setInteractionManager(interactionManager);
 
-  // 8. Spatial CV Engine
+  // 8. Spatial CV Engine, Video Streaming & Calibrazione POV
   const cameraProjector = new CameraProjector(sceneManager.scene, assetLoader);
   const trajectoryRenderer = new TrajectoryRenderer(sceneManager.scene);
   const timelineController = new TimelineController(timelineContainer, trajectoryRenderer, cameraProjector);
+  const videoStreamManager = new VideoStreamManager({ haClient });
+  const spatialStreamClient = new SpatialStreamClient();
+  const calibrationAssistant = new CalibrationAssistantUI({
+    sceneManager,
+    cameraController,
+    cameraProjector,
+    videoStreamManager,
+    spatialStreamClient,
+    assetLoader,
+  });
+
+  timelineController.setSpatialStreamClient(spatialStreamClient);
+
+  const secCamCtrl = deviceRegistry.get('security_camera');
+  if (secCamCtrl) {
+    secCamCtrl.setServices({
+      videoStreamManager,
+      cameraProjector,
+      calibrationAssistant,
+      spatialStreamClient,
+      cameraController,
+      assetLoader,
+    });
+  }
 
   // 9. Top Navigation Bar
   new TopBar(topBarContainer, {
@@ -58,6 +86,8 @@ async function bootstrap() {
     cameraProjector,
     interactionManager,
     haClient,
+    calibrationAssistant,
+    assetLoader,
   });
 
   // 10. Carica Modello e Manifesto
@@ -79,8 +109,9 @@ async function bootstrap() {
     console.error('[Main] Errore critico durante il caricamento:', err);
   }
 
-  // 11. Avvia connessione Home Assistant (o fallback Mock)
+  // 11. Avvia connessione Home Assistant e Spatial CV Backend (o fallback)
   haClient.connect();
+  spatialStreamClient.connectWebSocket();
 
   // 12. Hook di Aggiornamento per il Render Loop
   sceneManager.addUpdateCallback((delta) => {

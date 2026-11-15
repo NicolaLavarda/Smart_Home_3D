@@ -1,11 +1,21 @@
 export class TopBar {
-  constructor(domContainer, { sceneManager, cameraController, cameraProjector, interactionManager, haClient }) {
+  constructor(domContainer, {
+    sceneManager,
+    cameraController,
+    cameraProjector,
+    interactionManager,
+    haClient,
+    calibrationAssistant = null,
+    assetLoader = null,
+  }) {
     this.container = domContainer;
     this.sceneManager = sceneManager;
     this.cameraController = cameraController;
     this.cameraProjector = cameraProjector;
     this.interactionManager = interactionManager;
     this.haClient = haClient;
+    this.calibrationAssistant = calibrationAssistant;
+    this.assetLoader = assetLoader;
 
     this.initUI();
     this.bindEvents();
@@ -37,6 +47,10 @@ export class TopBar {
           📹 <span>Copertura Camere</span>
         </button>
 
+        <button class="btn-icon-text" id="btn-open-cam-calib" title="Apri calibrazione ottica POV su Cam_Carraio">
+          📐 <span>Calibra Cam</span>
+        </button>
+
         <button class="btn-icon-text" id="btn-toggle-badges" title="Mostra/Nascondi badge dei dispositivi">
           🏷️ <span>Badge Dispositivi</span>
         </button>
@@ -54,6 +68,7 @@ export class TopBar {
     this.nightBtn = this.container.querySelector('#btn-toggle-night');
     this.nightText = this.container.querySelector('#night-text');
     this.frustumsBtn = this.container.querySelector('#btn-toggle-frustums');
+    this.calibBtn = this.container.querySelector('#btn-open-cam-calib');
     this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
 
     // Ascolta lo stato di HA
@@ -77,6 +92,25 @@ export class TopBar {
     this.frustumsBtn.addEventListener('click', () => {
       const isVisible = this.cameraProjector.toggleFrustums();
       this.frustumsBtn.classList.toggle('active', isVisible);
+    });
+
+    // Apertura Calibrazione Ottica POV Cam_Carraio
+    this.calibBtn?.addEventListener('click', () => {
+      if (!this.calibrationAssistant) return;
+      if (this.calibrationAssistant.isOpen) {
+        this.calibrationAssistant.close();
+        this.calibBtn.classList.remove('active');
+        return;
+      }
+      this.calibBtn.classList.add('active');
+      const camNode = this.assetLoader?.cameras?.get('Cam_Carraio');
+      if (camNode && this.cameraController) {
+        this.cameraController.flyToCameraPOV(camNode, 1.1, () => {
+          this.calibrationAssistant.open('Cam_Carraio');
+        });
+      } else {
+        this.calibrationAssistant.open('Cam_Carraio');
+      }
     });
 
     // Toggle Badges Dispositivi
@@ -113,6 +147,13 @@ export class TopBar {
         buttons.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         const preset = btn.dataset.preset;
+        if (preset === 'carraio_cam') {
+          const camNode = this.assetLoader?.cameras?.get('Cam_Carraio');
+          if (camNode) {
+            this.cameraController.flyToCameraPOV(camNode, 1.3);
+            return;
+          }
+        }
         this.cameraController.flyToPreset(preset);
       });
     });

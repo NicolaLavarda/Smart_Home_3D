@@ -1,51 +1,94 @@
 import * as THREE from 'three';
-import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { SpatialAvatarFactory } from './avatars/SpatialAvatarFactory.js';
+
+const CLASS_COLORS = {
+  person: [0.02, 0.71, 0.83],
+  car: [0.96, 0.62, 0.04],
+  truck: [0.98, 0.45, 0.09],
+  bicycle: [0.06, 0.73, 0.51],
+  dog: [0.93, 0.28, 0.60],
+};
+
+function shortestAngleDiff(current, target) {
+  let diff = ((target - current + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return diff;
+}
 
 export class TrajectoryRenderer {
   constructor(scene) {
     this.scene = scene;
+    this.avatarFactory = new SpatialAvatarFactory();
 
-    this.entities = new Map(); // id -> { markerGroup, trailLine, labelObj, class, points }
-    this.rawDetections = [];   // Array of { id, class, x, y, z, t, camera_id }
-    this.trailDuration = 18.0; // Mostra la scia degli ultimi 18 secondi
+    this.entities = new Map();     // Historical entities: id -> { markerGroup, trailLine, class, points }
+    this.liveEntities = new Map(); // Live Kalman-interpolated entities: trackId -> state
+    this.rawDetections = [];
+    this.trailDuration = 18.0;
+    this.liveModeActive = false;
+    this.pulseClock = 0;
+  }
+
+  createTrailLine(maxPoints = 120) {
+    const geom = new THREE.BufferGeometry();
+    const posArray = new Float32Array(maxPoints * 3);
+    const colArray = new Float32Array(maxPoints * 3);
+    geom.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+    geom.setAttribute('color', new THREE.BufferAttribute(colArray, 3));
+    geom.setDrawRange(0, 0);
+
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.88,
+      linewidth: 2,
+    });
+    const line = new THREE.Line(geom, mat);
+    line.frustumCulled = false;
+    return line;
+  }
+
+  setLiveMode(isLive) {
+    this.liveModeActive = Boolean(isLive);
+    this.entities.forEach((e) => {
+      if (this.liveModeActive) {
+        e.markerGroup.visible = false;
+        e.trailLine.visible = false;
+      }
+    });
+    this.liveEntities.forEach((e) => {
+      e.markerGroup.visible = this.liveModeActive;
+      e.trailLine.visible = this.liveModeActive;
+    });
   }
 
   loadDetections(detections) {
-    this.rawDetections = detections.sort((a, b) => a.t - b.t);
-    this.clearAll();
+    this.rawDetections = [...detections].sort((a, b) => a.t - b.t);
+    this.clearHistorical();
 
-    // Raggruppa per id entità
     const grouped = new Map();
     this.rawDetections.forEach((d) => {
-      if (!grouped.has(d.id)) grouped.set(d.id, []);
-      grouped.get(d.id).push(d);
+      const key = String(d.id ?? d.track_id);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(d);
     });
 
     grouped.forEach((points, id) => {
       const firstPoint = points[0];
-      const entityClass = firstPoint.class || 'person';
+      const entityClass = firstPoint.class || firstPoint.class_label || 'person';
 
-      // 1. Crea Marker 3D
-      const markerGroup = this.createEntityMarker(entityClass, id);
+      const markerGroup = this.avatarFactory.createAvatar({
+        track_id: id,
+        class_label: entityClass,
+        identity: firstPoint.identity || null,
+        confidence: firstPoint.confidence ?? 0.92,
+        camera_sources: firstPoint.camera_id ? [firstPoint.camera_id] : ['Cam_Carraio'],
+        state: { vx: 0, vz: 0 },
+      });
+      markerGroup.visible = false;
       this.scene.add(markerGroup);
 
-      // 2. Crea Linea per Scia Traiettoria
-      const maxTrailPoints = 120;
-      const trailGeom = new THREE.BufferGeometry();
-      const posArray = new Float32Array(maxTrailPoints * 3);
-      const colorArray = new Float32Array(maxTrailPoints * 3);
-      trailGeom.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-      trailGeom.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
-
-      const isCar = entityClass === 'car';
-      const trailMat = new THREE.LineBasicMaterial({
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.85,
-        linewidth: 2,
-      });
-
-      const trailLine = new THREE.Line(trailGeom, trailMat);
+      const trailLine = this.createTrailLine(120);
+      trailLine.visible = false;
       this.scene.add(trailLine);
 
       this.entities.set(id, {
@@ -57,93 +100,149 @@ export class TrajectoryRenderer {
       });
     });
 
-    console.log(`[TrajectoryRenderer] Caricate ${this.rawDetections.length} rilevazioni per ${this.entities.size} entità uniche.`);
+    console.log(`[TrajectoryRenderer] Caricate ${this.rawDetections.length} rilevazioni storiche per ${this.entities.size} entità.`);
   }
 
-  createEntityMarker(entityClass, id) {
-    const group = new THREE.Group();
-    group.name = `Detection_${id}`;
+  updateLiveTracks(activeTracks, serverTimestamp = null) {
+    const nowPerf = performance.now() * 0.001;
+    const nowUnix = serverTimestamp || Date.now() * 0.001;
+    const seenIds = new Set();
 
-    const isCar = entityClass === 'car';
-    const mainColor = isCar ? 0xf59e0b : 0x06b6d4;
+    activeTracks.forEach((track) => {
+      const id = String(track.track_id ?? track.id);
+      seenIds.add(id);
 
-    // 1. Anello a terra pulsante
-    const ringGeom = new THREE.RingGeometry(0.35, 0.45, 32);
-    ringGeom.rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: mainColor,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.8,
+      const st = track.state || {};
+      const x = Number(st.x ?? track.x ?? 0);
+      const y = Number(st.y ?? track.y ?? 0);
+      const z = Number(st.z ?? track.z ?? 0);
+      const vx = Number(st.vx ?? 0);
+      const vy = Number(st.vy ?? 0);
+      const vz = Number(st.vz ?? 0);
+
+      let entry = this.liveEntities.get(id);
+      if (!entry) {
+        const markerGroup = this.avatarFactory.createAvatar(track);
+        markerGroup.position.set(x, y, z);
+        markerGroup.visible = this.liveModeActive;
+        this.scene.add(markerGroup);
+
+        const trailLine = this.createTrailLine(120);
+        trailLine.visible = this.liveModeActive;
+        this.scene.add(trailLine);
+
+        entry = {
+          trackId: id,
+          classLabel: track.class_label || 'person',
+          markerGroup,
+          trailLine,
+          targetPos: new THREE.Vector3(x, y, z),
+          velocity: new THREE.Vector3(vx, vy, vz),
+          lastUpdatePerf: nowPerf,
+          lastSeenPerf: nowPerf,
+          trailPoints: [{ x, y, z, t: nowUnix }],
+        };
+        this.liveEntities.set(id, entry);
+      } else {
+        entry.targetPos.set(x, y, z);
+        entry.velocity.set(vx, vy, vz);
+        entry.lastUpdatePerf = nowPerf;
+        entry.lastSeenPerf = nowPerf;
+        this.avatarFactory.updateAvatarMetadata(entry.markerGroup, track);
+
+        const lastPt = entry.trailPoints[entry.trailPoints.length - 1];
+        const dist = lastPt ? Math.hypot(x - lastPt.x, z - lastPt.z) : 1.0;
+        if (!lastPt || dist > 0.08 || nowUnix - lastPt.t >= 0.25) {
+          entry.trailPoints.push({ x, y, z, t: nowUnix });
+          if (entry.trailPoints.length > 120) {
+            entry.trailPoints.shift();
+          }
+        }
+      }
     });
-    const ringMesh = new THREE.Mesh(ringGeom, ringMat);
-    ringMesh.position.y = 0.05;
-    group.add(ringMesh);
 
-    // 2. Corpo 3D stilizzato
-    if (isCar) {
-      // Sagoma veicolo stilizzato
-      const bodyGeom = new THREE.BoxGeometry(1.6, 0.65, 0.9);
-      const bodyMat = new THREE.MeshStandardMaterial({
-        color: mainColor,
-        roughness: 0.2,
-        metalness: 0.7,
-        emissive: mainColor,
-        emissiveIntensity: 0.3,
-      });
-      const bodyMesh = new THREE.Mesh(bodyGeom, bodyMat);
-      bodyMesh.position.y = 0.4;
-      bodyMesh.castShadow = true;
-      group.add(bodyMesh);
-    } else {
-      // Sagoma persona: cilindro + testa sferica stilizzata
-      const bodyGeom = new THREE.CylinderGeometry(0.18, 0.18, 1.2, 16);
-      const bodyMat = new THREE.MeshStandardMaterial({
-        color: mainColor,
-        roughness: 0.3,
-        metalness: 0.5,
-        emissive: mainColor,
-        emissiveIntensity: 0.35,
-      });
-      const bodyMesh = new THREE.Mesh(bodyGeom, bodyMat);
-      bodyMesh.position.y = 0.65;
-      bodyMesh.castShadow = true;
-      group.add(bodyMesh);
-
-      const headGeom = new THREE.SphereGeometry(0.16, 16, 16);
-      const headMesh = new THREE.Mesh(headGeom, bodyMat);
-      headMesh.position.y = 1.4;
-      headMesh.castShadow = true;
-      group.add(headMesh);
+    // Pulisce entità assenti da > 6 secondi
+    for (const [id, entry] of this.liveEntities.entries()) {
+      if (!seenIds.has(id) && nowPerf - entry.lastSeenPerf > 6.0) {
+        this.removeLiveEntity(id, entry);
+      }
     }
+  }
 
-    // 3. Etichetta HTML CSS2D fluttuante
-    const labelDiv = document.createElement('div');
-    labelDiv.className = `detection-label-3d ${isCar ? 'car' : ''}`;
-    labelDiv.textContent = `${isCar ? '🚗 Auto' : '👤 Persona'} #${id}`;
+  interpolateLive(delta) {
+    if (!this.liveModeActive) return;
+    this.pulseClock += delta;
+    const nowPerf = performance.now() * 0.001;
+    const nowUnix = Date.now() * 0.001;
 
-    const labelObj = new CSS2DObject(labelDiv);
-    labelObj.position.y = isCar ? 1.1 : 1.75;
-    group.add(labelObj);
+    for (const [id, entry] of this.liveEntities.entries()) {
+      const ageSinceMsg = nowPerf - entry.lastUpdatePerf;
+      if (nowPerf - entry.lastSeenPerf > 6.0) {
+        this.removeLiveEntity(id, entry);
+        continue;
+      }
 
-    group.visible = false;
-    return group;
+      // Predizione cinematica lineare (dead reckoning limitata a 1.2s)
+      const predDt = Math.min(Math.max(ageSinceMsg, 0), 1.2);
+      const predictedTarget = entry.targetPos.clone().addScaledVector(entry.velocity, predDt);
+
+      const lerpAlpha = Math.min(1.0, delta * 12.0);
+      entry.markerGroup.position.lerp(predictedTarget, lerpAlpha);
+      entry.markerGroup.visible = true;
+
+      // Orientamento verso la direzione di marcia
+      const speedH = Math.hypot(entry.velocity.x, entry.velocity.z);
+      if (speedH > 0.12) {
+        const targetYaw = Math.atan2(entry.velocity.x, entry.velocity.z);
+        entry.markerGroup.rotation.y += shortestAngleDiff(entry.markerGroup.rotation.y, targetYaw) * Math.min(1.0, delta * 10.0);
+      }
+
+      // Animazione ring a terra
+      const ring = entry.markerGroup.userData?.ring;
+      if (ring) {
+        const baseScale = entry.classLabel === 'car' || entry.classLabel === 'truck' ? 2.4 : 1.0;
+        const pulse = 1.0 + 0.07 * Math.sin(this.pulseClock * 4.5);
+        ring.scale.set(baseScale * pulse, baseScale * pulse, 1);
+      }
+
+      // Aggiorna BufferGeometry scia
+      const [baseR, baseG, baseB] = CLASS_COLORS[entry.classLabel] || CLASS_COLORS.person;
+      const trailWindowStart = nowUnix - this.trailDuration;
+      const validTrail = entry.trailPoints.filter((pt) => pt.t >= trailWindowStart);
+      if (validTrail.length !== entry.trailPoints.length) {
+        entry.trailPoints = validTrail;
+      }
+
+      const geom = entry.trailLine.geometry;
+      const posAttr = geom.attributes.position;
+      const colAttr = geom.attributes.color;
+      const renderPoints = [...validTrail, { x: entry.markerGroup.position.x, y: entry.markerGroup.position.y, z: entry.markerGroup.position.z, t: nowUnix }];
+      const n = Math.min(renderPoints.length, 120);
+
+      for (let i = 0; i < n; i++) {
+        const pt = renderPoints[i];
+        posAttr.setXYZ(i, pt.x, pt.y + 0.05, pt.z);
+        const fade = Math.max(0.05, 1.0 - (nowUnix - pt.t) / this.trailDuration);
+        colAttr.setXYZ(i, baseR * fade, baseG * fade, baseB * fade);
+      }
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+      geom.setDrawRange(0, n);
+      entry.trailLine.visible = n >= 2;
+    }
   }
 
   updateAtTime(currentTime) {
+    if (this.liveModeActive) return;
+
     this.entities.forEach((entity) => {
       const { markerGroup, trailLine, points, class: entityClass } = entity;
-      const isCar = entityClass === 'car';
-      const baseR = isCar ? 0.96 : 0.02;
-      const baseG = isCar ? 0.62 : 0.71;
-      const baseB = isCar ? 0.04 : 0.83;
+      const [baseR, baseG, baseB] = CLASS_COLORS[entityClass] || CLASS_COLORS.person;
 
-      // Trova punti rilevati fino all'istante currentTime
       const pastPoints = points.filter((p) => p.t <= currentTime);
       const futurePoints = points.filter((p) => p.t > currentTime);
 
       if (pastPoints.length === 0) {
-        // L'entità non è ancora apparsa
         markerGroup.visible = false;
         trailLine.visible = false;
         return;
@@ -152,7 +251,6 @@ export class TrajectoryRenderer {
       const lastPoint = pastPoints[pastPoints.length - 1];
       const timeSinceLastDetection = currentTime - lastPoint.t;
 
-      // Se non si hanno più rilevazioni da oltre 15 secondi, nascondi l'entità
       if (timeSinceLastDetection > 15.0 && futurePoints.length === 0) {
         markerGroup.visible = false;
         trailLine.visible = false;
@@ -162,8 +260,9 @@ export class TrajectoryRenderer {
       markerGroup.visible = true;
       trailLine.visible = true;
 
-      // Calcola posizione interpolata
       let currentPos = new THREE.Vector3(lastPoint.x, lastPoint.y, lastPoint.z);
+      let vx = lastPoint.vx || 0;
+      let vz = lastPoint.vz || 0;
 
       if (futurePoints.length > 0) {
         const nextPoint = futurePoints[0];
@@ -174,18 +273,25 @@ export class TrajectoryRenderer {
           const pB = new THREE.Vector3(nextPoint.x, nextPoint.y, nextPoint.z);
           currentPos.lerpVectors(pA, pB, factor);
 
-          // Calcola orientamento (rotazione verso la direzione di marcia)
           const dir = pB.clone().sub(pA);
-          if (dir.lengthSq() > 0.01) {
-            const angle = Math.atan2(dir.x, dir.z);
-            markerGroup.rotation.y = angle;
+          vx = dir.x / segDuration;
+          vz = dir.z / segDuration;
+          if (dir.lengthSq() > 0.005) {
+            markerGroup.rotation.y = Math.atan2(dir.x, dir.z);
           }
         }
       }
 
       markerGroup.position.copy(currentPos);
+      this.avatarFactory.updateAvatarMetadata(markerGroup, {
+        track_id: entity.id,
+        class_label: entityClass,
+        identity: lastPoint.identity || null,
+        confidence: lastPoint.confidence ?? 0.92,
+        camera_sources: [lastPoint.camera_id || 'Cam_Carraio'],
+        state: { vx, vz },
+      });
 
-      // Aggiorna la scia (trail) degli ultimi N secondi
       const trailWindowStart = currentTime - this.trailDuration;
       const trailPoints = pastPoints.filter((p) => p.t >= trailWindowStart);
       trailPoints.push({ x: currentPos.x, y: currentPos.y, z: currentPos.z, t: currentTime });
@@ -198,17 +304,9 @@ export class TrajectoryRenderer {
       for (let i = 0; i < n; i++) {
         const pt = trailPoints[i];
         posAttr.setXYZ(i, pt.x, pt.y + 0.05, pt.z);
-
-        // Calcola gradiente di dissolvenza temporale (da 0 a 1)
         const age = currentTime - pt.t;
         const fade = Math.max(0.0, 1.0 - age / this.trailDuration);
         colAttr.setXYZ(i, baseR * fade, baseG * fade, baseB * fade);
-      }
-
-      // Riempie il resto con l'ultimo punto per evitare artefatti
-      for (let i = n; i < 120; i++) {
-        posAttr.setXYZ(i, currentPos.x, currentPos.y + 0.05, currentPos.z);
-        colAttr.setXYZ(i, 0, 0, 0);
       }
 
       posAttr.needsUpdate = true;
@@ -217,12 +315,34 @@ export class TrajectoryRenderer {
     });
   }
 
-  clearAll() {
+  removeLiveEntity(id, entry) {
+    this.scene.remove(entry.markerGroup);
+    this.scene.remove(entry.trailLine);
+    entry.trailLine.geometry.dispose();
+    entry.trailLine.material.dispose();
+    if (entry.markerGroup.userData?.css2dLabel?.element?.parentNode) {
+      entry.markerGroup.userData.css2dLabel.element.remove();
+    }
+    this.liveEntities.delete(id);
+  }
+
+  clearHistorical() {
     this.entities.forEach((e) => {
       this.scene.remove(e.markerGroup);
       this.scene.remove(e.trailLine);
+      e.trailLine.geometry.dispose();
+      e.trailLine.material.dispose();
+      if (e.markerGroup.userData?.css2dLabel?.element?.parentNode) {
+        e.markerGroup.userData.css2dLabel.element.remove();
+      }
     });
     this.entities.clear();
   }
-}
 
+  clearAll() {
+    this.clearHistorical();
+    for (const [id, entry] of [...this.liveEntities.entries()]) {
+      this.removeLiveEntity(id, entry);
+    }
+  }
+}

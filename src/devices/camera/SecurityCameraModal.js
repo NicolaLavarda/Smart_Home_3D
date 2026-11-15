@@ -1,0 +1,208 @@
+/**
+ * SecurityCameraModal
+ *
+ * Pannello modale OOP per la telecamera di sicurezza Reolink RLC-540A (Cam_Carraio):
+ * - Player live WebRTC / MSE a bassissima latenza via VideoStreamManager (go2rtc)
+ * - Selettore flusso Main (5MP) / Sub (640x360) e riconnessione rapida
+ * - Ingresso nella vista POV 3D esatta della telecamera
+ * - Avvio dell'assistente di calibrazione ottica POV con overlay trasparente
+ * - Toggle diretto della modalità CV sul microservizio spaziale (Simulatore / OpenVINO Live)
+ */
+export class SecurityCameraModal {
+  constructor(controller) {
+    this.controller = controller;
+    this.container = null;
+    this.videoEl = null;
+    this.activeStreamName = 'carraio_main';
+    this.isSyntheticActive = true;
+  }
+
+  async render(container, context = {}) {
+    this.container = container;
+    const camName = this.controller.findMatchingBlenderCameraName();
+    const manifestCam = context.assetLoader?.manifest?.cameras?.[camName];
+    const fovH = manifestCam?.fov_h_deg ?? 80;
+    const fovV = manifestCam?.fov_v_deg ?? 42;
+    const lensMm = manifestCam?.lens_mm ?? 4.0;
+    const camIp = manifestCam?.camera_ip || '192.168.86.47';
+
+    // Controlla stato corrente del backend spaziale se disponibile
+    let serverMode = 'synthetic';
+    const spatialClient = this.controller.spatialStreamClient || context.spatialStreamClient;
+    if (spatialClient) {
+      const st = await spatialClient.fetchStatus().catch(() => null);
+      if (st?.ingestion_mode) {
+        serverMode = st.ingestion_mode;
+      }
+    }
+    this.isSyntheticActive = serverMode === 'synthetic';
+
+    container.innerHTML = `
+      <div class="camera-preview-stream" id="cam-preview-wrapper">
+        <video id="cam-modal-video" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+        <span class="live-badge" id="cam-stream-badge">CONNESSIONE...</span>
+        <span class="cam-latency-badge" id="cam-latency-badge">-- ms</span>
+      </div>
+
+      <div class="control-row" style="gap: 8px;">
+        <div style="display:flex;gap:6px;flex:1;">
+          <button class="btn-icon-text stream-quality-btn active" data-stream="carraio_main" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
+            Main 5MP
+          </button>
+          <button class="btn-icon-text stream-quality-btn" data-stream="carraio_sub" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
+            Sub 640×360
+          </button>
+        </div>
+        <button class="btn-icon-text" id="btn-cam-reconnect" title="Riconnetti stream" style="padding:6px 10px;font-size:11px;">
+          ↻ Riconnetti
+        </button>
+      </div>
+
+      <div class="control-row">
+        <label>Modello & Ottica SSoT</label>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-cyan);">
+          RLC-540A • ${lensMm}mm (${fovH}°×${fovV}°)
+        </span>
+      </div>
+
+      <div class="control-row">
+        <label>Endpoint Rete / Node 3D</label>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-main);">
+          ${camIp} • ${camName}
+        </span>
+      </div>
+
+      <button class="btn-action-primary" id="btn-camera-pov" style="width:100%;">
+        🎯 Entra in Vista POV 3D
+      </button>
+
+      <button class="btn-icon-text" id="btn-camera-calibrate" style="width:100%;justify-content:center;border-color:rgba(6,182,212,0.45);color:#38bdf8;">
+        📐 Apri Calibrazione Ottica POV
+      </button>
+
+      <button class="btn-icon-text" id="btn-toggle-simulator" style="width:100%;justify-content:center;">
+        ${this.isSyntheticActive ? '🧠 Passa a Rilevamento OpenVINO Live' : '🚶 Avvia Simulatore Camminata 3D'}
+      </button>
+
+      <div id="cam-status-hint" style="font-size:11px;color:var(--text-muted);line-height:1.45;text-align:center;">
+        Streaming gestito da go2rtc (WebRTC → MSE → Snapshot Fallback).
+      </div>
+    `;
+
+    this.videoEl = container.querySelector('#cam-modal-video');
+    this.badgeEl = container.querySelector('#cam-stream-badge');
+    this.latencyEl = container.querySelector('#cam-latency-badge');
+    this.hintEl = container.querySelector('#cam-status-hint');
+
+    await this.connectStream(this.activeStreamName);
+
+    // Qualità Main / Sub
+    container.querySelectorAll('.stream-quality-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        container.querySelectorAll('.stream-quality-btn').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.activeStreamName = btn.dataset.stream;
+        await this.connectStream(this.activeStreamName);
+      });
+    });
+
+    // Riconnetti
+    container.querySelector('#btn-cam-reconnect')?.addEventListener('click', () => {
+      this.connectStream(this.activeStreamName);
+    });
+
+    // Vista POV 3D
+    const povBtn = container.querySelector('#btn-camera-pov');
+    const camNode = context.assetLoader?.cameras?.get(camName);
+    const camCtrl = this.controller.cameraController || context.cameraController;
+    if (camNode && camCtrl) {
+      povBtn.addEventListener('click', () => {
+        camCtrl.flyToCameraPOV(camNode, 1.4, () => {
+          context.modal?.close();
+        });
+      });
+    } else {
+      povBtn.disabled = true;
+      povBtn.textContent = 'Camera POV non trovata nella scena';
+    }
+
+    // Apri Calibrazione Ottica POV
+    const calibBtn = container.querySelector('#btn-camera-calibrate');
+    calibBtn?.addEventListener('click', async () => {
+      const calibUI = this.controller.calibrationAssistant;
+      if (camNode && camCtrl) {
+        camCtrl.flyToCameraPOV(camNode, 1.3, () => {
+          if (calibUI) {
+            calibUI.open(camName);
+          }
+          context.modal?.close();
+        });
+      } else if (calibUI) {
+        calibUI.open(camName);
+        context.modal?.close();
+      }
+    });
+
+    // Toggle Simulatore / OpenVINO
+    const simBtn = container.querySelector('#btn-toggle-simulator');
+    simBtn?.addEventListener('click', async () => {
+      const client = this.controller.spatialStreamClient || context.spatialStreamClient;
+      if (!client) {
+        this.hintEl.textContent = 'Microservizio spaziale non collegato (porta 8765).';
+        return;
+      }
+      const nextMode = this.isSyntheticActive ? 'openvino' : 'synthetic';
+      const res = await client.setIngestionMode(nextMode);
+      if (res && res.status === 'ok') {
+        this.isSyntheticActive = res.ingestion_mode === 'synthetic';
+        simBtn.textContent = this.isSyntheticActive
+          ? '🧠 Passa a Rilevamento OpenVINO Live'
+          : '🚶 Avvia Simulatore Camminata 3D';
+        this.hintEl.textContent = `Modalità CV attiva: ${res.ingestion_mode.toUpperCase()}`;
+      } else {
+        this.hintEl.textContent = 'Backend spaziale offline: impossibile cambiare modalità CV.';
+      }
+    });
+  }
+
+  async connectStream(streamName) {
+    const vsm = this.controller.videoStreamManager;
+    if (!vsm || !this.videoEl) return;
+
+    this.badgeEl.textContent = 'CONNESSIONE...';
+    this.badgeEl.style.background = 'rgba(245, 158, 11, 0.9)';
+
+    try {
+      const provider = await vsm.attachToVideoElement(streamName, this.videoEl, 'auto');
+      const status = provider.getStatus();
+      if (status.mode === 'webrtc') {
+        this.badgeEl.textContent = 'WEBRTC LIVE';
+        this.badgeEl.style.background = 'rgba(16, 185, 129, 0.92)';
+        this.hintEl.textContent = `Stream reale a bassa latenza (${streamName}) connesso via WebRTC.`;
+      } else if (status.mode === 'mse') {
+        this.badgeEl.textContent = 'MSE LIVE';
+        this.badgeEl.style.background = 'rgba(6, 182, 212, 0.92)';
+        this.hintEl.textContent = `Stream reale connesso via go2rtc MSE (${streamName}).`;
+      } else {
+        this.badgeEl.textContent = 'SIMULAZIONE / ATTESA CREDENZIALI REOLINK';
+        this.badgeEl.style.background = 'rgba(99, 102, 241, 0.9)';
+        this.hintEl.textContent = 'Reolink non raggiungibile o credenziali mancanti in .env: attivo feed diagnostico.';
+      }
+      if (this.latencyEl) {
+        this.latencyEl.textContent = `${status.latencyMs} ms`;
+      }
+    } catch (err) {
+      this.badgeEl.textContent = 'OFFLINE';
+      this.badgeEl.style.background = 'rgba(239, 68, 68, 0.9)';
+    }
+  }
+
+  destroy() {
+    if (this.videoEl && this.controller.videoStreamManager) {
+      this.controller.videoStreamManager.detachFromVideoElement(this.videoEl);
+    }
+    this.videoEl = null;
+    this.container = null;
+  }
+}
+

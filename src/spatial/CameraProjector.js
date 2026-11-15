@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { CameraFrustumOverlay } from './calibration/CameraFrustumOverlay.js';
+
+const CALIBRATION_STORAGE_PREFIX = 'sh3d_camera_calibration_v1_';
 
 export class CameraProjector {
   constructor(scene, assetLoader) {
@@ -7,6 +10,11 @@ export class CameraProjector {
 
     this.raycaster = new THREE.Raycaster();
     this.frustumHelpers = new Map();
+    this.frustumOverlays = new Map();
+    this.frustumVolumes = new Map();
+    this.baseCameraPoses = new Map();
+    this.calibratedPoses = new Map();
+    this.povActiveCameras = new Set();
     this.frustumsVisible = false; // Nascosto di default all'avvio su richiesta dell'utente
     this.groundColliders = [];
   }
@@ -23,14 +31,42 @@ export class CameraProjector {
     cameras.forEach((camNode, camName) => {
       const manifestData = manifestCameras[camName];
       // Mostra solo telecamere di sicurezza reali (Cam_Carraio o con ha_camera_entity definita)
-      const isSecurityCam = camName === 'Cam_Carraio' || manifestData?.ha_camera_entity !== '';
+      const isSecurityCam =
+        camName === 'Cam_Carraio' ||
+        Boolean(manifestData?.ha_camera_entity) ||
+        manifestData?.is_real_security_camera === true;
 
       if (!isSecurityCam) return;
+
+      camNode.updateMatrixWorld(true);
+      const basePos = new THREE.Vector3();
+      const baseQuat = new THREE.Quaternion();
+      camNode.getWorldPosition(basePos);
+      camNode.getWorldQuaternion(baseQuat);
+
+      this.baseCameraPoses.set(camName, {
+        position: basePos.clone(),
+        quaternion: baseQuat.clone(),
+        fovV: manifestData?.fov_v_deg || camNode.fov || 42.0,
+        fovH: manifestData?.fov_h_deg || 80.0,
+        aspect: manifestData?.aspect_ratio || camNode.aspect || 16 / 9,
+        distortion: manifestData?.distortion_coeffs || [-0.18, 0.04, 0.0, 0.0, 0.0],
+      });
 
       const frustumGroup = this.createFrustumCone(camNode, manifestData);
       frustumGroup.visible = this.frustumsVisible;
       this.scene.add(frustumGroup);
       this.frustumHelpers.set(camName, frustumGroup);
+
+      // Ripristina eventuale calibrazione salvata in localStorage
+      try {
+        const saved = localStorage.getItem(`${CALIBRATION_STORAGE_PREFIX}${camName}`);
+        if (saved) {
+          this.applyCameraCalibration(camName, JSON.parse(saved));
+        }
+      } catch (e) {
+        console.warn(`[CameraProjector] Errore lettura calibrazione salvata per ${camName}:`, e);
+      }
     });
 
     console.log(`[CameraProjector] Frustum generati per ${this.frustumHelpers.size} telecamera reale.`);
@@ -48,12 +84,17 @@ export class CameraProjector {
     group.position.copy(worldPos);
     group.quaternion.copy(worldQuat);
 
-    const fov = camNode.fov || manifestData?.fov_v_deg || 55;
-    const aspect = camNode.aspect || manifestData?.aspect_ratio || 1.777;
+    const fovV = manifestData?.fov_v_deg || camNode.fov || 42.0;
+    const aspect = manifestData?.aspect_ratio || camNode.aspect || 16 / 9;
+    const fovH =
+      manifestData?.fov_h_deg ||
+      2 * THREE.MathUtils.radToDeg(Math.atan(Math.tan(THREE.MathUtils.degToRad(fovV * 0.5)) * aspect));
     const depth = 16.0; // Copertura ottica fino a 16 metri su strada e ingressi
 
-    const h = 2 * Math.tan(THREE.MathUtils.degToRad(fov / 2)) * depth;
-    const w = h * aspect;
+    const tanV = Math.tan(THREE.MathUtils.degToRad(fovV * 0.5));
+    const tanH = Math.tan(THREE.MathUtils.degToRad(fovH * 0.5));
+    const h = 2 * tanV * depth;
+    const w = 2 * tanH * depth;
 
     const v0 = new THREE.Vector3(0, 0, 0);
     const v1 = new THREE.Vector3(-w / 2, h / 2, -depth);
@@ -104,13 +145,195 @@ export class CameraProjector {
     const wireLines = new THREE.LineSegments(wireGeom, wireMat);
     group.add(wireLines);
 
+    const overlay = new CameraFrustumOverlay(camNode.name, {
+      fovV,
+      fovH,
+      aspect,
+      distortion: manifestData?.distortion_coeffs || [-0.18, 0.04, 0, 0, 0],
+    });
+    group.add(overlay.mesh);
+
+    this.frustumOverlays.set(camNode.name, overlay);
+    this.frustumVolumes.set(camNode.name, { coneMesh: mesh, wireLines });
+
     return group;
+  }
+
+  syncGroupVisibility(camName) {
+    const group = this.frustumHelpers.get(camName);
+    const overlay = this.frustumOverlays.get(camName);
+    const vol = this.frustumVolumes.get(camName);
+    const isPov = this.povActiveCameras.has(camName);
+
+    if (vol) {
+      vol.coneMesh.visible = this.frustumsVisible && !isPov;
+      vol.wireLines.visible = this.frustumsVisible && !isPov;
+    }
+    if (overlay) {
+      overlay.setVisible(isPov || (this.frustumsVisible && Boolean(overlay.videoTexture)));
+    }
+    if (group) {
+      group.visible = this.frustumsVisible || isPov;
+    }
+  }
+
+  attachOverlayTexture(camName, videoTexture) {
+    const overlay = this.frustumOverlays.get(camName);
+    if (!overlay) return;
+    overlay.attachVideoTexture(videoTexture);
+    this.syncGroupVisibility(camName);
+  }
+
+  setOverlayPOVMode(camName, isPOV, opacity = 0.52) {
+    const overlay = this.frustumOverlays.get(camName);
+    if (!overlay) return;
+
+    if (isPOV) {
+      this.povActiveCameras.add(camName);
+    } else {
+      this.povActiveCameras.delete(camName);
+    }
+
+    overlay.setPOVMode(isPOV);
+    if (opacity !== undefined) {
+      overlay.setOpacity(opacity);
+    }
+    this.syncGroupVisibility(camName);
+  }
+
+  setOverlayOpacity(camName, opacity) {
+    const overlay = this.frustumOverlays.get(camName);
+    if (overlay) {
+      overlay.setOpacity(opacity);
+    }
+  }
+
+  applyCameraCalibration(camName, calibState) {
+    const base = this.baseCameraPoses.get(camName);
+    const group = this.frustumHelpers.get(camName);
+    if (!base) return null;
+
+    const finalPos = base.position.clone().add(
+      new THREE.Vector3(
+        Number(calibState.offsetX) || 0,
+        Number(calibState.offsetY) || 0,
+        Number(calibState.offsetZ) || 0
+      )
+    );
+
+    const totalYawDeg = (Number(calibState.yawDeg) || 0) + (calibState.flip180 ? 180.0 : 0.0);
+    const deltaEuler = new THREE.Euler(
+      THREE.MathUtils.degToRad(Number(calibState.pitchDeg) || 0),
+      THREE.MathUtils.degToRad(totalYawDeg),
+      THREE.MathUtils.degToRad(Number(calibState.rollDeg) || 0),
+      'YXZ'
+    );
+    const deltaQuat = new THREE.Quaternion().setFromEuler(deltaEuler);
+    const finalQuat = base.quaternion.clone().multiply(deltaQuat);
+
+    const fovV = Number(calibState.fovV) || base.fovV;
+    const fovH = Number(calibState.fovH) || base.fovH;
+
+    if (group) {
+      group.position.copy(finalPos);
+      group.quaternion.copy(finalQuat);
+    }
+
+    const overlay = this.frustumOverlays.get(camName);
+    if (overlay) {
+      overlay.updateOptics({
+        fovV,
+        fovH,
+        distortion: [Number(calibState.k1) || 0, Number(calibState.k2) || 0, 0, 0, 0],
+      });
+    }
+
+    const vol = this.frustumVolumes.get(camName);
+    if (vol) {
+      const depth = 16.0;
+      const h = 2 * Math.tan(THREE.MathUtils.degToRad(fovV * 0.5)) * depth;
+      const w = 2 * Math.tan(THREE.MathUtils.degToRad(fovH * 0.5)) * depth;
+      const v0 = [0, 0, 0];
+      const v1 = [-w / 2, h / 2, -depth];
+      const v2 = [w / 2, h / 2, -depth];
+      const v3 = [w / 2, -h / 2, -depth];
+      const v4 = [-w / 2, -h / 2, -depth];
+
+      vol.coneMesh.geometry.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          [
+            ...v0, ...v1, ...v2,
+            ...v0, ...v2, ...v3,
+            ...v0, ...v3, ...v4,
+            ...v0, ...v4, ...v1,
+            ...v1, ...v4, ...v2,
+            ...v2, ...v4, ...v3,
+          ],
+          3
+        )
+      );
+      vol.coneMesh.geometry.computeVertexNormals();
+
+      vol.wireLines.geometry.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          [
+            ...v0, ...v1,
+            ...v0, ...v2,
+            ...v0, ...v3,
+            ...v0, ...v4,
+            ...v1, ...v2,
+            ...v2, ...v3,
+            ...v3, ...v4,
+            ...v4, ...v1,
+          ],
+          3
+        )
+      );
+    }
+
+    const camNode = this.assetLoader.cameras.get(camName);
+    if (camNode) {
+      if (camNode.parent) {
+        camNode.parent.updateMatrixWorld(true);
+        const invParent = camNode.parent.matrixWorld.clone().invert();
+        const worldMat = new THREE.Matrix4().compose(finalPos, finalQuat, new THREE.Vector3(1, 1, 1));
+        const localMat = invParent.multiply(worldMat);
+        localMat.decompose(camNode.position, camNode.quaternion, new THREE.Vector3());
+      } else {
+        camNode.position.copy(finalPos);
+        camNode.quaternion.copy(finalQuat);
+      }
+      if (camNode.isPerspectiveCamera) {
+        camNode.fov = fovV;
+        camNode.updateProjectionMatrix();
+      }
+      camNode.updateMatrixWorld(true);
+    }
+
+    const worldMat4 = new THREE.Matrix4().compose(finalPos, finalQuat, new THREE.Vector3(1, 1, 1));
+    const matrixWorldElements = Array.from(worldMat4.clone().transpose().elements);
+
+    const result = {
+      position: finalPos,
+      quaternion: finalQuat,
+      fovV,
+      fovH,
+      matrixWorldElements,
+    };
+    this.calibratedPoses.set(camName, result);
+    return result;
+  }
+
+  getCalibratedCameraPose(camName) {
+    return this.calibratedPoses.get(camName) || this.baseCameraPoses.get(camName) || null;
   }
 
   toggleFrustums(visible) {
     this.frustumsVisible = visible !== undefined ? visible : !this.frustumsVisible;
-    this.frustumHelpers.forEach((group) => {
-      group.visible = this.frustumsVisible;
+    this.frustumHelpers.forEach((_, camName) => {
+      this.syncGroupVisibility(camName);
     });
     return this.frustumsVisible;
   }

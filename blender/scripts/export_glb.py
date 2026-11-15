@@ -143,10 +143,13 @@ def extract_camera_data(cam_obj):
 
     render_w = scene.render.resolution_x
     render_h = scene.render.resolution_y
-    aspect = render_w / render_h if render_h != 0 else 1.0
+    aspect = render_w / render_h if render_h != 0 else 1.7778
 
     sensor_w = cam.sensor_width
-    sensor_h = cam.sensor_height if cam.sensor_fit == "VERTICAL" else sensor_w / aspect
+    if cam_obj.get("optical_model") and cam.sensor_height > 0:
+        sensor_h = cam.sensor_height
+    else:
+        sensor_h = cam.sensor_height if cam.sensor_fit == "VERTICAL" else sensor_w / aspect
     lens = cam.lens
 
     fov_h_rad = 2.0 * math.atan((sensor_w / 2.0) / lens)
@@ -158,14 +161,40 @@ def extract_camera_data(cam_obj):
     loc = mat_world.translation
     rot_euler = mat_world.to_euler()
 
+    # Cambio base Blender World (+Z Up, +Y North) -> Three.js/glTF World (+Y Up, +Z South)
+    c_w_b = mathutils.Matrix((
+        (1.0, 0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0, 0.0),
+        (0.0, -1.0, 0.0, 0.0),
+        (0.0, 0.0, 0.0, 1.0),
+    ))
+    # Cambio base locale OpenCV (+X right, +Y down, +Z forward) -> OpenGL/Blender (+X right, +Y up, -Z forward)
+    s_gl_cv = mathutils.Matrix((
+        (1.0, 0.0, 0.0, 0.0),
+        (0.0, -1.0, 0.0, 0.0),
+        (0.0, 0.0, -1.0, 0.0),
+        (0.0, 0.0, 0.0, 1.0),
+    ))
+    mat_threejs_gl = c_w_b @ mat_world
+    mat_threejs_cv = c_w_b @ mat_world @ s_gl_cv
+
+    raw_dist = cam_obj.get("distortion_coeffs")
+    dist_coeffs = [round(float(x), 6) for x in raw_dist] if raw_dist is not None else [0.0, 0.0, 0.0, 0.0, 0.0]
+
     return {
         "name": cam_obj.name,
         "ha_camera_entity": cam_obj.get("ha_camera_entity", ""),
         "ha_label": cam_obj.get("ha_label", cam_obj.name),
         "coverage_zone": cam_obj.get("coverage_zone", "general"),
-        "is_real_security_camera": cam_obj.get("ha_camera_entity") != "",
+        "is_real_security_camera": bool(cam_obj.get("ha_camera_entity")),
+        "optical_model": cam_obj.get("optical_model", "pinhole_radtan"),
+        "distortion_coeffs": dist_coeffs,
+        "stream_id": cam_obj.get("stream_id", ""),
+        "sub_stream_id": cam_obj.get("sub_stream_id", ""),
+        "camera_ip": cam_obj.get("camera_ip", ""),
         "lens_mm": round(lens, 2),
-        "sensor_width_mm": round(sensor_w, 2),
+        "sensor_width_mm": round(sensor_w, 4),
+        "sensor_height_mm": round(sensor_h, 4),
         "fov_v_deg": round(fov_deg, 2),
         "fov_h_deg": round(math.degrees(fov_h_rad), 2),
         "aspect_ratio": round(aspect, 4),
@@ -179,6 +208,8 @@ def extract_camera_data(cam_obj):
         },
         "gltf_transform": {
             "position": blender_to_gltf_coords([loc.x, loc.y, loc.z]),
+            "matrix_world_gl": matrix_to_list(mat_threejs_gl),
+            "extrinsic_cv_to_world": matrix_to_list(mat_threejs_cv),
         }
     }
 

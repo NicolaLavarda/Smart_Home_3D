@@ -419,6 +419,11 @@ def setup_real_security_camera():
             c.objects.unlink(pole_obj)
         col_cameras.objects.link(pole_obj)
 
+    pole_obj["ha_entity"] = "camera.carraio_scorrevole"
+    pole_obj["ha_action"] = "modal"
+    pole_obj["ha_ui_type"] = "camera"
+    pole_obj["ha_name"] = "Telecamera Carraio (Reolink RLC-540A)"
+
     body_name = "Security_Cam_Body"
     body_obj = bpy.data.objects.get(body_name)
     if not body_obj:
@@ -438,6 +443,11 @@ def setup_real_security_camera():
             c.objects.unlink(body_obj)
         col_cameras.objects.link(body_obj)
 
+    body_obj["ha_entity"] = "camera.carraio_scorrevole"
+    body_obj["ha_action"] = "modal"
+    body_obj["ha_ui_type"] = "camera"
+    body_obj["ha_name"] = "Telecamera Carraio (Reolink RLC-540A)"
+
     # 3. Crea o Aggiorna la Camera Blender "Cam_Carraio"
     cam_name = "Cam_Carraio"
     cam_obj = bpy.data.objects.get(cam_name)
@@ -451,16 +461,24 @@ def setup_real_security_camera():
     pitch_rad = math.radians(78.0) # 78° da Z guarda in avanti (+Y) e verso il basso (strada)
     cam_obj.rotation_euler = (pitch_rad, 0.0, 0.0)
 
-    # Parametri ottici della telecamera di sicurezza
-    cam_obj.data.lens = 24.0 # Grandangolare di sicurezza (~84° FOV orizzontale)
-    cam_obj.data.sensor_width = 36.0
+    # Parametri ottici reali Reolink RLC-540A (4.0mm @ FOV_H=80°, FOV_V=42°)
+    cam_obj.data.sensor_fit = "HORIZONTAL"
+    cam_obj.data.lens = 4.0
+    cam_obj.data.sensor_width = round(2.0 * 4.0 * math.tan(math.radians(80.0 / 2.0)), 4)
+    cam_obj.data.sensor_height = round(2.0 * 4.0 * math.tan(math.radians(42.0 / 2.0)), 4)
     cam_obj.data.clip_start = 0.1
     cam_obj.data.clip_end = 250.0
 
     # Custom Properties SSoT
     cam_obj["ha_camera_entity"] = "camera.carraio_scorrevole"
-    cam_obj["ha_label"] = "Telecamera Carraio (Cancelli)"
+    cam_obj["ha_entity"] = "camera.carraio_scorrevole"
+    cam_obj["ha_label"] = "Telecamera Carraio (Reolink RLC-540A)"
     cam_obj["coverage_zone"] = "outdoor_gates_street"
+    cam_obj["optical_model"] = "pinhole_radtan"
+    cam_obj["distortion_coeffs"] = [-0.18, 0.04, 0.0, 0.0, 0.0]
+    cam_obj["stream_id"] = "carraio_main"
+    cam_obj["sub_stream_id"] = "carraio_sub"
+    cam_obj["camera_ip"] = "192.168.86.47"
 
     print(f"  [OK] Telecamera reale configurata: {cam_name} a loc=({px}, {py}, {cam_z}) rot=(78°, 0°, 0°)")
 

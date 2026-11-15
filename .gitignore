@@ -6,4 +6,9 @@ node_modules/
 dist/
 .env
 .env.local
+.venv/
+go2rtc/go2rtc.exe
+spatial_server/data/*.db*
+spatial_server/models/
+
 

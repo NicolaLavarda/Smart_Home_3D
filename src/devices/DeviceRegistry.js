@@ -2,6 +2,7 @@ import { TVController } from './tv/index.js';
 import { DishwasherController } from './dishwasher/index.js';
 import { IrrigationController } from './irrigation/index.js';
 import { VacuumController } from './vacuum/index.js';
+import { SecurityCameraController } from './camera/index.js';
 
 /**
  * DeviceRegistry
@@ -33,6 +34,9 @@ export class DeviceRegistry {
 
     // 4. Modulo Robot Aspirapolvere Ecovacs Deebot
     this.register(new VacuumController());
+
+    // 5. Modulo Telecamera Sicurezza Reolink (Cam_Carraio)
+    this.register(new SecurityCameraController());
   }
 
   /**
@@ -122,9 +126,15 @@ export class DeviceRegistry {
             if (!allMeshes.includes(node)) allMeshes.push(node);
           }
         });
+      } else if (allMeshes.length === 0 && controller.id === 'security_camera') {
+        scene.traverse((node) => {
+          if (node.isMesh && (node.name === 'Security_Cam_Body' || node.name === 'Security_Cam_Pole_Pillar')) {
+            if (!allMeshes.includes(node)) allMeshes.push(node);
+          }
+        });
       }
 
-      if (allMeshes.length > 0 || controller.id === 'irrigation' || controller.id === 'vacuum') {
+      if (allMeshes.length > 0 || controller.id === 'irrigation' || controller.id === 'vacuum' || controller.id === 'security_camera') {
         controller.bind3D(allMeshes, scene, context);
         console.log(`[DeviceRegistry] Mesh 3D collegate a '${controller.id}': ${allMeshes.length} nodi.`);
       }

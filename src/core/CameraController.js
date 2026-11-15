@@ -38,9 +38,9 @@ export class CameraController {
         fov: 48,
       },
       carraio_cam: {
-        eye: new THREE.Vector3(-5.3, 2.2, 0.35),
-        target: new THREE.Vector3(-1.5, 0.8, 8.5),
-        fov: 55,
+        eye: new THREE.Vector3(-5.3, 2.1, 0.45),
+        target: new THREE.Vector3(-3.0, 0.6, 10.5),
+        fov: 42,
       },
       living: {
         eye: new THREE.Vector3(6.0, 3.2, 6.4),
@@ -144,13 +144,36 @@ export class CameraController {
     }
   }
 
+  /**
+   * Applica istantaneamente una posa camera (usata dai cursori live della calibrazione POV).
+   */
+  setInstantCameraPose(position, quaternion, fov = null) {
+    this.isTransitioning = false;
+    this.onCompleteCallback = null;
+    this.camera.position.copy(position);
+
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+    const lookTarget = position.clone().add(forward.multiplyScalar(12));
+    this.controls.target.copy(lookTarget);
+    this.camera.lookAt(lookTarget);
+
+    if (fov !== null && Number.isFinite(fov)) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
+    this.controls.update();
+  }
+
+  /**
+   * Sposta la camera nella posizione POV esatta della telecamera (con eventuale calibrazione salvata).
+   */
   flyToCameraPOV(camNode, duration = 1.5, onComplete = null) {
     const worldPos = new THREE.Vector3();
     const worldDir = new THREE.Vector3();
     camNode.getWorldPosition(worldPos);
     camNode.getWorldDirection(worldDir);
 
-    const fov = camNode.isPerspectiveCamera && camNode.fov ? camNode.fov : 65;
+    const fov = camNode.isPerspectiveCamera && camNode.fov ? camNode.fov : 42;
     // Sposta leggermente avanti (25cm) lungo la direzione visiva per non clippare la scocca della camera
     const eyePos = worldPos.clone().add(worldDir.clone().multiplyScalar(0.25));
     const lookTarget = eyePos.clone().add(worldDir.clone().multiplyScalar(12));
