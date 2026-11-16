@@ -1,3 +1,5 @@
+import { icon } from '../ui/icons.js';
+
 export class TimelineController {
   constructor(domContainer, trajectoryRenderer, cameraProjector) {
     this.container = domContainer;
@@ -5,8 +7,10 @@ export class TimelineController {
     this.cameraProjector = cameraProjector;
     this.spatialStreamClient = null;
 
+    this.isCollapsed = true;
+    this.entitiesVisible = false;
     this.isLive = false;
-    this.isPlaying = true;
+    this.isPlaying = false;
     this.playbackSpeed = 1.0;
     this.currentTime = 0;
     this.minTime = 0;
@@ -18,15 +22,21 @@ export class TimelineController {
 
     this.initUI();
     this.generateSyntheticScenario();
+    this.setCollapsed(true);
+    this.setEntitiesVisible(false);
   }
 
   initUI() {
     this.container.innerHTML = `
       <div class="timeline-header">
-        <div class="timeline-info">
-          <span style="font-weight: 600; color: var(--accent-cyan);">SPATIAL REPLAY ENGINE</span>
+        <div class="timeline-info" id="timeline-collapse-toggle" role="button" tabindex="0" title="Espandi Timeline">
+          <span class="timeline-title-wrap">
+            ${icon('history', { size: 15 })}
+            <span class="timeline-title-text">SPATIAL REPLAY ENGINE</span>
+          </span>
           <span class="spatial-status-pill" id="spatial-status-pill">DEMO LOCALE</span>
           <span id="timeline-entity-count" style="color: var(--text-muted); font-size: 11px;">0 Rilevazioni</span>
+          <span class="timeline-collapse-icon" id="timeline-collapse-icon">${icon('chevron-up', { size: 14 })}</span>
         </div>
         <div class="timeline-mode-toggle">
           <button class="mode-btn active" id="btn-mode-replay">Replay Storico</button>
@@ -35,7 +45,8 @@ export class TimelineController {
       </div>
 
       <div class="timeline-controls-row">
-        <button class="btn-timeline-play" id="btn-play-pause">⏸</button>
+        <button class="btn-timeline-visibility" id="btn-toggle-entities" title="Mostra/Nascondi persone e veicoli ricostruiti nel 3D">${icon('eye-off', { size: 15 })}</button>
+        <button class="btn-timeline-play" id="btn-play-pause" title="Play / Pausa">${icon('play', { size: 15 })}</button>
 
         <div class="timeline-slider-wrap">
           <canvas id="timeline-density-canvas" class="timeline-density-canvas" height="22"></canvas>
@@ -54,13 +65,35 @@ export class TimelineController {
 
     this.slider = this.container.querySelector('#timeline-range-slider');
     this.clockDisplay = this.container.querySelector('#timeline-clock');
+    this.toggleEntitiesBtn = this.container.querySelector('#btn-toggle-entities');
     this.playBtn = this.container.querySelector('#btn-play-pause');
     this.entityCountEl = this.container.querySelector('#timeline-entity-count');
     this.statusPill = this.container.querySelector('#spatial-status-pill');
     this.densityCanvas = this.container.querySelector('#timeline-density-canvas');
     this.replayModeBtn = this.container.querySelector('#btn-mode-replay');
     this.liveModeBtn = this.container.querySelector('#btn-mode-live');
+    this.collapseToggle = this.container.querySelector('#timeline-collapse-toggle');
+    this.collapseIcon = this.container.querySelector('#timeline-collapse-icon');
 
+    this.collapseToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.setCollapsed(!this.container.classList.contains('collapsed'));
+    });
+
+    this.collapseToggle.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.setCollapsed(!this.container.classList.contains('collapsed'));
+      }
+    });
+
+    this.container.addEventListener('click', () => {
+      if (this.container.classList.contains('collapsed')) {
+        this.setCollapsed(false);
+      }
+    });
+
+    this.toggleEntitiesBtn.addEventListener('click', () => this.toggleEntitiesVisible());
     this.playBtn.addEventListener('click', () => this.togglePlay());
     this.slider.addEventListener('input', (e) => {
       this.currentTime = parseFloat(e.target.value);
@@ -86,13 +119,24 @@ export class TimelineController {
 
     spatialStreamClient.onStatusChange((connected, meta) => {
       if (connected) {
-        const mode = (meta?.ingestion_mode || spatialStreamClient.lastStatusPayload?.ingestion_mode || 'LIVE').toUpperCase();
+        const rawMode = (meta?.ingestion_mode || spatialStreamClient.lastStatusPayload?.ingestion_mode || '').toLowerCase();
+        const mode = (rawMode || 'LIVE').toUpperCase();
+        const isRealServer = Boolean(rawMode && rawMode !== 'synthetic');
         this.statusPill.textContent = `SPATIAL ${mode}`;
         this.statusPill.classList.add('online');
 
-        if (!this.hasAutoSwitchedLive) {
-          this.hasAutoSwitchedLive = true;
-          this.setMode(true);
+        if (isRealServer) {
+          this.container.classList.remove('demo-inactive');
+          this.setEntitiesVisible(true);
+          if (!this.hasAutoSwitchedLive) {
+            this.hasAutoSwitchedLive = true;
+            this.setMode(true);
+          }
+        } else {
+          this.setEntitiesVisible(false);
+          this.isPlaying = false;
+          this.playBtn.innerHTML = icon('play', { size: 15 });
+          this.container.classList.add('demo-inactive');
         }
         this.refreshDensityHistogram();
         if (!this.densityTimer) {
@@ -101,6 +145,10 @@ export class TimelineController {
       } else {
         this.statusPill.textContent = 'DEMO LOCALE';
         this.statusPill.classList.remove('online');
+        this.setEntitiesVisible(false);
+        this.isPlaying = false;
+        this.playBtn.innerHTML = icon('play', { size: 15 });
+        this.container.classList.add('demo-inactive');
       }
     });
 
@@ -119,13 +167,56 @@ export class TimelineController {
     });
   }
 
+  hasRealIngestion() {
+    const mode = (this.spatialStreamClient?.lastStatusPayload?.ingestion_mode || '').toLowerCase();
+    return Boolean(this.spatialStreamClient?.connected && mode && mode !== 'synthetic');
+  }
+
+  setEntitiesVisible(visible) {
+    this.entitiesVisible = Boolean(visible);
+    this.trajectoryRenderer.setEntitiesVisible(this.entitiesVisible);
+
+    if (this.toggleEntitiesBtn) {
+      this.toggleEntitiesBtn.classList.toggle('active', this.entitiesVisible);
+      this.toggleEntitiesBtn.innerHTML = icon(this.entitiesVisible ? 'eye' : 'eye-off', { size: 15 });
+      this.toggleEntitiesBtn.title = this.entitiesVisible
+        ? 'Nascondi persone e veicoli ricostruiti nel 3D'
+        : 'Mostra persone e veicoli ricostruiti nel 3D';
+    }
+
+    const isRealConnected = this.hasRealIngestion();
+    this.container.classList.toggle('demo-inactive', !isRealConnected && !this.entitiesVisible);
+
+    if (this.entitiesVisible && !this.isLive) {
+      this.trajectoryRenderer.updateAtTime(this.currentTime);
+    }
+  }
+
+  toggleEntitiesVisible() {
+    this.setEntitiesVisible(!this.entitiesVisible);
+  }
+
+  setCollapsed(collapsed) {
+    this.isCollapsed = Boolean(collapsed);
+    this.container.classList.toggle('collapsed', this.isCollapsed);
+    if (this.collapseIcon) {
+      this.collapseIcon.innerHTML = icon(this.isCollapsed ? 'chevron-up' : 'chevron-down', { size: 14 });
+    }
+    if (this.collapseToggle) {
+      this.collapseToggle.title = this.isCollapsed ? 'Espandi Timeline' : 'Comprimi Timeline';
+    }
+    if (!this.isCollapsed) {
+      requestAnimationFrame(() => this.drawDensityCanvas());
+    }
+  }
+
   async setMode(isLive) {
     this.isLive = Boolean(isLive);
     if (this.isLive) {
       this.liveModeBtn.classList.add('active');
       this.replayModeBtn.classList.remove('active');
       this.isPlaying = true;
-      this.playBtn.textContent = '⏸';
+      this.playBtn.innerHTML = icon('pause', { size: 15 });
       this.slider.disabled = true;
       this.slider.style.opacity = '0.5';
 
@@ -225,7 +316,7 @@ export class TimelineController {
 
   togglePlay() {
     this.isPlaying = !this.isPlaying;
-    this.playBtn.textContent = this.isPlaying ? '⏸' : '▶';
+    this.playBtn.innerHTML = icon(this.isPlaying ? 'pause' : 'play', { size: 15 });
   }
 
   update(delta) {

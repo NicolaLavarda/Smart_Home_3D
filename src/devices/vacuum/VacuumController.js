@@ -45,7 +45,7 @@ export class VacuumController extends BaseDeviceController {
     });
 
     this.modalView = new VacuumModal(this);
-    
+
     // Riferimenti mesh 3D
     this.robotPivot = null;
     this.robotBodyMesh = null;
@@ -408,10 +408,6 @@ export class VacuumController extends BaseDeviceController {
           scale: this.calibration.scale,
           timestamp: Date.now(),
         };
-
-        if (this.modalView && this.isModalOpen) {
-          this.modalView.updateTelemetry(this.lastTelemetry);
-        }
       }
     } catch (err) {
       console.warn('[VacuumController] Errore parsing telemetria MQTT:', err);
@@ -511,18 +507,30 @@ export class VacuumController extends BaseDeviceController {
     }
   }
 
-  zoomToRobot() {
-    if (!this.cameraController) return;
-    
-    // Inquadratura dinamica: segue la posizione attuale del robottino ovunque si trovi
-    const curPos = this.robotPivot ? this.robotPivot.position : this.dockPosition;
-    const target = new THREE.Vector3(curPos.x, 0.30, curPos.z);
-    const camPos = new THREE.Vector3(curPos.x - 1.4, 1.35, curPos.z + 1.4);
+  getRobotWorldPosition() {
+    const pos = new THREE.Vector3();
+    if (this.robotPivot) {
+      this.robotPivot.getWorldPosition(pos);
+    } else {
+      pos.copy(this.dockPosition);
+    }
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) {
+      pos.copy(this.dockPosition);
+    }
+    pos.y = Math.max(0.2, pos.y + 0.2);
+    return pos;
+  }
 
-    this.cameraController.flyTo({
-      target,
-      position: camPos,
-      duration: 1.2,
-    });
+  zoomToRobot() {
+    const camCtrl = this.cameraController || this.modalView?.context?.cameraController;
+    if (!camCtrl) return;
+
+    const followOffset = new THREE.Vector3(-2.1, 1.65, 2.1);
+    camCtrl.startFollowing(
+      () => this.getRobotWorldPosition(),
+      followOffset,
+      1.1,
+      46
+    );
   }
 }

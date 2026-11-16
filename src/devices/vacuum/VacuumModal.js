@@ -9,10 +9,6 @@
  * - Pillole di stato e impostazione rapida:
  *   • Velocità Ventola ("Fan speed": Silenzioso / Normale / Massima / Max+)
  *   • Mappa e Modalità ("In pulizia": Per area / Piano terra)
- * - Scheda "Live 3D & MQTT":
- *   • Telemetria in streaming continuo da MQTT (`homeassistant/deebot/pose`)
- *   • Offset live da base $(\Delta X, \Delta Z)$ e angolo di navigazione
- *   • Coordinate 3D assolute nel digital twin
  * - Scheda "Avanzate" (Flusso acqua mocio, Boost tappeti, Modalità avanzata, Rilocalizza)
  * - Scheda "Manutenzione" (Barre usura Spazzole, Filtro, Mocio, Sensori)
  * - Scheda "Statistiche" (Area pulita, Durata, Pulizie totali)
@@ -24,7 +20,7 @@ export class VacuumModal {
     this.context = null;
     this.fanSpeedDropdownOpen = false;
     this.waterFlowDropdownOpen = false;
-    this.activeTab = 'controls'; // 'controls' | 'telemetry' | 'consumables' | 'stats'
+    this.activeTab = 'controls'; // 'controls' | 'consumables' | 'stats'
   }
 
   render(container, context = {}) {
@@ -51,8 +47,6 @@ export class VacuumModal {
     const carpetBoost = this.controller.isCarpetBoostOn();
     const advMode = this.controller.isAdvancedModeOn();
     const consumables = this.controller.getConsumables();
-    const lastTelem = this.controller.lastTelemetry;
-    const isMqttLive = this.controller.mqttConnected && (Date.now() - this.controller.lastMqttTimestamp < 6000);
 
     const isCleaning = rawState === 'cleaning';
     const isReturning = rawState === 'returning';
@@ -87,7 +81,7 @@ export class VacuumModal {
 
         <!-- 2. Hero Graphic Illustration (Robot & Base) -->
         <div class="deebot-hero-visual">
-          <div class="deebot-circle-back ${isCleaning ? 'cleaning-glow' : (isReturning ? 'returning-glow' : '')}">
+          <div class="deebot-circle-back ${isCleaning ? 'cleaning-glow' : (isReturning ? 'returning-glow' : '')}" id="btn-vac-hero-fly" role="button" tabindex="0" title="Inquadra e segui Deebot nel 3D">
             <svg class="deebot-svg-art" viewBox="0 0 160 160" width="140" height="140">
               <!-- Cerchio base robot -->
               <circle cx="80" cy="74" r="54" fill="none" stroke="currentColor" stroke-width="2.5" class="robot-outline"></circle>
@@ -202,13 +196,10 @@ export class VacuumModal {
           </div>
         </div>
 
-        <!-- 5. Navigazione Schede (Avanzate, Live MQTT, Manutenzione, Statistiche) -->
+        <!-- 5. Navigazione Schede (Avanzate, Manutenzione, Statistiche) -->
         <div class="deebot-tabs-bar">
           <button class="deebot-tab-btn ${this.activeTab === 'controls' ? 'active' : ''}" data-tab="controls">
             Avanzate
-          </button>
-          <button class="deebot-tab-btn ${this.activeTab === 'telemetry' ? 'active' : ''}" data-tab="telemetry">
-            Live 3D & MQTT
           </button>
           <button class="deebot-tab-btn ${this.activeTab === 'consumables' ? 'active' : ''}" data-tab="consumables">
             Manutenzione
@@ -273,78 +264,14 @@ export class VacuumModal {
             </label>
           </div>
 
-          <!-- Pulsante Rilocalizza & Inquadra 3D -->
+          <!-- Pulsante Inquadra 3D -->
           <div class="deebot-footer-actions">
-            <button class="btn-deebot-secondary" id="btn-vac-relocate">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="23 4 23 10 17 10"></polyline>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-              </svg>
-              <span>Rilocalizza</span>
-            </button>
             <button class="btn-deebot-secondary highlight" id="btn-vac-fly">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"></circle>
                 <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
               </svg>
               <span>Inquadra nel 3D</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- TAB CONTENT: LIVE TELEMETRIA 3D & MQTT -->
-        <div class="deebot-tab-pane ${this.activeTab === 'telemetry' ? 'active' : ''}">
-          <div class="deebot-telemetry-box">
-            <div class="telemetry-status-header">
-              <div class="mqtt-indicator-pill ${isMqttLive || lastTelem?.simulated ? 'online' : 'waiting'}">
-                <span class="mqtt-pulse-dot"></span>
-                <span id="telem-status-label">${isMqttLive ? 'MQTT Live Streaming' : (lastTelem?.simulated ? 'Simulazione 3D Demo' : 'MQTT Standby')}</span>
-              </div>
-              <span class="telemetry-topic-tag">${this.controller.mqttTopic}</span>
-            </div>
-
-            <!-- Griglia Coordinate Real-Time -->
-            <div class="telemetry-coords-grid">
-              <div class="telemetry-card">
-                <span class="coord-label">&Delta;X dalla Base</span>
-                <span class="coord-val" id="telem-dx">${lastTelem?.deltaX_m !== undefined ? (lastTelem.deltaX_m >= 0 ? '+' : '') + lastTelem.deltaX_m + ' m' : '0.00 m'}</span>
-                <span class="coord-sub">Spostamento ovest</span>
-              </div>
-              <div class="telemetry-card">
-                <span class="coord-label">&Delta;Z dalla Base</span>
-                <span class="coord-val" id="telem-dz">${lastTelem?.deltaZ_m !== undefined ? (lastTelem.deltaZ_m >= 0 ? '+' : '') + lastTelem.deltaZ_m + ' m' : '0.00 m'}</span>
-                <span class="coord-sub">Spostamento sud</span>
-              </div>
-              <div class="telemetry-card">
-                <span class="coord-label">Orientamento Yaw</span>
-                <span class="coord-val" id="telem-angle">${lastTelem?.angleDeg !== undefined ? lastTelem.angleDeg + '&deg;' : '0&deg;'}</span>
-                <span class="coord-sub">Rotazione LiDAR</span>
-              </div>
-              <div class="telemetry-card">
-                <span class="coord-label">Posizione 3D</span>
-                <span class="coord-val" id="telem-3d-pos">${lastTelem?.targetX ? `${lastTelem.targetX}, ${lastTelem.targetZ}` : '13.63, 1.65'}</span>
-                <span class="coord-sub">World Coordinates</span>
-              </div>
-            </div>
-
-            <!-- Selettore Rapido di Scala & Calibrazione -->
-            <div class="telemetry-calibration-bar" style="margin-top: 10px; padding: 8px 10px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: space-between;">
-              <span style="font-size: 11px; color: var(--ha-subtext);">Scala Calibrazione:</span>
-              <div style="display: flex; gap: 6px;">
-                <button class="btn-deebot-chip ${this.controller.calibration.scale === 1.0 ? 'active' : ''}" data-calib-scale="1.0" title="Scala reale 1:1 metrica">1.0x (Reale 1:1)</button>
-                <button class="btn-deebot-chip ${this.controller.calibration.scale === 0.9 ? 'active' : ''}" data-calib-scale="0.9" title="Riduzione 10%">0.9x</button>
-                <button class="btn-deebot-chip ${this.controller.calibration.scale === 0.75 ? 'active' : ''}" data-calib-scale="0.75">0.75x</button>
-                <button class="btn-deebot-chip ${this.controller.calibration.scale === 0.5 ? 'active' : ''}" data-calib-scale="0.5">0.5x</button>
-              </div>
-            </div>
-
-            <!-- Inquadratura Dinamica Follow Robot -->
-            <button class="btn-deebot-secondary highlight" id="btn-telem-follow" style="width: 100%; margin-top: 8px;">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
-              </svg>
-              <span>Segui Deebot nel 3D in Tempo Reale</span>
             </button>
           </div>
         </div>
@@ -466,24 +393,19 @@ export class VacuumModal {
       this.controller.toggleAdvancedMode();
     });
 
-    // Pulsanti Secondari
-    this.container.querySelector('#btn-vac-relocate')?.addEventListener('click', () => {
-      this.controller.relocate();
+    // Pulsante Inquadra 3D & Click sull'illustrazione del robot
+    const heroFlyEl = this.container.querySelector('#btn-vac-hero-fly');
+    heroFlyEl?.addEventListener('click', () => {
+      this.controller.zoomToRobot();
+    });
+    heroFlyEl?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.controller.zoomToRobot();
+      }
     });
     this.container.querySelector('#btn-vac-fly')?.addEventListener('click', () => {
       this.controller.zoomToRobot();
-    });
-    this.container.querySelector('#btn-telem-follow')?.addEventListener('click', () => {
-      this.controller.zoomToRobot();
-    });
-
-    // Calibrazione Scala Mappatura
-    this.container.querySelectorAll('[data-calib-scale]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const scale = parseFloat(btn.dataset.calibScale);
-        this.controller.setCalibrationScale(scale);
-        this.renderContent();
-      });
     });
 
     // Navigazione Schede
@@ -507,34 +429,5 @@ export class VacuumModal {
 
   updateLive() {
     this.renderContent();
-  }
-
-  updateTelemetry(telem) {
-    if (!this.container) return;
-
-    // Aggiornamento selettivo leggero dei valori testuali (zero flickers)
-    const dxEl = this.container.querySelector('#telem-dx');
-    const dzEl = this.container.querySelector('#telem-dz');
-    const angleEl = this.container.querySelector('#telem-angle');
-    const pos3dEl = this.container.querySelector('#telem-3d-pos');
-    const statusLabel = this.container.querySelector('#telem-status-label');
-    const indicatorPill = this.container.querySelector('.mqtt-indicator-pill');
-
-    if (dxEl && telem.deltaX_m !== undefined) {
-      dxEl.textContent = (telem.deltaX_m >= 0 ? '+' : '') + telem.deltaX_m + ' m';
-    }
-    if (dzEl && telem.deltaZ_m !== undefined) {
-      dzEl.textContent = (telem.deltaZ_m >= 0 ? '+' : '') + telem.deltaZ_m + ' m';
-    }
-    if (angleEl && telem.angleDeg !== undefined) {
-      angleEl.innerHTML = telem.angleDeg + '&deg;';
-    }
-    if (pos3dEl && telem.targetX && telem.targetZ) {
-      pos3dEl.textContent = `${telem.targetX}, ${telem.targetZ}`;
-    }
-    if (indicatorPill && statusLabel) {
-      indicatorPill.className = 'mqtt-indicator-pill online';
-      statusLabel.textContent = telem.simulated ? 'Simulazione 3D Demo' : 'MQTT Live Streaming';
-    }
   }
 }

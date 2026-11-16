@@ -9,10 +9,15 @@ export class EntityBinder {
     this.lights3D = new Map();      // entity_id -> Array<PointLight>
     this.animatedObjects = new Map(); // mesh -> { origPos, origRot, targetPos, targetRot, type }
     this.interactionManager = null;
+    this.cameraController = null;
   }
 
   setInteractionManager(im) {
     this.interactionManager = im;
+  }
+
+  setCameraController(cc) {
+    this.cameraController = cc;
   }
 
   bindEntities(haEntitiesMap) {
@@ -29,6 +34,7 @@ export class EntityBinder {
       haClient: this.haClient,
       entityBinder: this,
       interactionManager: this.interactionManager,
+      cameraController: this.cameraController,
       haEntitiesMap: this.haEntitiesMap,
     });
 

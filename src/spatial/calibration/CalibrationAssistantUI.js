@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { icon } from '../../ui/icons.js';
 
 const STORAGE_KEY = 'sh3d_camera_calibration_v2';
 
@@ -90,6 +91,7 @@ export class CalibrationAssistantUI {
       this.createDOM();
     }
     this.isOpen = true;
+    this.setCollapsed(false);
     this.panelEl.classList.add('open');
     this.syncInputsFromState();
 
@@ -115,6 +117,7 @@ export class CalibrationAssistantUI {
     this.pnpMode = false;
     if (this.panelEl) {
       this.panelEl.classList.remove('open');
+      this.setCollapsed(false);
     }
 
     this.cameraProjector.setOverlayPOVMode(this.activeCameraName, false, 0);
@@ -132,96 +135,101 @@ export class CalibrationAssistantUI {
     panel.className = 'calibration-panel glass';
     panel.id = 'calibration-assistant-panel';
     panel.innerHTML = `
-      <div class="calib-header">
-        <div>
-          <div class="calib-title">📐 Calibrazione Ottica POV</div>
+      <div class="calib-header" id="calib-header-toggle" title="Clicca per comprimere / espandere">
+        <div class="calib-title-wrap">
+          <div class="calib-title">${icon('sliders-horizontal', { size: 14 })} <span>Calibrazione Ottica POV</span></div>
           <div class="calib-subtitle" id="calib-cam-name">Cam_Carraio • Reolink RLC-540A</div>
         </div>
-        <button class="btn-close" id="calib-close-btn" title="Chiudi Calibrazione">&times;</button>
-      </div>
-
-      <div class="calib-section">
-        <div class="calib-row-label">
-          <span>Opacità Overlay Video Live</span>
-          <span id="calib-val-opacity" class="calib-num">52%</span>
-        </div>
-        <input type="range" id="calib-opacity" min="0" max="100" value="52" class="timeline-slider" />
-      </div>
-
-      <div class="calib-actions-row">
-        <button class="btn-icon-text" id="calib-flip-180" style="flex:1;justify-content:center;font-size:11px;">
-          🔄 Inverti Direzione 180° (Vialetto ↔ Strada)
-        </button>
-      </div>
-
-      <div class="calib-grid">
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Yaw Δ (°)</span><span id="calib-val-yaw" class="calib-num">0.0°</span></div>
-          <input type="range" id="calib-yaw" min="-180" max="180" step="0.5" value="0" class="timeline-slider" />
-        </div>
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Pitch Δ (°)</span><span id="calib-val-pitch" class="calib-num">0.0°</span></div>
-          <input type="range" id="calib-pitch" min="-45" max="45" step="0.5" value="0" class="timeline-slider" />
-        </div>
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Roll Δ (°)</span><span id="calib-val-roll" class="calib-num">0.0°</span></div>
-          <input type="range" id="calib-roll" min="-30" max="30" step="0.5" value="0" class="timeline-slider" />
-        </div>
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>FOV Vert. (°)</span><span id="calib-val-fov" class="calib-num">42.0°</span></div>
-          <input type="range" id="calib-fov" min="20" max="110" step="0.5" value="42" class="timeline-slider" />
+        <div class="modal-header-actions">
+          <span class="modal-collapse-chevron" id="calib-collapse-icon">${icon('chevron-up', { size: 15 })}</span>
+          <button class="btn-close" id="calib-close-btn" title="Chiudi Calibrazione">${icon('x', { size: 15 })}</button>
         </div>
       </div>
 
-      <div class="calib-grid-3">
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Off X (m)</span><span id="calib-val-ox" class="calib-num">0.00</span></div>
-          <input type="range" id="calib-ox" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+      <div class="calib-body" id="calib-content">
+        <div class="calib-section">
+          <div class="calib-row-label">
+            <span>Opacità Overlay Video Live</span>
+            <span id="calib-val-opacity" class="calib-num">52%</span>
+          </div>
+          <input type="range" id="calib-opacity" min="0" max="100" value="52" class="timeline-slider" />
         </div>
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Off Y (m)</span><span id="calib-val-oy" class="calib-num">0.00</span></div>
-          <input type="range" id="calib-oy" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
-        </div>
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Off Z (m)</span><span id="calib-val-oz" class="calib-num">0.00</span></div>
-          <input type="range" id="calib-oz" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
-        </div>
-      </div>
 
-      <div class="calib-grid">
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Distorsione k1</span><span id="calib-val-k1" class="calib-num">-0.18</span></div>
-          <input type="range" id="calib-k1" min="-0.6" max="0.4" step="0.01" value="-0.18" class="timeline-slider" />
-        </div>
-        <div class="calib-slider-box">
-          <div class="calib-row-label"><span>Distorsione k2</span><span id="calib-val-k2" class="calib-num">0.04</span></div>
-          <input type="range" id="calib-k2" min="-0.4" max="0.4" step="0.01" value="0.04" class="timeline-slider" />
-        </div>
-      </div>
-
-      <div class="calib-pnp-box">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <button class="btn-icon-text" id="calib-pnp-toggle" style="font-size:11px;padding:6px 10px;">
-            🎯 Raccogli Punti PnP (0/4)
-          </button>
-          <button class="btn-icon-text" id="calib-pnp-solve" disabled style="font-size:11px;padding:6px 10px;">
-            ⚡ Risolvi PnP
+        <div class="calib-actions-row">
+          <button class="btn-icon-text" id="calib-flip-180" style="flex:1;justify-content:center;font-size:11px;">
+            ${icon('refresh-cw', { size: 14 })} <span>Inverti Direzione 180° (Vialetto ↔ Strada)</span>
           </button>
         </div>
-        <div id="calib-pnp-hint" style="font-size:10px;color:var(--text-muted);margin-top:4px;">
-          Opzionale: clicca 4 punti noti (es. spigoli pilastrino/cancello) in 3D e nel video.
-        </div>
-      </div>
 
-      <div class="calib-actions-row">
-        <button class="btn-icon-text" id="calib-reset-btn" style="flex:1;justify-content:center;font-size:11px;">
-          ↺ Reset SSoT
-        </button>
-        <button class="btn-action-primary" id="calib-save-btn" style="flex:1.6;padding:8px 12px;font-size:12px;">
-          💾 Salva & Applica a Backend
-        </button>
+        <div class="calib-grid">
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Yaw Δ (°)</span><span id="calib-val-yaw" class="calib-num">0.0°</span></div>
+            <input type="range" id="calib-yaw" min="-180" max="180" step="0.5" value="0" class="timeline-slider" />
+          </div>
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Pitch Δ (°)</span><span id="calib-val-pitch" class="calib-num">0.0°</span></div>
+            <input type="range" id="calib-pitch" min="-45" max="45" step="0.5" value="0" class="timeline-slider" />
+          </div>
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Roll Δ (°)</span><span id="calib-val-roll" class="calib-num">0.0°</span></div>
+            <input type="range" id="calib-roll" min="-30" max="30" step="0.5" value="0" class="timeline-slider" />
+          </div>
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>FOV Vert. (°)</span><span id="calib-val-fov" class="calib-num">42.0°</span></div>
+            <input type="range" id="calib-fov" min="20" max="110" step="0.5" value="42" class="timeline-slider" />
+          </div>
+        </div>
+
+        <div class="calib-grid-3">
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Off X (m)</span><span id="calib-val-ox" class="calib-num">0.00</span></div>
+            <input type="range" id="calib-ox" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+          </div>
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Off Y (m)</span><span id="calib-val-oy" class="calib-num">0.00</span></div>
+            <input type="range" id="calib-oy" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+          </div>
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Off Z (m)</span><span id="calib-val-oz" class="calib-num">0.00</span></div>
+            <input type="range" id="calib-oz" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+          </div>
+        </div>
+
+        <div class="calib-grid">
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Distorsione k1</span><span id="calib-val-k1" class="calib-num">-0.18</span></div>
+            <input type="range" id="calib-k1" min="-0.6" max="0.4" step="0.01" value="-0.18" class="timeline-slider" />
+          </div>
+          <div class="calib-slider-box">
+            <div class="calib-row-label"><span>Distorsione k2</span><span id="calib-val-k2" class="calib-num">0.04</span></div>
+            <input type="range" id="calib-k2" min="-0.4" max="0.4" step="0.01" value="0.04" class="timeline-slider" />
+          </div>
+        </div>
+
+        <div class="calib-pnp-box">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <button class="btn-icon-text" id="calib-pnp-toggle" style="font-size:11px;padding:6px 10px;">
+              ${icon('crosshair', { size: 14 })} <span>Raccogli Punti PnP (0/4)</span>
+            </button>
+            <button class="btn-icon-text" id="calib-pnp-solve" disabled style="font-size:11px;padding:6px 10px;">
+              ${icon('zap', { size: 14 })} <span>Risolvi PnP</span>
+            </button>
+          </div>
+          <div id="calib-pnp-hint" style="font-size:10px;color:var(--text-muted);margin-top:4px;">
+            Opzionale: clicca 4 punti noti (es. spigoli pilastrino/cancello) in 3D e nel video.
+          </div>
+        </div>
+
+        <div class="calib-actions-row">
+          <button class="btn-icon-text" id="calib-reset-btn" style="flex:1;justify-content:center;font-size:11px;">
+            ${icon('rotate-ccw', { size: 14 })} <span>Reset SSoT</span>
+          </button>
+          <button class="btn-action-primary" id="calib-save-btn" style="flex:1.6;padding:8px 12px;font-size:12px;">
+            ${icon('save', { size: 14 })} <span>Salva & Applica a Backend</span>
+          </button>
+        </div>
+        <div id="calib-status-msg" style="font-size:11px;color:var(--accent-cyan);text-align:center;"></div>
       </div>
-      <div id="calib-status-msg" style="font-size:11px;color:var(--accent-cyan);text-align:center;"></div>
     `;
 
     uiLayer.appendChild(panel);
@@ -229,8 +237,25 @@ export class CalibrationAssistantUI {
     this.bindEvents();
   }
 
+  setCollapsed(collapsed) {
+    if (!this.panelEl) return;
+    const isCollapsed = Boolean(collapsed);
+    this.panelEl.classList.toggle('collapsed', isCollapsed);
+    const collapseIcon = this.panelEl.querySelector('#calib-collapse-icon');
+    if (collapseIcon) {
+      collapseIcon.innerHTML = icon(isCollapsed ? 'chevron-down' : 'chevron-up', { size: 15 });
+    }
+  }
+
   bindEvents() {
-    this.panelEl.querySelector('#calib-close-btn').addEventListener('click', () => this.close());
+    this.panelEl.querySelector('#calib-header-toggle').addEventListener('click', () => {
+      this.setCollapsed(!this.panelEl.classList.contains('collapsed'));
+    });
+
+    this.panelEl.querySelector('#calib-close-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.close();
+    });
 
     const opSlider = this.panelEl.querySelector('#calib-opacity');
     opSlider.addEventListener('input', (e) => {
@@ -354,7 +379,7 @@ export class CalibrationAssistantUI {
     const toggleBtn = this.panelEl.querySelector('#calib-pnp-toggle');
     const solveBtn = this.panelEl.querySelector('#calib-pnp-solve');
     const hint = this.panelEl.querySelector('#calib-pnp-hint');
-    toggleBtn.textContent = `🎯 Raccogli Punti PnP (${this.correspondences.length}/4)`;
+    toggleBtn.innerHTML = `${icon('crosshair', { size: 14 })} <span>Raccogli Punti PnP (${this.correspondences.length}/4)</span>`;
     solveBtn.disabled = this.correspondences.length < 4;
 
     if (!this.pnpMode) {

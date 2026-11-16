@@ -531,8 +531,8 @@ export class HAClient {
     for (const authUrl of candidateUrls) {
       try {
         const isTailscale = authUrl.includes('100.') || authUrl.includes('.ts.net') || authUrl === this.tailscaleUrl;
-        const tag = isTailscale ? 'Tailscale' : 'LAN/Locale';
-        this.notifyStatus('connecting', `Connessione a ${authUrl} (${tag})...`);
+        const tag = isTailscale ? 'remoto' : 'locale';
+        this.notifyStatus('connecting', 'Connessione HA...');
         console.log(`[HAClient] Tentativo connessione WebSocket (${tag}) a: ${authUrl}`);
 
         const auth = createLongLivedTokenAuth(authUrl, this.token);
@@ -546,8 +546,7 @@ export class HAClient {
         this.activeUrl = authUrl;
         this.url = authUrl;
         this.isTailscale = isTailscale;
-        const hostDisplay = authUrl.replace(/^https?:\/\//, '');
-        this.notifyStatus('online', `Live HA (${tag}: ${hostDisplay})`);
+        this.notifyStatus('online', `Live HA (${tag})`);
         console.log(`[HAClient] Connessione WebSocket HA riuscita con successo tramite ${tag} (${authUrl})!`);
 
         subscribeEntities(this.connection, (entities) => {
@@ -584,7 +583,7 @@ export class HAClient {
     this.isMockMode = true;
     this.activeUrl = '';
     this.isTailscale = false;
-    this.notifyStatus('mock', 'Modalità Demo Offline (Mock HA)');
+    this.notifyStatus('mock', 'Live HA (demo)');
     setTimeout(() => {
       this.notifyEntities(this.mockEntities);
     }, 100);

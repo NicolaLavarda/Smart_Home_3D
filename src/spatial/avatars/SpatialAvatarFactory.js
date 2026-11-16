@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { icon } from '../../ui/icons.js';
 
 const CLASS_STYLE = {
-  person: { color: 0x06b6d4, badgeColor: '#38bdf8', icon: '🧑', defaultName: 'Persona' },
-  car: { color: 0xf59e0b, badgeColor: '#fbbf24', icon: '🚗', defaultName: 'Veicolo' },
-  truck: { color: 0xf97316, badgeColor: '#fb923c', icon: '🚚', defaultName: 'Furgone' },
-  bicycle: { color: 0x10b981, badgeColor: '#34d399', icon: '🚲', defaultName: 'Bici' },
-  dog: { color: 0xec4899, badgeColor: '#f472b6', icon: '🐕', defaultName: 'Animale' },
+  person: { color: 0x06b6d4, badgeColor: '#38bdf8', iconName: 'user', defaultName: 'Persona' },
+  car: { color: 0xf59e0b, badgeColor: '#fbbf24', iconName: 'car', defaultName: 'Veicolo' },
+  truck: { color: 0xf97316, badgeColor: '#fb923c', iconName: 'truck', defaultName: 'Furgone' },
+  bicycle: { color: 0x10b981, badgeColor: '#34d399', iconName: 'bike', defaultName: 'Bici' },
+  dog: { color: 0xec4899, badgeColor: '#f472b6', iconName: 'dog', defaultName: 'Animale' },
 };
 
 /**
@@ -100,6 +101,9 @@ export class SpatialAvatarFactory {
     const div = document.createElement('div');
     div.className = 'spatial-avatar-badge';
     div.style.cssText = [
+      'display: inline-flex;',
+      'align-items: center;',
+      'gap: 5px;',
       'padding: 3px 8px;',
       'border-radius: 6px;',
       'background: rgba(15, 23, 42, 0.88);',
@@ -147,9 +151,10 @@ export class SpatialAvatarFactory {
       ? trackData.camera_sources.join('+')
       : trackData.camera || 'Cam_Carraio';
 
+    const iconHtml = icon(style.iconName, { size: 12 });
     const title = identity
-      ? `${style.icon} ${identity}`
-      : `${style.icon} ${style.defaultName} #${idNum}`;
+      ? `${iconHtml} <span>${identity}</span>`
+      : `${iconHtml} <span>${style.defaultName} #${idNum}</span>`;
 
     const confPct = trackData.confidence ? `${Math.round(trackData.confidence * 100)}%` : '';
     const speedStr = speedMs > 0.15 ? ` • ${speedMs.toFixed(1)} m/s` : '';

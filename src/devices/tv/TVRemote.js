@@ -1,4 +1,5 @@
 import { WEBOS_COMMANDS } from './webos_commands.js';
+import { icon } from '../../ui/icons.js';
 
 /**
  * TVRemote
@@ -30,7 +31,7 @@ export class TVRemote {
 
         <div class="remote-row remote-header-buttons">
           <button class="remote-btn btn-power" id="r-btn-power" title="Accendi (WoL) / Spegni TV">
-            ⏻
+            ${icon('power', { size: 17 })}
           </button>
           <button class="remote-btn btn-util" id="r-btn-screen-toggle" title="Spegni/Accendi solo Schermo (Eco)">
             <span style="font-size: 10px; font-weight: 700; color: #10b981;">ECO</span>
@@ -66,27 +67,27 @@ export class TVRemote {
 
           <div class="rocker-center">
             <button class="remote-btn btn-icon-round" id="r-btn-home" title="Home Dashboard">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+              ${icon('home', { size: 16, strokeWidth: 2.2 })}
             </button>
             <button class="remote-btn btn-icon-round" id="r-btn-back" title="Indietro / Esci">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              ${icon('chevron-left', { size: 16, strokeWidth: 2.2 })}
             </button>
           </div>
 
           <div class="rocker-column">
-            <button class="remote-btn btn-rocker" id="r-btn-ch-up" title="Canale Su">CH ▲</button>
+            <button class="remote-btn btn-rocker" id="r-btn-ch-up" title="Canale Su"><span>CH</span> ${icon('chevron-up', { size: 13 })}</button>
             <button class="remote-btn btn-rocker-sub" id="r-btn-guide" title="Guida Canali">GUIDE</button>
-            <button class="remote-btn btn-rocker" id="r-btn-ch-down" title="Canale Giù">CH ▼</button>
+            <button class="remote-btn btn-rocker" id="r-btn-ch-down" title="Canale Giù"><span>CH</span> ${icon('chevron-down', { size: 13 })}</button>
           </div>
         </div>
 
         <!-- Anello di Navigazione D-Pad / Magic Wheel -->
         <div class="remote-dpad-container">
           <div class="remote-dpad-ring">
-            <button class="dpad-btn dpad-up" id="r-btn-nav-up" title="Freccia Su">▲</button>
-            <button class="dpad-btn dpad-down" id="r-btn-nav-down" title="Freccia Giù">▼</button>
-            <button class="dpad-btn dpad-left" id="r-btn-nav-left" title="Freccia Sinistra">◀</button>
-            <button class="dpad-btn dpad-right" id="r-btn-nav-right" title="Freccia Destra">▶</button>
+            <button class="dpad-btn dpad-up" id="r-btn-nav-up" title="Freccia Su">${icon('chevron-up', { size: 16 })}</button>
+            <button class="dpad-btn dpad-down" id="r-btn-nav-down" title="Freccia Giù">${icon('chevron-down', { size: 16 })}</button>
+            <button class="dpad-btn dpad-left" id="r-btn-nav-left" title="Freccia Sinistra">${icon('chevron-left', { size: 16 })}</button>
+            <button class="dpad-btn dpad-right" id="r-btn-nav-right" title="Freccia Destra">${icon('chevron-right', { size: 16 })}</button>
             <button class="dpad-center-ok" id="r-btn-nav-ok" title="OK / Enter">
               <span>OK</span>
             </button>
@@ -95,11 +96,11 @@ export class TVRemote {
 
         <!-- Controlli Riproduzione Media -->
         <div class="remote-playback-bar">
-          <button class="remote-btn btn-media" id="r-btn-rew" title="Indietro Veloce">⏪</button>
-          <button class="remote-btn btn-media btn-play" id="r-btn-play" title="Play">▶</button>
-          <button class="remote-btn btn-media" id="r-btn-pause" title="Pausa">⏸</button>
-          <button class="remote-btn btn-media" id="r-btn-ff" title="Avanti Veloce">⏩</button>
-          <button class="remote-btn btn-media" id="r-btn-stop" title="Stop">⏹</button>
+          <button class="remote-btn btn-media" id="r-btn-rew" title="Indietro Veloce">${icon('rewind', { size: 14 })}</button>
+          <button class="remote-btn btn-media btn-play" id="r-btn-play" title="Play">${icon('play', { size: 14, fill: 'currentColor' })}</button>
+          <button class="remote-btn btn-media" id="r-btn-pause" title="Pausa">${icon('pause', { size: 14, fill: 'currentColor' })}</button>
+          <button class="remote-btn btn-media" id="r-btn-ff" title="Avanti Veloce">${icon('fast-forward', { size: 14 })}</button>
+          <button class="remote-btn btn-media" id="r-btn-stop" title="Stop">${icon('square', { size: 13, fill: 'currentColor' })}</button>
         </div>
 
         <!-- Tasti Rapidi Piattaforme Streaming con Loghi Ufficiali -->

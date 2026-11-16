@@ -1,4 +1,5 @@
 import { deviceRegistry } from '../devices/DeviceRegistry.js';
+import { icon } from '../ui/icons.js';
 
 export class DeviceModals {
   constructor(modalContainer, haClient, cameraController, assetLoader) {
@@ -7,33 +8,54 @@ export class DeviceModals {
     this.cameraController = cameraController;
     this.assetLoader = assetLoader;
     this.currentEntityId = null;
+    this.isCollapsed = false;
 
     this.initUI();
   }
 
   initUI() {
     this.container.innerHTML = `
-      <div class="modal-header">
+      <div class="modal-header" id="modal-header-toggle" title="Clicca per comprimere / espandere">
         <div class="modal-title-box">
           <h3 id="modal-title">Dispositivo</h3>
           <span id="modal-subtitle">entity_id</span>
         </div>
-        <button class="btn-close" id="modal-close-btn">&times;</button>
+        <div class="modal-header-actions">
+          <span class="modal-collapse-chevron" id="modal-collapse-icon">${icon('chevron-up', { size: 15 })}</span>
+          <button class="btn-close" id="modal-close-btn" title="Chiudi">${icon('x', { size: 15 })}</button>
+        </div>
       </div>
       <div class="modal-controls" id="modal-content">
         <!-- Contenuto dinamico iniettato in base al dominio -->
       </div>
     `;
 
+    this.modalHeader = this.container.querySelector('#modal-header-toggle');
     this.modalTitle = this.container.querySelector('#modal-title');
     this.modalSubtitle = this.container.querySelector('#modal-subtitle');
     this.modalContent = this.container.querySelector('#modal-content');
+    this.collapseIcon = this.container.querySelector('#modal-collapse-icon');
     this.closeBtn = this.container.querySelector('#modal-close-btn');
 
-    this.closeBtn.addEventListener('click', () => this.close());
+    this.modalHeader.addEventListener('click', () => {
+      this.setCollapsed(!this.container.classList.contains('collapsed'));
+    });
+
+    this.closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.close();
+    });
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.close();
     });
+  }
+
+  setCollapsed(collapsed) {
+    this.isCollapsed = Boolean(collapsed);
+    this.container.classList.toggle('collapsed', this.isCollapsed);
+    if (this.collapseIcon) {
+      this.collapseIcon.innerHTML = icon(this.isCollapsed ? 'chevron-down' : 'chevron-up', { size: 15 });
+    }
   }
 
   open(entityId) {
@@ -71,6 +93,7 @@ export class DeviceModals {
         modal: this,
       });
 
+      this.setCollapsed(false);
       this.container.classList.add('open');
       return;
     }
@@ -96,11 +119,13 @@ export class DeviceModals {
       this.renderGenericModal(entity);
     }
 
+    this.setCollapsed(false);
     this.container.classList.add('open');
   }
 
   close() {
     this.container.classList.remove('open');
+    this.setCollapsed(false);
     if (this.currentEntityId) {
       const customController = deviceRegistry.findControllerForEntity(this.currentEntityId);
       if (customController && typeof customController.onModalClose === 'function') {
@@ -142,7 +167,7 @@ export class DeviceModals {
       <div class="control-row">
         <label>Controllo Riproduzione</label>
         <button class="btn-action-primary" id="tv-play-btn">
-          ${isPlaying ? '⏸ Sospendi' : '▶ Riproduci'}
+          ${isPlaying ? `${icon('pause', { size: 14 })} <span>Sospendi</span>` : `${icon('play', { size: 14 })} <span>Riproduci</span>`}
         </button>
       </div>
 
@@ -155,7 +180,7 @@ export class DeviceModals {
       </div>
 
       <button class="btn-icon-text" id="tv-power-btn" style="width: 100%; justify-content: center;">
-        ⏻ Spegni / Accendi TV
+        ${icon('power', { size: 15 })} <span>Spegni / Accendi TV</span>
       </button>
     `;
 
@@ -188,7 +213,7 @@ export class DeviceModals {
       <div class="camera-preview-stream">
         <span class="live-badge">LIVE STREAM</span>
         <div style="text-align: center; color: var(--text-muted); font-size: 12px; padding: 20px;">
-          <div style="font-size: 24px; margin-bottom: 6px;">📹</div>
+          <div style="margin-bottom: 6px; color: var(--accent-cyan);">${icon('cctv', { size: 28 })}</div>
           <div>H.265 / WebRTC Stream Attivo</div>
           <div style="font-family: var(--font-mono); font-size: 11px; margin-top: 4px; color: var(--accent-cyan);">
             1920x1080 @ 25fps • Frigate AI
@@ -204,7 +229,7 @@ export class DeviceModals {
       </div>
 
       <button class="btn-action-primary" id="btn-camera-pov" style="width: 100%;">
-        🎯 Entra nella vista POV di questa telecamera
+        ${icon('crosshair', { size: 15 })} <span>Entra nella vista POV di questa telecamera</span>
       </button>
 
       <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4; text-align: center;">

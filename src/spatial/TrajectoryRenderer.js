@@ -25,7 +25,42 @@ export class TrajectoryRenderer {
     this.rawDetections = [];
     this.trailDuration = 18.0;
     this.liveModeActive = false;
+    this.entitiesVisible = false;
     this.pulseClock = 0;
+  }
+
+  setEntityObjectVisible(entry, visible, trailVisible = visible) {
+    if (!entry) return;
+    const showMarker = Boolean(visible && this.entitiesVisible);
+    const showTrail = Boolean(trailVisible && this.entitiesVisible);
+    if (entry.markerGroup) {
+      entry.markerGroup.visible = showMarker;
+      if (entry.markerGroup.userData?.css2dLabel) {
+        entry.markerGroup.userData.css2dLabel.visible = showMarker;
+      }
+      if (entry.markerGroup.userData?.badgeEl) {
+        entry.markerGroup.userData.badgeEl.style.display = showMarker ? 'inline-flex' : 'none';
+      }
+    }
+    if (entry.trailLine) {
+      entry.trailLine.visible = showTrail;
+    }
+  }
+
+  setEntitiesVisible(visible) {
+    this.entitiesVisible = Boolean(visible);
+    if (!this.entitiesVisible) {
+      this.entities.forEach((e) => this.setEntityObjectVisible(e, false, false));
+      this.liveEntities.forEach((e) => this.setEntityObjectVisible(e, false, false));
+      return;
+    }
+
+    if (this.liveModeActive) {
+      this.entities.forEach((e) => this.setEntityObjectVisible(e, false, false));
+      this.liveEntities.forEach((e) => this.setEntityObjectVisible(e, true, e.trailPoints.length >= 2));
+    } else {
+      this.liveEntities.forEach((e) => this.setEntityObjectVisible(e, false, false));
+    }
   }
 
   createTrailLine(maxPoints = 120) {
@@ -51,13 +86,11 @@ export class TrajectoryRenderer {
     this.liveModeActive = Boolean(isLive);
     this.entities.forEach((e) => {
       if (this.liveModeActive) {
-        e.markerGroup.visible = false;
-        e.trailLine.visible = false;
+        this.setEntityObjectVisible(e, false, false);
       }
     });
     this.liveEntities.forEach((e) => {
-      e.markerGroup.visible = this.liveModeActive;
-      e.trailLine.visible = this.liveModeActive;
+      this.setEntityObjectVisible(e, this.liveModeActive, this.liveModeActive && e.trailPoints.length >= 2);
     });
   }
 
@@ -91,13 +124,15 @@ export class TrajectoryRenderer {
       trailLine.visible = false;
       this.scene.add(trailLine);
 
-      this.entities.set(id, {
+      const entry = {
         id,
         class: entityClass,
         markerGroup,
         trailLine,
         points,
-      });
+      };
+      this.setEntityObjectVisible(entry, false, false);
+      this.entities.set(id, entry);
     });
 
     console.log(`[TrajectoryRenderer] Caricate ${this.rawDetections.length} rilevazioni storiche per ${this.entities.size} entità.`);
@@ -142,6 +177,7 @@ export class TrajectoryRenderer {
           lastSeenPerf: nowPerf,
           trailPoints: [{ x, y, z, t: nowUnix }],
         };
+        this.setEntityObjectVisible(entry, this.liveModeActive, false);
         this.liveEntities.set(id, entry);
       } else {
         entry.targetPos.set(x, y, z);
@@ -188,7 +224,6 @@ export class TrajectoryRenderer {
 
       const lerpAlpha = Math.min(1.0, delta * 12.0);
       entry.markerGroup.position.lerp(predictedTarget, lerpAlpha);
-      entry.markerGroup.visible = true;
 
       // Orientamento verso la direzione di marcia
       const speedH = Math.hypot(entry.velocity.x, entry.velocity.z);
@@ -228,7 +263,7 @@ export class TrajectoryRenderer {
       posAttr.needsUpdate = true;
       colAttr.needsUpdate = true;
       geom.setDrawRange(0, n);
-      entry.trailLine.visible = n >= 2;
+      this.setEntityObjectVisible(entry, true, n >= 2);
     }
   }
 
@@ -243,8 +278,7 @@ export class TrajectoryRenderer {
       const futurePoints = points.filter((p) => p.t > currentTime);
 
       if (pastPoints.length === 0) {
-        markerGroup.visible = false;
-        trailLine.visible = false;
+        this.setEntityObjectVisible(entity, false, false);
         return;
       }
 
@@ -252,13 +286,11 @@ export class TrajectoryRenderer {
       const timeSinceLastDetection = currentTime - lastPoint.t;
 
       if (timeSinceLastDetection > 15.0 && futurePoints.length === 0) {
-        markerGroup.visible = false;
-        trailLine.visible = false;
+        this.setEntityObjectVisible(entity, false, false);
         return;
       }
 
-      markerGroup.visible = true;
-      trailLine.visible = true;
+      this.setEntityObjectVisible(entity, true, true);
 
       let currentPos = new THREE.Vector3(lastPoint.x, lastPoint.y, lastPoint.z);
       let vx = lastPoint.vx || 0;

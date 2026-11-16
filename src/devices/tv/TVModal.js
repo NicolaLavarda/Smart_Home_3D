@@ -1,5 +1,6 @@
 import { AVAILABLE_SOURCES } from './webos_commands.js';
 import { TVRemote } from './TVRemote.js';
+import { icon } from '../../ui/icons.js';
 
 /**
  * TVModal
@@ -76,10 +77,10 @@ export class TVModal {
         ${isPoweredOn ? `
           <div class="tv-media-actions">
             <button class="btn-action-primary" id="tv-modal-play-btn" style="flex: 1;">
-              ${isPlaying ? '⏸ Sospendi' : '▶ Riproduci'}
+              ${isPlaying ? `${icon('pause', { size: 14 })} <span>Sospendi</span>` : `${icon('play', { size: 14 })} <span>Riproduci</span>`}
             </button>
-            <button class="btn-icon-text" id="tv-modal-stop-btn" style="padding: 10px 14px;">
-              ⏹
+            <button class="btn-icon-text" id="tv-modal-stop-btn" style="padding: 10px 14px;" title="Stop">
+              ${icon('square', { size: 14, fill: 'currentColor' })}
             </button>
           </div>
         ` : ''}
@@ -94,7 +95,7 @@ export class TVModal {
           </div>
         </div>
         <button class="${isPoweredOn ? 'btn-power-off' : 'btn-power-on'}" id="tv-modal-power-btn">
-          ${isPoweredOn ? '⏻ Spegni TV' : '⏻ Accendi'}
+          ${icon('power', { size: 14 })} <span>${isPoweredOn ? 'Spegni TV' : 'Accendi'}</span>
         </button>
       </div>
 
@@ -104,7 +105,7 @@ export class TVModal {
           <div style="display: flex; align-items: center; gap: 6px;">
             <label style="margin: 0;">Volume</label>
             <button class="btn-mute-toggle ${isMuted ? 'muted' : ''}" id="tv-modal-mute-btn" title="Muto">
-              ${isMuted ? '🔇 Muto' : '🔊 Attivo'}
+              ${isMuted ? `${icon('volume-x', { size: 13 })} <span>Muto</span>` : `${icon('volume-2', { size: 13 })} <span>Attivo</span>`}
             </button>
           </div>
           <span id="tv-modal-vol-label" style="font-size: 12px; font-family: var(--font-mono);">${volume}%</span>
@@ -186,11 +187,11 @@ export class TVModal {
       powerBtn.addEventListener('click', () => {
         const wasOn = this.controller.isPoweredOn();
         if (wasOn) {
-          powerBtn.textContent = '⏻ Spegnimento...';
+          powerBtn.innerHTML = `${icon('power', { size: 14 })} <span>Spegnimento...</span>`;
           powerBtn.disabled = true;
           this.controller.turnOff();
         } else {
-          powerBtn.textContent = '⚡ Invio pacchetto WoL...';
+          powerBtn.innerHTML = `${icon('zap', { size: 14 })} <span>Invio pacchetto WoL...</span>`;
           powerBtn.disabled = true;
           this.controller.turnOn();
         }

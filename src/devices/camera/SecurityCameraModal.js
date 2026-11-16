@@ -1,3 +1,5 @@
+import { icon } from '../../ui/icons.js';
+
 /**
  * SecurityCameraModal
  *
@@ -68,7 +70,7 @@ export class SecurityCameraModal {
           </button>
         </div>
         <button class="btn-icon-text" id="btn-cam-reconnect" title="Riconnetti stream" style="padding:6px 10px;font-size:11px;">
-          ↻ Riconnetti
+          ${icon('refresh-cw', { size: 13 })} <span>Riconnetti</span>
         </button>
       </div>
 
@@ -87,15 +89,17 @@ export class SecurityCameraModal {
       </div>
 
       <button class="btn-action-primary" id="btn-camera-pov" style="width:100%;">
-        🎯 Entra in Vista POV 3D
+        ${icon('crosshair', { size: 15 })} <span>Entra in Vista POV 3D</span>
       </button>
 
       <button class="btn-icon-text" id="btn-camera-calibrate" style="width:100%;justify-content:center;border-color:rgba(6,182,212,0.45);color:#38bdf8;">
-        📐 Apri Calibrazione Ottica POV
+        ${icon('sliders-horizontal', { size: 15 })} <span>Apri Calibrazione Ottica POV</span>
       </button>
 
       <button class="btn-icon-text" id="btn-toggle-simulator" style="width:100%;justify-content:center;">
-        ${this.isSyntheticActive ? '🧠 Passa a Rilevamento OpenVINO Live' : '🚶 Avvia Simulatore Camminata 3D'}
+        ${this.isSyntheticActive
+          ? `${icon('brain', { size: 15 })} <span>Passa a Rilevamento OpenVINO Live</span>`
+          : `${icon('footprints', { size: 15 })} <span>Avvia Simulatore Camminata 3D</span>`}
       </button>
 
       <div id="cam-status-hint" style="font-size:11px;color:var(--text-muted);line-height:1.45;text-align:center;">
@@ -170,9 +174,9 @@ export class SecurityCameraModal {
       const res = await client.setIngestionMode(nextMode);
       if (res && res.status === 'ok') {
         this.isSyntheticActive = res.ingestion_mode === 'synthetic';
-        simBtn.textContent = this.isSyntheticActive
-          ? '🧠 Passa a Rilevamento OpenVINO Live'
-          : '🚶 Avvia Simulatore Camminata 3D';
+        simBtn.innerHTML = this.isSyntheticActive
+          ? `${icon('brain', { size: 15 })} <span>Passa a Rilevamento OpenVINO Live</span>`
+          : `${icon('footprints', { size: 15 })} <span>Avvia Simulatore Camminata 3D</span>`;
         this.hintEl.textContent = `Modalità CV attiva: ${res.ingestion_mode.toUpperCase()}`;
       } else {
         this.hintEl.textContent = 'Backend spaziale offline: impossibile cambiare modalità CV.';
