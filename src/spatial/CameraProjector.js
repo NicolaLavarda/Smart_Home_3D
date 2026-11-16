@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CameraFrustumOverlay } from './calibration/CameraFrustumOverlay.js';
 
-const CALIBRATION_STORAGE_PREFIX = 'sh3d_camera_calibration_v1_';
+const CALIBRATION_STORAGE_PREFIX = 'sh3d_camera_calibration_v2_';
 
 export class CameraProjector {
   constructor(scene, assetLoader) {

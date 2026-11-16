@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const STORAGE_KEY = 'sh3d_camera_calibration_v1';
+const STORAGE_KEY = 'sh3d_camera_calibration_v2';
 
 /**
  * CalibrationAssistantUI

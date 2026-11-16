@@ -72,9 +72,9 @@ export class InteractionManager {
 
       const meshes = haEntitiesMap ? haEntitiesMap.get(entityId) : null;
       const isFixedPosEntity = entityId.startsWith('switch.smart_switch_area') ||
-                               entityId === 'switch.switch_casa_interruttore_1' ||
-                               entityId === 'switch.switch_casa_interruttore_2' ||
-                               entityId === 'switch.smart_switch_caldaia';
+        entityId === 'switch.switch_casa_interruttore_1' ||
+        entityId === 'switch.switch_casa_interruttore_2' ||
+        entityId === 'switch.smart_switch_caldaia';
 
       if (!isFixedPosEntity && (!meshes || meshes.length === 0)) return;
 
@@ -91,23 +91,23 @@ export class InteractionManager {
       const center = new THREE.Vector3();
 
       if (entityId === 'switch.switch_casa_interruttore_1') {
-        // Al centro del grande cancello carraio nero a sinistra del cancelletto
-        center.set(-6.60, 0.95, 0.20);
+        // Al centro del cancello carraio nero (318cm)
+        center.set(-13.44, 0.95, 6.28);
       } else if (entityId === 'switch.switch_casa_interruttore_2') {
-        // Sul montante del cancelletto pedonale
-        center.set(-4.24, 1.05, 0.20);
+        // Sul montante del cancelletto pedonale (117cm)
+        center.set(-9.60, 1.05, 6.28);
       } else if (entityId === 'switch.smart_switch_caldaia') {
         // Parete di fronte in lavanderia
         center.set(0.90, 1.25, 12.60);
       } else if (entityId === 'switch.smart_switch_area1') {
         // Giardino Area 1 (Prato Sud)
-        center.set(2.50, 0.45, 24.50);
+        center.set(-0.50, 0.45, 28.00);
       } else if (entityId === 'switch.smart_switch_area2') {
         // Giardino Area 2 (Corte Est)
         center.set(10.00, 0.45, 12.60);
       } else if (entityId === 'switch.smart_switch_area3') {
         // Giardino Area 3 (Prato Nord & Viale)
-        center.set(-2.50, 0.45, 10.00);
+        center.set(-5.50, 0.45, 12.50);
       } else if (entityId === 'light.luci_esterne') {
         // Sopra il primo lampioncino
         const b1 = meshes.find((m) => m.name === 'Bollard_Garden_1') || meshes[0];
@@ -212,22 +212,22 @@ export class InteractionManager {
         badgeEl.appendChild(labelEl);
       }
 
-        badgeEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const action = entityId.startsWith('switch.smart_switch_area') ? 'modal' : (entData.action || 'toggle');
-          this.handleEntityAction(entityId, action);
-        });
-
-        const css2dObj = new CSS2DObject(badgeEl);
-        css2dObj.position.copy(center);
-        css2dObj.visible = this.badgesVisible;
-        if (!this.badgesVisible) {
-          badgeEl.style.display = 'none';
-        }
-        this.scene.add(css2dObj);
-
-        this.deviceBadges.set(entityId, { element: badgeEl, dot: dotEl, valEl, css2dObj, position: center.clone() });
+      badgeEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = entityId.startsWith('switch.smart_switch_area') ? 'modal' : (entData.action || 'toggle');
+        this.handleEntityAction(entityId, action);
       });
+
+      const css2dObj = new CSS2DObject(badgeEl);
+      css2dObj.position.copy(center);
+      css2dObj.visible = this.badgesVisible;
+      if (!this.badgesVisible) {
+        badgeEl.style.display = 'none';
+      }
+      this.scene.add(css2dObj);
+
+      this.deviceBadges.set(entityId, { element: badgeEl, dot: dotEl, valEl, css2dObj, position: center.clone() });
+    });
   }
 
   /**

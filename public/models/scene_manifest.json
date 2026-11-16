@@ -86,8 +86,8 @@
           "object_name": "Bollard_Garden_1",
           "type": "MESH",
           "centroid": [
-            -4.0,
-            -5.9,
+            -8.9,
+            -8.4,
             0.65
           ],
           "dimensions": [
@@ -101,8 +101,8 @@
           "object_name": "Bollard_Garden_2",
           "type": "MESH",
           "centroid": [
-            -1.0,
             -5.9,
+            -8.4,
             0.65
           ],
           "dimensions": [
@@ -116,8 +116,8 @@
           "object_name": "Bollard_Garden_3",
           "type": "MESH",
           "centroid": [
-            -3.8,
-            -18.0,
+            -10.2,
+            -19.2,
             0.65
           ],
           "dimensions": [
@@ -131,8 +131,8 @@
           "object_name": "Bollard_Garden_4",
           "type": "MESH",
           "centroid": [
-            2.2,
-            -18.25,
+            -4.2,
+            -19.2,
             0.65
           ],
           "dimensions": [
@@ -204,14 +204,14 @@
         }
       ],
       "centroid_blender": [
-        -4.0,
-        -5.9,
+        -8.9,
+        -8.4,
         0.65
       ],
       "centroid_gltf": [
-        -4.0,
+        -8.9,
         0.65,
-        5.9
+        8.4
       ]
     },
     "camera.carraio_scorrevole": {
@@ -226,9 +226,9 @@
           "object_name": "Cam_Carraio",
           "type": "CAMERA",
           "centroid": [
-            -5.3,
-            -0.2,
-            2.1
+            -11.29,
+            -6.28,
+            1.68
           ],
           "dimensions": [
             0.0,
@@ -241,9 +241,9 @@
           "object_name": "Security_Cam_Body",
           "type": "MESH",
           "centroid": [
-            -5.3,
-            -0.15,
-            2.1
+            -11.29,
+            -6.23,
+            1.68
           ],
           "dimensions": [
             0.08,
@@ -256,27 +256,27 @@
           "object_name": "Security_Cam_Pole_Pillar",
           "type": "MESH",
           "centroid": [
-            -5.3,
-            -0.2,
-            1.975
+            -11.29,
+            -6.28,
+            1.49
           ],
           "dimensions": [
             0.05,
             0.05,
-            0.35
+            0.38
           ],
           "badge_style": ""
         }
       ],
       "centroid_blender": [
-        -5.3,
-        -0.2,
-        2.1
+        -11.29,
+        -6.28,
+        1.68
       ],
       "centroid_gltf": [
-        -5.3,
-        2.1,
-        0.2
+        -11.29,
+        1.68,
+        6.28
       ]
     },
     "vacuum.deebot": {
@@ -446,14 +446,14 @@
           "object_name": "Gate_Leaf_L",
           "type": "MESH",
           "centroid": [
-            -7.175,
-            -0.2,
-            0.8
+            -14.2325,
+            -6.28,
+            0.785
           ],
           "dimensions": [
-            1.15,
-            0.04,
-            1.3
+            1.565,
+            0.03,
+            1.33
           ],
           "badge_style": ""
         },
@@ -461,14 +461,14 @@
           "object_name": "Gate_Leaf_R",
           "type": "MESH",
           "centroid": [
-            -6.025,
-            -0.2,
-            0.8
+            -12.6475,
+            -6.28,
+            0.785
           ],
           "dimensions": [
-            1.15,
-            0.04,
-            1.3
+            1.565,
+            0.03,
+            1.33
           ],
           "badge_style": ""
         },
@@ -476,8 +476,8 @@
           "object_name": "Switch_Gate_Carraio",
           "type": "MESH",
           "centroid": [
-            -6.6,
-            -0.2,
+            -13.44,
+            -6.28,
             0.85
           ],
           "dimensions": [
@@ -489,14 +489,14 @@
         }
       ],
       "centroid_blender": [
-        -7.175,
-        -0.2,
-        0.8
+        -14.2325,
+        -6.28,
+        0.785
       ],
       "centroid_gltf": [
-        -7.175,
-        0.8,
-        0.2
+        -14.2325,
+        0.785,
+        6.28
       ]
     },
     "light.bancone": {
@@ -986,8 +986,8 @@
           "object_name": "Sprinkler_Area1_1",
           "type": "MESH",
           "centroid": [
-            -7.39,
-            -26.45,
+            -13.5,
+            -31.5,
             0.125
           ],
           "dimensions": [
@@ -1001,8 +1001,8 @@
           "object_name": "Sprinkler_Area1_1_Base",
           "type": "MESH",
           "centroid": [
-            -7.39,
-            -26.45,
+            -13.5,
+            -31.5,
             0.012
           ],
           "dimensions": [
@@ -1016,8 +1016,8 @@
           "object_name": "Sprinkler_Area1_1_Nozzle",
           "type": "MESH",
           "centroid": [
-            -7.39,
-            -26.45,
+            -13.5,
+            -31.5,
             0.235
           ],
           "dimensions": [
@@ -1031,8 +1031,8 @@
           "object_name": "Sprinkler_Area1_2",
           "type": "MESH",
           "centroid": [
-            -0.16,
-            -21.5,
+            -1.5,
+            -24.2,
             0.125
           ],
           "dimensions": [
@@ -1046,8 +1046,8 @@
           "object_name": "Sprinkler_Area1_2_Base",
           "type": "MESH",
           "centroid": [
-            -0.16,
-            -21.5,
+            -1.5,
+            -24.2,
             0.012
           ],
           "dimensions": [
@@ -1061,8 +1061,8 @@
           "object_name": "Sprinkler_Area1_2_Nozzle",
           "type": "MESH",
           "centroid": [
-            -0.16,
-            -21.5,
+            -1.5,
+            -24.2,
             0.235
           ],
           "dimensions": [
@@ -1076,8 +1076,8 @@
           "object_name": "Sprinkler_Area1_3",
           "type": "MESH",
           "centroid": [
-            5.0,
-            -24.69,
+            4.5,
+            -26.8,
             0.125
           ],
           "dimensions": [
@@ -1091,8 +1091,8 @@
           "object_name": "Sprinkler_Area1_3_Base",
           "type": "MESH",
           "centroid": [
-            5.0,
-            -24.69,
+            4.5,
+            -26.8,
             0.012
           ],
           "dimensions": [
@@ -1106,8 +1106,8 @@
           "object_name": "Sprinkler_Area1_3_Nozzle",
           "type": "MESH",
           "centroid": [
-            5.0,
-            -24.69,
+            4.5,
+            -26.8,
             0.235
           ],
           "dimensions": [
@@ -1122,7 +1122,7 @@
           "type": "MESH",
           "centroid": [
             12.3,
-            -24.82,
+            -25.8,
             0.125
           ],
           "dimensions": [
@@ -1137,7 +1137,7 @@
           "type": "MESH",
           "centroid": [
             12.3,
-            -24.82,
+            -25.8,
             0.012
           ],
           "dimensions": [
@@ -1152,7 +1152,7 @@
           "type": "MESH",
           "centroid": [
             12.3,
-            -24.82,
+            -25.8,
             0.235
           ],
           "dimensions": [
@@ -1164,14 +1164,14 @@
         }
       ],
       "centroid_blender": [
-        -7.39,
-        -26.45,
+        -13.5,
+        -31.5,
         0.125
       ],
       "centroid_gltf": [
-        -7.39,
+        -13.5,
         0.125,
-        26.45
+        31.5
       ]
     },
     "switch.smart_switch_area2": {
@@ -1187,7 +1187,7 @@
           "type": "MESH",
           "centroid": [
             6.89,
-            -8.57,
+            -9.6,
             0.125
           ],
           "dimensions": [
@@ -1202,7 +1202,7 @@
           "type": "MESH",
           "centroid": [
             6.89,
-            -8.57,
+            -9.6,
             0.012
           ],
           "dimensions": [
@@ -1217,7 +1217,7 @@
           "type": "MESH",
           "centroid": [
             6.89,
-            -8.57,
+            -9.6,
             0.235
           ],
           "dimensions": [
@@ -1275,13 +1275,13 @@
       ],
       "centroid_blender": [
         6.89,
-        -8.57,
+        -9.6,
         0.125
       ],
       "centroid_gltf": [
         6.89,
         0.125,
-        8.57
+        9.6
       ]
     },
     "switch.smart_switch_area3": {
@@ -1296,8 +1296,8 @@
           "object_name": "Sprinkler_Area3_1",
           "type": "MESH",
           "centroid": [
-            -3.52,
-            -0.58,
+            -7.8,
+            -2.5,
             0.125
           ],
           "dimensions": [
@@ -1311,8 +1311,8 @@
           "object_name": "Sprinkler_Area3_1_Base",
           "type": "MESH",
           "centroid": [
-            -3.52,
-            -0.58,
+            -7.8,
+            -2.5,
             0.012
           ],
           "dimensions": [
@@ -1326,8 +1326,8 @@
           "object_name": "Sprinkler_Area3_1_Nozzle",
           "type": "MESH",
           "centroid": [
-            -3.52,
-            -0.58,
+            -7.8,
+            -2.5,
             0.235
           ],
           "dimensions": [
@@ -1341,7 +1341,7 @@
           "object_name": "Sprinkler_Area3_2",
           "type": "MESH",
           "centroid": [
-            -0.67,
+            -1.6,
             -5.4,
             0.125
           ],
@@ -1356,7 +1356,7 @@
           "object_name": "Sprinkler_Area3_2_Base",
           "type": "MESH",
           "centroid": [
-            -0.67,
+            -1.6,
             -5.4,
             0.012
           ],
@@ -1371,7 +1371,7 @@
           "object_name": "Sprinkler_Area3_2_Nozzle",
           "type": "MESH",
           "centroid": [
-            -0.67,
+            -1.6,
             -5.4,
             0.235
           ],
@@ -1431,7 +1431,7 @@
           "object_name": "Sprinkler_Area3_4",
           "type": "MESH",
           "centroid": [
-            -0.85,
+            -1.6,
             -14.95,
             0.125
           ],
@@ -1446,7 +1446,7 @@
           "object_name": "Sprinkler_Area3_4_Base",
           "type": "MESH",
           "centroid": [
-            -0.85,
+            -1.6,
             -14.95,
             0.012
           ],
@@ -1461,7 +1461,7 @@
           "object_name": "Sprinkler_Area3_4_Nozzle",
           "type": "MESH",
           "centroid": [
-            -0.85,
+            -1.6,
             -14.95,
             0.235
           ],
@@ -1476,8 +1476,8 @@
           "object_name": "Sprinkler_Area3_5",
           "type": "MESH",
           "centroid": [
-            4.15,
-            -16.02,
+            3.8,
+            -17.0,
             0.125
           ],
           "dimensions": [
@@ -1491,8 +1491,8 @@
           "object_name": "Sprinkler_Area3_5_Base",
           "type": "MESH",
           "centroid": [
-            4.15,
-            -16.02,
+            3.8,
+            -17.0,
             0.012
           ],
           "dimensions": [
@@ -1506,8 +1506,8 @@
           "object_name": "Sprinkler_Area3_5_Nozzle",
           "type": "MESH",
           "centroid": [
-            4.15,
-            -16.02,
+            3.8,
+            -17.0,
             0.235
           ],
           "dimensions": [
@@ -1519,14 +1519,14 @@
         }
       ],
       "centroid_blender": [
-        -3.52,
-        -0.58,
+        -7.8,
+        -2.5,
         0.125
       ],
       "centroid_gltf": [
-        -3.52,
+        -7.8,
         0.125,
-        0.58
+        2.5
       ]
     },
     "switch.smart_switch_caldaia": {
@@ -1577,7 +1577,7 @@
           "type": "MESH",
           "centroid": [
             6.54,
-            -20.73,
+            -21.83,
             1.15
           ],
           "dimensions": [
@@ -1590,13 +1590,13 @@
       ],
       "centroid_blender": [
         6.54,
-        -20.73,
+        -21.83,
         1.15
       ],
       "centroid_gltf": [
         6.54,
         1.15,
-        20.73
+        21.83
       ]
     },
     "switch.switch_casa_interruttore_2": {
@@ -1611,8 +1611,8 @@
           "object_name": "Switch_Gate_Ped",
           "type": "MESH",
           "centroid": [
-            -4.24,
-            -0.2,
+            -9.6,
+            -6.28,
             1.05
           ],
           "dimensions": [
@@ -1624,14 +1624,14 @@
         }
       ],
       "centroid_blender": [
-        -4.24,
-        -0.2,
+        -9.6,
+        -6.28,
         1.05
       ],
       "centroid_gltf": [
-        -4.24,
+        -9.6,
         1.05,
-        0.2
+        6.28
       ]
     },
     "media_player.smart_tv_lg_oled_2": {
@@ -1713,9 +1713,9 @@
       "clip_far": 250.0,
       "blender_transform": {
         "position": [
-          -5.3,
-          -0.2,
-          2.1
+          -11.29,
+          -6.28,
+          1.68
         ],
         "quaternion": [
           0.62932,
@@ -1732,15 +1732,15 @@
           1.0,
           0.0,
           0.0,
-          -5.3,
+          -11.29,
           0.0,
           0.207912,
           -0.978148,
-          -0.2,
+          -6.28,
           0.0,
           0.978148,
           0.207912,
-          2.1,
+          1.68,
           0.0,
           0.0,
           0.0,
@@ -1749,23 +1749,23 @@
       },
       "gltf_transform": {
         "position": [
-          -5.3,
-          2.1,
-          0.2
+          -11.29,
+          1.68,
+          6.28
         ],
         "matrix_world_gl": [
           1.0,
           0.0,
           0.0,
-          -5.3,
+          -11.29,
           0.0,
           0.978148,
           0.207912,
-          2.1,
+          1.68,
           0.0,
           -0.207912,
           0.978148,
-          0.2,
+          6.28,
           0.0,
           0.0,
           0.0,
@@ -1775,15 +1775,15 @@
           1.0,
           0.0,
           0.0,
-          -5.3,
+          -11.29,
           0.0,
           -0.978148,
           -0.207912,
-          2.1,
+          1.68,
           0.0,
           0.207912,
           -0.978148,
-          0.2,
+          6.28,
           0.0,
           0.0,
           0.0,
@@ -4526,13 +4526,13 @@
     {
       "object_name": "Driveway_Gravel",
       "centroid": [
-        -0.83,
-        -10.525,
+        -4.72,
+        -15.655,
         -0.025
       ],
       "dimensions": [
-        14.44,
-        21.05,
+        20.62,
+        14.75,
         0.05
       ]
     },
@@ -4605,7 +4605,7 @@
       "object_name": "Floor_Garage_EastStair",
       "centroid": [
         13.355,
-        -22.98,
+        -23.78,
         -0.025
       ],
       "dimensions": [
@@ -4618,12 +4618,12 @@
       "object_name": "Floor_Garage_Main",
       "centroid": [
         10.295,
-        -20.48,
+        -21.43,
         -0.025
       ],
       "dimensions": [
         7.21,
-        4.1,
+        3.8,
         0.05
       ]
     },
@@ -4631,7 +4631,7 @@
       "object_name": "Floor_Garage_WestStair",
       "centroid": [
         8.045,
-        -22.98,
+        -23.78,
         -0.025
       ],
       "dimensions": [
@@ -4669,117 +4669,117 @@
     {
       "object_name": "Giardino_Area_1_Prato",
       "centroid": [
-        2.925,
-        -21.45,
+        -0.66,
+        -25.62,
         -0.025
       ],
       "dimensions": [
-        21.95,
-        11.9,
+        29.12,
+        15.98,
         0.05
       ]
     },
     {
       "object_name": "Giardino_Area_2_Prato",
       "centroid": [
-        10.145,
-        -12.59,
+        9.895,
+        -13.64,
         -0.025
       ],
       "dimensions": [
-        7.51,
-        9.08,
+        8.01,
+        9.18,
         0.05
       ]
     },
     {
       "object_name": "Giardino_Area_3A_Prato",
       "centroid": [
-        -2.02,
-        -3.025,
+        -5.27,
+        -4.5925,
         -0.025
       ],
       "dimensions": [
-        4.04,
-        6.05,
+        8.54,
+        8.855,
         0.05
       ]
     },
     {
       "object_name": "Giardino_Area_3B_Prato",
       "centroid": [
-        -5.305,
-        -3.555,
+        -15.125,
+        -11.955,
         -0.025
       ],
       "dimensions": [
-        0.29,
-        7.11,
+        0.19,
+        11.35,
         0.05
       ]
     },
     {
       "object_name": "Giardino_Area_3C_Prato",
       "centroid": [
-        -0.4,
-        -12.81,
+        -3.13,
+        -13.455,
         -0.025
       ],
       "dimensions": [
-        10.1,
-        11.28,
+        17.44,
+        14.35,
         0.05
       ]
     },
     {
       "object_name": "Portico_Pavement_Unified",
       "centroid": [
-        7.1,
-        -12.62,
+        6.95,
+        -16.07,
         -0.025
       ],
       "dimensions": [
-        13.6,
-        11.02,
+        13.9,
+        17.92,
         0.05
       ]
     },
     {
       "object_name": "Site_Foundation_Earth",
       "centroid": [
-        3.0,
-        -13.25,
+        -0.75,
+        -16.75,
         -0.125
       ],
       "dimensions": [
-        23.0,
-        29.5,
+        30.5,
+        36.5,
         0.15
       ]
     },
     {
       "object_name": "Terrazza_All_Aperto",
       "centroid": [
-        -6.75,
-        -2.5,
+        -12.26,
+        -4.89,
         -0.025
       ],
       "dimensions": [
-        2.6,
-        5.0,
+        6.3,
+        6.78,
         0.05
       ]
     },
     {
       "object_name": "Walkway_Pedestrian_Pavement",
       "centroid": [
-        -2.4,
-        -3.555,
+        -5.355,
+        -8.215,
         -0.025
       ],
       "dimensions": [
-        5.4,
-        7.11,
+        10.71,
+        16.43,
         0.05
       ]
     }

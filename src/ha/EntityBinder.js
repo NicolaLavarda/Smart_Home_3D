@@ -199,15 +199,42 @@ export class EntityBinder {
   }
 
   setupGateTransforms() {
-    // 1. Cancello carraio (switch.switch_casa_interruttore_1)
+    // 1. Cancello carraio a doppia anta a battente (switch.switch_casa_interruttore_1)
     const carraioMeshes = this.haEntitiesMap.get('switch.switch_casa_interruttore_1') || [];
+    const leafR = carraioMeshes.find((m) => m.name === 'Gate_Leaf_R');
+    const switchMesh = carraioMeshes.find((m) => m.name === 'Switch_Gate_Carraio');
+
     carraioMeshes.forEach((mesh) => {
+      if (!mesh.name.startsWith('Gate_Leaf_')) return;
+
+      // Normalizza il pivot esattamente sulla cerniera laterale se i vertici sono stati cotti nel mondo
+      if (mesh.geometry && Math.abs(mesh.position.x) < 1.0 && Math.abs(mesh.position.z) < 1.0) {
+        mesh.geometry.computeBoundingBox();
+        const bbox = mesh.geometry.boundingBox;
+        if (bbox) {
+          const isLeft = mesh.name.includes('_L');
+          const hingeX = isLeft ? bbox.min.x : bbox.max.x;
+          const hingeZ = (bbox.min.z + bbox.max.z) * 0.5;
+          mesh.geometry.translate(-hingeX, 0, -hingeZ);
+          mesh.position.set(hingeX, mesh.position.y, hingeZ);
+        }
+      }
+
       this.animatedObjects.set(mesh, {
         origPos: mesh.position.clone(),
         targetPos: mesh.position.clone(),
-        type: 'carraio_gate',
+        origRotY: mesh.rotation.y,
+        targetRotY: mesh.rotation.y,
+        type: 'carraio_swing_gate',
       });
     });
+
+    // Rende l'eventuale selettore sul cancello solidale all'anta destra durante la rotazione
+    if (leafR && switchMesh && switchMesh.parent !== leafR) {
+      leafR.updateMatrixWorld(true);
+      switchMesh.updateMatrixWorld(true);
+      leafR.attach(switchMesh);
+    }
 
     // 2. Serranda garage (switch.switch_casa_interruttore_3)
     const garagePanels = [];
@@ -301,16 +328,16 @@ export class EntityBinder {
   updateSwitchCoverState(entityId, meshes, stateObj) {
     const isOpen = stateObj.state === 'open' || stateObj.state === 'on';
 
-    // Cancello Carraio
+    // Cancello Carraio (apertura a battente 90° verso l'interno del giardino +Z)
     if (entityId === 'switch.switch_casa_interruttore_1') {
       meshes.forEach((mesh) => {
         const anim = this.animatedObjects.get(mesh);
-        if (!anim) return;
+        if (!anim || anim.type !== 'carraio_swing_gate') return;
         if (isOpen) {
-          const offset = mesh.name.includes('_L') ? -1.8 : 1.8;
-          anim.targetPos.set(anim.origPos.x + offset, anim.origPos.y, anim.origPos.z);
+          const deltaAngle = mesh.name.includes('_L') ? -Math.PI / 2 : Math.PI / 2;
+          anim.targetRotY = anim.origRotY + deltaAngle;
         } else {
-          anim.targetPos.copy(anim.origPos);
+          anim.targetRotY = anim.origRotY;
         }
       });
     }
@@ -333,10 +360,13 @@ export class EntityBinder {
     // 1. Tick per i moduli dispositivi decentralizzati (animazioni schermo TV, ecc.)
     deviceRegistry.update(delta);
 
-    // 2. Animazione fluida cancelli e serrande (lerp)
+    // 2. Animazione fluida cancelli (rotazione a battente) e serrande (lerp traslazione)
     this.animatedObjects.forEach((anim, mesh) => {
       if (anim && anim.targetPos) {
         mesh.position.lerp(anim.targetPos, 0.08);
+      }
+      if (anim && anim.targetRotY !== undefined) {
+        mesh.rotation.y = THREE.MathUtils.lerp(mesh.rotation.y, anim.targetRotY, 0.08);
       }
     });
   }

@@ -12,7 +12,7 @@ export class CameraController {
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
     this.controls.minDistance = 1.5;
     this.controls.maxDistance = 160.0;
-    this.controls.target.set(4.0, 1.0, 12.0);
+    this.controls.target.set(-0.5, 1.0, 16.0);
 
     this.isTransitioning = false;
     this.transitionStart = 0;
@@ -28,18 +28,18 @@ export class CameraController {
     // Preset Viste
     this.presets = {
       overview: {
-        eye: new THREE.Vector3(23.0, 18.0, 25.0),
-        target: new THREE.Vector3(4.0, 1.0, 12.0),
+        eye: new THREE.Vector3(24.0, 22.0, 32.0),
+        target: new THREE.Vector3(-0.5, 1.0, 16.0),
         fov: 45,
       },
       gate: {
-        eye: new THREE.Vector3(-5.8, 3.2, -7.0),
-        target: new THREE.Vector3(-5.8, 1.0, 0.2),
-        fov: 48,
+        eye: new THREE.Vector3(-12.2, 3.6, -1.5),
+        target: new THREE.Vector3(-12.2, 1.0, 6.28),
+        fov: 50,
       },
       carraio_cam: {
-        eye: new THREE.Vector3(-5.3, 2.1, 0.45),
-        target: new THREE.Vector3(-3.0, 0.6, 10.5),
+        eye: new THREE.Vector3(-11.29, 1.68, 6.03),
+        target: new THREE.Vector3(-11.29, 0.5, -2.5),
         fov: 42,
       },
       living: {
@@ -63,13 +63,13 @@ export class CameraController {
         fov: 52,
       },
       garden: {
-        eye: new THREE.Vector3(-19.1, 17.5, 30.5),
-        target: new THREE.Vector3(3.5, 1.0, 8.9),
+        eye: new THREE.Vector3(-24.0, 19.0, 36.0),
+        target: new THREE.Vector3(-1.0, 1.0, 14.0),
         fov: 48,
       },
       irrigation_area1: {
-        eye: new THREE.Vector3(3.0, 12.0, 36.0),
-        target: new THREE.Vector3(3.0, 0.0, 24.5),
+        eye: new THREE.Vector3(-0.5, 14.0, 42.0),
+        target: new THREE.Vector3(-0.5, 0.0, 27.5),
         fov: 48,
       },
       irrigation_area2: {
@@ -78,13 +78,13 @@ export class CameraController {
         fov: 48,
       },
       irrigation_area3: {
-        eye: new THREE.Vector3(-14.0, 11.0, 8.5),
-        target: new THREE.Vector3(-2.0, 0.0, 8.5),
+        eye: new THREE.Vector3(-18.0, 13.0, 11.5),
+        target: new THREE.Vector3(-4.0, 0.0, 11.5),
         fov: 48,
       },
       topdown: {
-        eye: new THREE.Vector3(4.0, 36.0, 11.01),
-        target: new THREE.Vector3(4.0, 0.0, 11.0),
+        eye: new THREE.Vector3(-0.5, 42.0, 16.01),
+        target: new THREE.Vector3(-0.5, 0.0, 16.0),
         fov: 45,
       },
     };

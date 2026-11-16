@@ -67,11 +67,11 @@ class SyntheticWalkSimulatorSource(IDetectionSource):
             elapsed = time.monotonic() - t0
             phase = elapsed * 0.35
 
-            # Entity 1: Person ("Nicola") walking smoothly back and forth
+            # Entity 1: Person ("Nicola") walking smoothly back and forth in front of Cam_Carraio (-11.29, 1.68, 6.28)
             person_u_fb = 0.50 + 0.24 * math.sin(phase)
             person_v_fb = 0.72 + 0.11 * math.cos(phase * 0.7)
-            px_w = -3.0 + 1.8 * math.sin(phase)
-            pz_w = 8.5 - 5.5 * math.cos(phase * 0.7)
+            px_w = -11.30 + 1.60 * math.sin(phase)
+            pz_w = 4.00 - 1.40 * math.cos(phase * 0.7)
             pu, pv = self._project_or_uv((px_w, 0.0, pz_w), (person_u_fb, person_v_fb))
 
             pw, ph = 0.055, 0.18
@@ -92,14 +92,14 @@ class SyntheticWalkSimulatorSource(IDetectionSource):
 
             batch: list[DetectionEvent] = [person_evt]
 
-            # Entity 2: Car entering periodically
+            # Entity 2: Car approaching driveway gate across Terrazza_All_Aperto
             car_cycle = (elapsed % 30.0) / 30.0
             if 0.15 <= car_cycle <= 0.85:
                 prog = (car_cycle - 0.15) / 0.70
                 cu_fb = 0.28 + 0.35 * prog
                 cv_fb = 0.82 - 0.18 * math.sin(prog * math.pi)
-                cx_w = -2.6 - 0.8 * prog
-                cz_w = 17.5 - 12.0 * prog
+                cx_w = -13.44 + 0.60 * math.sin(prog * math.pi)
+                cz_w = 1.90 + 3.80 * prog
                 cu, cv = self._project_or_uv((cx_w, 0.0, cz_w), (cu_fb, cv_fb))
                 cw, ch = 0.18, 0.22
                 batch.append(

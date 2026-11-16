@@ -31,7 +31,7 @@ def test_optics_pinhole_and_panoramic() -> None:
 
     ray = pinhole.pixel_to_world_ray(0.5, 0.5)
     assert math.isclose(np.linalg.norm(ray.direction), 1.0, rel_tol=1e-5)
-    assert abs(ray.origin[0] - (-5.3)) < 1e-3
+    assert abs(ray.origin[0] - (-11.29)) < 1e-3
 
     # Round-trip check at off-center pixel (with Brown-Conrady distortion)
     for u, v in [(0.5, 0.5), (0.3, 0.7), (0.78, 0.62)]:
@@ -76,17 +76,17 @@ def test_trimesh_ground_raycaster() -> None:
     assert len(raycaster.matched_nodes) >= 5, f"Matched too few ground nodes: {raycaster.matched_nodes}"
     assert len(raycaster.ground_mesh.faces) > 0
 
-    # Cast a downward ray from Cam_Carraio toward Driveway_Gravel / Walkway (+Z South in Three.js)
+    # Cast a downward ray from Cam_Carraio toward Driveway_Gravel (+Z South in Three.js)
     from spatial_server.domain.models import Ray3D
 
-    target = np.array([-3.0, 0.0, 8.0], dtype=np.float64)
-    origin = np.array([-5.3, 2.1, 0.2], dtype=np.float64)
+    target = np.array([-13.0, 0.0, 12.0], dtype=np.float64)
+    origin = np.array([-11.29, 1.68, 6.28], dtype=np.float64)
     d = target - origin
     d = d / np.linalg.norm(d)
     hit = raycaster.intersect_ground_detailed(Ray3D(origin=tuple(origin.tolist()), direction=tuple(d.tolist())))
     assert hit is not None
     assert not hit.used_fallback_plane, "Expected direct hit against GLB ground collider mesh, not plane fallback"
-    assert abs(hit.point[0] - (-3.0)) < 0.25 and abs(hit.point[2] - 8.0) < 0.25 and abs(hit.point[1]) < 0.25
+    assert abs(hit.point[0] - (-13.0)) < 0.25 and abs(hit.point[2] - 12.0) < 0.25 and abs(hit.point[1]) < 0.25
     print(f"[PASS] TrimeshGroundRaycaster loaded {len(raycaster.matched_nodes)} nodes ({len(raycaster.ground_mesh.faces)} tris) & hit {hit.point}")
 
 
@@ -201,7 +201,7 @@ def test_fastapi_rest_and_websocket() -> None:
 
                 # Test SolvePnPRansac with 6 valid world points in front of calibrated camera
                 pinhole = app.state.pipeline.optical_models["Cam_Carraio"]
-                pts_w = [(-4.0, 0.0, 6.0), (-2.0, 0.0, 8.0), (-5.0, 0.0, 12.0), (-1.5, 0.0, 14.0), (-3.5, 1.2, 10.0), (-4.5, 0.5, 5.0)]
+                pts_w = [(-13.0, 0.0, 10.0), (-10.0, 0.0, 12.0), (-13.5, 0.0, 15.0), (-9.5, 0.0, 17.0), (-12.0, 1.2, 13.0), (-11.0, 0.5, 9.5)]
                 corrs = []
                 for p in pts_w:
                     uv = pinhole.world_point_to_pixel(p)

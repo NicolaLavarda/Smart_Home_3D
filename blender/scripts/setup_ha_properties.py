@@ -377,11 +377,11 @@ ENTITY_MAPPINGS = {
 
 def setup_real_security_camera():
     """
-    Crea o aggiorna l'UNICA vera telecamera di sicurezza sul palo del pilastrino
+    Crea o aggiorna l'UNICA vera telecamera di sicurezza sul palo del muretto basso
     tra il cancello carrabile e il cancelletto pedonale.
-    Pillar: Gate_Pillar_R (centro: x = -5.3, y = -0.2, top z = 1.8)
-    Palo: parte dal centro del pilastrino e sale di 35cm
-    Telecamera: quota z = 2.1 (30cm sopra il pilastrino), orientata perpendicolarmente verso fuori (+Y)
+    Muretto centrale: Gate_Central_Low_Wall (centro: x = -11.28, y = -6.28, top z = 1.30)
+    Palo: a 218cm dallo spigolo (x = -11.29, y = -6.28), parte da z = 1.30 e sale di 38cm
+    Telecamera: quota z = 1.68 (38cm sopra il muretto basso), orientata perpendicolarmente verso fuori (+Y)
     """
     col_cameras = bpy.data.collections.get("08_Luci_e_Camere")
     if not col_cameras:
@@ -395,29 +395,30 @@ def setup_real_security_camera():
             if "ha_label" in obj:
                 del obj["ha_label"]
 
-    pillar = bpy.data.objects.get("Gate_Pillar_R")
-    px, py = -5.3, -0.2
-    pz_top = 1.8
-    cam_z = pz_top + 0.30 # 30cm più in alto del pilastrino = 2.10m
+    px, py = -11.29, -6.28
+    pz_top = 1.30
+    pole_h = 0.38
+    cam_z = pz_top + pole_h  # 1.68m
 
-    # 2. Crea/Aggiorna Mesh del Palo e Corpo Telecamera se non esistono
+    # 2. Crea/Aggiorna Mesh del Palo e Corpo Telecamera
     pole_name = "Security_Cam_Pole_Pillar"
     pole_obj = bpy.data.objects.get(pole_name)
     if not pole_obj:
         bpy.ops.mesh.primitive_cylinder_add(
             radius=0.025,
-            depth=0.35,
-            location=(px, py, pz_top + 0.175),
+            depth=pole_h,
+            location=(px, py, pz_top + pole_h * 0.5),
         )
         pole_obj = bpy.context.active_object
         pole_obj.name = pole_name
-        # Assegna materiale metallo scuro
         mat_metal = bpy.data.materials.get("Mat_Ringhiera_Metallo")
         if mat_metal:
             pole_obj.data.materials.append(mat_metal)
         for c in pole_obj.users_collection:
             c.objects.unlink(pole_obj)
         col_cameras.objects.link(pole_obj)
+    else:
+        pole_obj.location = (px, py, pz_top + pole_h * 0.5)
 
     pole_obj["ha_entity"] = "camera.carraio_scorrevole"
     pole_obj["ha_action"] = "modal"
@@ -434,7 +435,6 @@ def setup_real_security_camera():
         )
         body_obj = bpy.context.active_object
         body_obj.name = body_name
-        # Applica scala
         bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
         mat_dark = bpy.data.materials.get("Mat_Infissi_Antracite")
         if mat_dark:
@@ -442,6 +442,8 @@ def setup_real_security_camera():
         for c in body_obj.users_collection:
             c.objects.unlink(body_obj)
         col_cameras.objects.link(body_obj)
+    else:
+        body_obj.location = (px, py + 0.05, cam_z)
 
     body_obj["ha_entity"] = "camera.carraio_scorrevole"
     body_obj["ha_action"] = "modal"
