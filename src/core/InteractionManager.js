@@ -21,9 +21,18 @@ export class InteractionManager {
 
     this.onPointerMove = this.onPointerMove.bind(this);
     this.onPointerDown = this.onPointerDown.bind(this);
+    this.onPointerUp = this.onPointerUp.bind(this);
+    this.onPointerCancel = this.onPointerCancel.bind(this);
+
+    this._activePointers = new Set();
+    this._pointerDownId = null;
+    this._pointerDownPos = { x: 0, y: 0 };
+    this._wasMultiTouch = false;
 
     this.domElement.addEventListener('pointermove', this.onPointerMove);
     this.domElement.addEventListener('pointerdown', this.onPointerDown);
+    this.domElement.addEventListener('pointerup', this.onPointerUp);
+    this.domElement.addEventListener('pointercancel', this.onPointerCancel);
   }
 
   registerEntities(haEntitiesMap) {
@@ -527,6 +536,11 @@ export class InteractionManager {
   }
 
   onPointerMove(event) {
+    // Su dispositivi touch l'hover non si applica e lascia i mesh evidenziati dopo il tap
+    if (event.pointerType === 'touch') {
+      this.clearHover();
+      return;
+    }
     const rect = this.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -574,6 +588,43 @@ export class InteractionManager {
   }
 
   onPointerDown(event) {
+    this._activePointers.add(event.pointerId);
+    if (this._activePointers.size > 1) {
+      this._wasMultiTouch = true;
+      this._pointerDownId = null;
+      return;
+    }
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+    this._wasMultiTouch = false;
+    this._pointerDownId = event.pointerId;
+    this._pointerDownPos = { x: event.clientX, y: event.clientY };
+  }
+
+  onPointerCancel(event) {
+    this._activePointers.delete(event.pointerId);
+    if (this._pointerDownId === event.pointerId) {
+      this._pointerDownId = null;
+    }
+    if (this._activePointers.size === 0) {
+      this._wasMultiTouch = false;
+    }
+  }
+
+  onPointerUp(event) {
+    this._activePointers.delete(event.pointerId);
+    const isTracked = this._pointerDownId === event.pointerId && !this._wasMultiTouch;
+    if (this._activePointers.size === 0) {
+      this._wasMultiTouch = false;
+    }
+    if (!isTracked) return;
+    this._pointerDownId = null;
+
+    // Ignora orbita/pan/drag su mouse e touch oltre 10px di spostamento
+    const dx = event.clientX - this._pointerDownPos.x;
+    const dy = event.clientY - this._pointerDownPos.y;
+    if (Math.hypot(dx, dy) > 10) return;
+
     const rect = this.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -632,5 +683,7 @@ export class InteractionManager {
   dispose() {
     this.domElement.removeEventListener('pointermove', this.onPointerMove);
     this.domElement.removeEventListener('pointerdown', this.onPointerDown);
+    this.domElement.removeEventListener('pointerup', this.onPointerUp);
+    this.domElement.removeEventListener('pointercancel', this.onPointerCancel);
   }
 }

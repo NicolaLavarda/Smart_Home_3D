@@ -9,8 +9,15 @@ export class DeviceModals {
     this.assetLoader = assetLoader;
     this.currentEntityId = null;
     this.isCollapsed = false;
+    this.onOpenCallback = null;
+    this.onCloseCallback = null;
 
     this.initUI();
+  }
+
+  setLifecycleHooks({ onOpen, onClose } = {}) {
+    this.onOpenCallback = typeof onOpen === 'function' ? onOpen : null;
+    this.onCloseCallback = typeof onClose === 'function' ? onClose : null;
   }
 
   initUI() {
@@ -95,6 +102,7 @@ export class DeviceModals {
 
       this.setCollapsed(false);
       this.container.classList.add('open');
+      this.onOpenCallback?.(entityId);
       return;
     }
 
@@ -121,9 +129,11 @@ export class DeviceModals {
 
     this.setCollapsed(false);
     this.container.classList.add('open');
+    this.onOpenCallback?.(entityId);
   }
 
   close() {
+    const wasOpen = this.container.classList.contains('open');
     this.container.classList.remove('open');
     this.setCollapsed(false);
     if (this.currentEntityId) {
@@ -144,6 +154,9 @@ export class DeviceModals {
       this.modalContent.innerHTML = '';
     }
     this.currentEntityId = null;
+    if (wasOpen) {
+      this.onCloseCallback?.();
+    }
   }
 
   renderTVModal(entity) {

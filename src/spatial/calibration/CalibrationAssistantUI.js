@@ -37,6 +37,16 @@ export class CalibrationAssistantUI {
 
     this.state = this.createDefaultState();
     this._onCanvasClick = this.handleCanvasClick.bind(this);
+    this._onKeyDown = (e) => {
+      if (e.key === 'Escape' && this.isOpen) this.close();
+    };
+    this.onOpenCallback = null;
+    this.onCloseCallback = null;
+  }
+
+  setLifecycleHooks({ onOpen, onClose } = {}) {
+    this.onOpenCallback = typeof onOpen === 'function' ? onOpen : null;
+    this.onCloseCallback = typeof onClose === 'function' ? onClose : null;
   }
 
   createDefaultState() {
@@ -94,6 +104,8 @@ export class CalibrationAssistantUI {
     this.setCollapsed(false);
     this.panelEl.classList.add('open');
     this.syncInputsFromState();
+    this.onOpenCallback?.(cameraName);
+    window.addEventListener('keydown', this._onKeyDown);
 
     // Collega VideoTexture live sul frustum 3D
     try {
@@ -127,6 +139,8 @@ export class CalibrationAssistantUI {
     }
 
     this.sceneManager.renderer.domElement.removeEventListener('click', this._onCanvasClick);
+    window.removeEventListener('keydown', this._onKeyDown);
+    this.onCloseCallback?.();
   }
 
   createDOM() {

@@ -9,6 +9,7 @@ export class TopBar {
     haClient,
     calibrationAssistant = null,
     assetLoader = null,
+    deviceModals = null,
   }) {
     this.container = domContainer;
     this.sceneManager = sceneManager;
@@ -18,6 +19,8 @@ export class TopBar {
     this.haClient = haClient;
     this.calibrationAssistant = calibrationAssistant;
     this.assetLoader = assetLoader;
+    this.deviceModals = deviceModals;
+    this._setQuickNavCollapsed = null;
 
     this.initUI();
     this.bindEvents();
@@ -39,20 +42,20 @@ export class TopBar {
       </div>
 
       <div class="top-bar-controls glass">
-        <button class="btn-icon-text" id="btn-toggle-night" title="Alterna modalità Giorno e Notte">
-          ${icon('moon', { size: 15 })} <span id="night-text">Notte</span>
+        <button class="btn-icon-text" id="btn-toggle-night" title="Alterna modalità Giorno e Notte" aria-label="Alterna modalità Giorno e Notte">
+          ${icon('moon', { size: 15 })} <span class="top-btn-label" id="night-text">Notte</span>
         </button>
 
-        <button class="btn-icon-text" id="btn-toggle-frustums" title="Mostra/Nascondi coni visivi telecamere">
-          ${icon('cctv', { size: 15 })} <span>Copertura Camere</span>
+        <button class="btn-icon-text" id="btn-toggle-frustums" title="Mostra/Nascondi coni visivi telecamere" aria-label="Mostra o nascondi copertura telecamere">
+          ${icon('cctv', { size: 15 })} <span class="top-btn-label">Copertura Camere</span>
         </button>
 
-        <button class="btn-icon-text" id="btn-toggle-badges" title="Mostra/Nascondi badge dei dispositivi">
-          ${icon('tag', { size: 15 })} <span>Badge Dispositivi</span>
+        <button class="btn-icon-text" id="btn-toggle-badges" title="Mostra/Nascondi badge dei dispositivi" aria-label="Mostra o nascondi badge dei dispositivi">
+          ${icon('tag', { size: 15 })} <span class="top-btn-label">Badge Dispositivi</span>
         </button>
 
         <div class="settings-dropdown-wrap" id="settings-dropdown-wrap">
-          <button class="btn-icon-text btn-settings-gear" id="btn-settings-menu" title="Impostazioni" aria-haspopup="true" aria-expanded="false">
+          <button class="btn-icon-text btn-settings-gear" id="btn-settings-menu" title="Impostazioni" aria-label="Impostazioni" aria-haspopup="true" aria-expanded="false">
             ${icon('settings', { size: 16 })}
             ${icon('chevron-down', { size: 13, className: 'settings-chevron' })}
           </button>
@@ -95,8 +98,8 @@ export class TopBar {
       this.sceneManager.setNightMode(isNight);
       this.nightBtn.classList.toggle('active', isNight);
       this.nightBtn.innerHTML = isNight
-        ? `${icon('sun', { size: 15 })} <span id="night-text">Giorno</span>`
-        : `${icon('moon', { size: 15 })} <span id="night-text">Notte</span>`;
+        ? `${icon('sun', { size: 15 })} <span class="top-btn-label" id="night-text">Giorno</span>`
+        : `${icon('moon', { size: 15 })} <span class="top-btn-label" id="night-text">Notte</span>`;
     });
 
     // Toggle Frustum Telecamere
@@ -123,6 +126,12 @@ export class TopBar {
       }
     });
 
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        this.closeSettingsDropdown();
+      }
+    });
+
     // Apertura Calibrazione Ottica POV Cam_Carraio
     this.calibBtn?.addEventListener('click', () => {
       this.closeSettingsDropdown();
@@ -131,6 +140,10 @@ export class TopBar {
         this.calibrationAssistant.close();
         this.calibBtn.classList.remove('active');
         return;
+      }
+      this.deviceModals?.close();
+      if (window.innerWidth <= 1024) {
+        this.setQuickNavCollapsed(true);
       }
       this.calibBtn.classList.add('active');
       const camNode = this.assetLoader?.cameras?.get('Cam_Carraio');
@@ -189,6 +202,12 @@ export class TopBar {
       collapseIconEl.innerHTML = icon(collapsed ? 'chevron-right' : 'chevron-left', { size: 14 });
       headerToggle.title = collapsed ? 'Espandi Viste Rapide' : 'Comprimi Viste Rapide';
     };
+    this._setQuickNavCollapsed = setCollapsed;
+
+    // Su tablet e smartphone parte compresso per lasciare libera la scena 3D
+    if (window.innerWidth <= 1024) {
+      setCollapsed(true);
+    }
 
     headerToggle.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -224,6 +243,12 @@ export class TopBar {
         this.cameraController.flyToPreset(preset);
       });
     });
+  }
+
+  setQuickNavCollapsed(collapsed) {
+    if (this._setQuickNavCollapsed) {
+      this._setQuickNavCollapsed(Boolean(collapsed));
+    }
   }
 }
 

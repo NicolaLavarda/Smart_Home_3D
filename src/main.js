@@ -80,7 +80,8 @@ async function bootstrap() {
   }
 
   // 9. Top Navigation Bar
-  new TopBar(topBarContainer, {
+  const uiLayer = document.querySelector('.ui-layer');
+  const topBar = new TopBar(topBarContainer, {
     sceneManager,
     cameraController,
     cameraProjector,
@@ -88,6 +89,39 @@ async function bootstrap() {
     haClient,
     calibrationAssistant,
     assetLoader,
+    deviceModals,
+  });
+
+  const syncSheetState = () => {
+    const anyOpen = modalContainer.classList.contains('open') || Boolean(calibrationAssistant?.isOpen);
+    uiLayer?.classList.toggle('sheet-open', anyOpen);
+    topBar?.calibBtn?.classList.toggle('active', Boolean(calibrationAssistant?.isOpen));
+  };
+
+  deviceModals.setLifecycleHooks({
+    onOpen: () => {
+      if (calibrationAssistant?.isOpen) {
+        calibrationAssistant.close();
+      }
+      if (window.innerWidth <= 1024) {
+        topBar.setQuickNavCollapsed(true);
+      }
+      syncSheetState();
+    },
+    onClose: syncSheetState,
+  });
+
+  calibrationAssistant.setLifecycleHooks({
+    onOpen: () => {
+      if (modalContainer.classList.contains('open')) {
+        deviceModals.close();
+      }
+      if (window.innerWidth <= 1024) {
+        topBar.setQuickNavCollapsed(true);
+      }
+      syncSheetState();
+    },
+    onClose: syncSheetState,
   });
 
   // 10. Carica Modello e Manifesto
