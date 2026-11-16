@@ -10,11 +10,13 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
   constructor(streamName, options = {}) {
     super(streamName, options);
     this.mode = 'webrtc';
-    this.baseUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || 'http://localhost:1984').replace(/\/+$/, '');
+    this.baseUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || 'http://localhost:1984').replace(/\/+$/, '');
     this.timeoutMs = options.timeoutMs || 4000;
     this.pc = null;
     this.mediaStream = null;
     this._aborted = false;
+    this._trackTimer = null;
+    this._fetchController = null;
   }
 
   async connect(videoElement) {
@@ -39,7 +41,7 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
       pc.addTransceiver('audio', { direction: 'recvonly' });
 
       const trackPromise = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
+        this._trackTimer = setTimeout(() => {
           reject(new Error(`Timeout WebRTC (${this.timeoutMs}ms) per '${this.streamName}'`));
         }, this.timeoutMs);
 
@@ -51,14 +53,16 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
           }
           this.mediaStream.addTrack(event.track);
           if (event.track.kind === 'video') {
-            clearTimeout(timer);
+            clearTimeout(this._trackTimer);
+            this._trackTimer = null;
             resolve();
           }
         };
 
         pc.onconnectionstatechange = () => {
           if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-            clearTimeout(timer);
+            clearTimeout(this._trackTimer);
+            this._trackTimer = null;
             reject(new Error(`WebRTC state: ${pc.connectionState}`));
           }
         };
@@ -66,10 +70,11 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await this.waitForIceGathering(pc, 450);
+      await this.waitForIceGathering(pc, Math.min(450, Math.floor(this.timeoutMs * 0.3)));
 
       const endpoint = `${this.baseUrl}/api/webrtc?src=${encodeURIComponent(this.streamName)}`;
-      const controller = new AbortController();
+      this._fetchController = new AbortController();
+      const controller = this._fetchController;
       const fetchTimer = setTimeout(() => controller.abort(), this.timeoutMs);
 
       const response = await fetch(endpoint, {
@@ -125,6 +130,16 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
   disconnect() {
     this._aborted = true;
     this.connected = false;
+    if (this._trackTimer) {
+      clearTimeout(this._trackTimer);
+      this._trackTimer = null;
+    }
+    if (this._fetchController) {
+      try {
+        this._fetchController.abort();
+      } catch {}
+      this._fetchController = null;
+    }
     if (this.pc) {
       try {
         this.pc.ontrack = null;

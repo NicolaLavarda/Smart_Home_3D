@@ -11,6 +11,21 @@ REPO_ROOT = BASE_DIR.parent
 load_dotenv(REPO_ROOT / ".env")
 
 
+def _normalize_ha_url(raw: str) -> str:
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if url.lower().startswith("ws://"):
+        url = "http://" + url[5:]
+    elif url.lower().startswith("wss://"):
+        url = "https://" + url[6:]
+    if url.lower().endswith("/api/websocket"):
+        url = url[:-14]
+    elif url.lower().endswith("/api/websocket/"):
+        url = url[:-15]
+    return url.rstrip("/")
+
+
 @dataclass(frozen=True)
 class SpatialServerConfig:
     host: str
@@ -32,6 +47,9 @@ class SpatialServerConfig:
     openvino_model_path: str
     db_retention_days: int
     face_webhook_url: str
+    ha_tailscale_url: str = ""
+    ha_local_url: str = ""
+    ha_token: str = ""
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -60,5 +78,8 @@ class SpatialServerConfig:
             openvino_model_path=os.getenv("OPENVINO_YOLO_MODEL", str(models_dir / "yolov8n_openvino_model")),
             db_retention_days=int(os.getenv("SPATIAL_RETENTION_DAYS", "30")),
             face_webhook_url=os.getenv("FACE_RECOGNITION_WEBHOOK_URL", ""),
+            ha_tailscale_url=_normalize_ha_url(os.getenv("VITE_HA_TAILSCALE_URL") or os.getenv("VITE_HA_REMOTE_URL", "")),
+            ha_local_url=_normalize_ha_url(os.getenv("VITE_HA_LOCAL_URL") or os.getenv("VITE_HA_URL", "")),
+            ha_token=(os.getenv("VITE_HA_TOKEN") or os.getenv("HA_TOKEN", "")).strip(),
         )
 

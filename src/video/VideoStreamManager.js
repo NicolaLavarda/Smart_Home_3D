@@ -13,6 +13,7 @@ import { HaSnapshotFallbackStream } from './HaSnapshotFallbackStream.js';
 export class VideoStreamManager {
   constructor(options = {}) {
     this.go2rtcUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || 'http://localhost:1984').replace(/\/+$/, '');
+    this.go2rtcTailscaleUrl = (options.go2rtcTailscaleUrl || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || '').replace(/\/+$/, '');
     this.haClient = options.haClient || null;
     this.activeElementProviders = new WeakMap();
     this.textureEntries = new Map(); // streamName -> { videoElement, texture, provider, refCount }
@@ -48,10 +49,18 @@ export class VideoStreamManager {
   }
 
   buildProviderChain(streamName, preferredMode = 'auto') {
+    const isTailscale = Boolean(this.haClient?.isTailscale);
+    const activeGo2RtcUrl = (isTailscale && this.go2rtcTailscaleUrl)
+      ? this.go2rtcTailscaleUrl
+      : this.go2rtcUrl;
+    const isLocalGo2Rtc = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(activeGo2RtcUrl);
+    const timeoutMs = (isTailscale && isLocalGo2Rtc) ? 1500 : undefined;
+
     const opts = {
-      go2rtcUrl: this.go2rtcUrl,
+      go2rtcUrl: activeGo2RtcUrl,
       haClient: this.haClient,
       cameraEntityId: 'camera.carraio_scorrevole',
+      ...(timeoutMs ? { timeoutMs } : {}),
     };
 
     if (preferredMode === 'webrtc') {

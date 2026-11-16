@@ -3,11 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -432,6 +436,61 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         batch = events if isinstance(events, list) else [events]
         tracks = await service.process_detection_batch(batch)
         return {"status": "ok", "active_tracks": [t.model_dump() for t in tracks]}
+
+    @app.get("/api/v1/ha-camera/snapshot/{entity_id}")
+    async def proxy_ha_camera_snapshot(
+        entity_id: str,
+        ha_url: Optional[str] = Query(default=None),
+    ) -> Response:
+        if not re.fullmatch(r"[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+", entity_id):
+            raise HTTPException(status_code=400, detail="entity_id non valido")
+
+        token = service.config.ha_token
+        if not token:
+            raise HTTPException(status_code=503, detail="VITE_HA_TOKEN non configurato")
+
+        raw_candidates = [
+            ha_url or "",
+            service.config.ha_tailscale_url,
+            service.config.ha_local_url,
+        ]
+        candidates: list[str] = []
+        for raw in raw_candidates:
+            clean = raw.strip().rstrip("/")
+            if clean.lower().startswith(("http://", "https://")) and clean not in candidates:
+                candidates.append(clean)
+
+        if not candidates:
+            raise HTTPException(status_code=503, detail="Nessun URL Home Assistant configurato")
+
+        def _fetch_sync() -> tuple[bytes, str]:
+            last_status = 502
+            last_err = "Home Assistant non raggiungibile"
+            encoded_id = urllib.parse.quote(entity_id, safe=".")
+            for base in candidates:
+                target = f"{base}/api/camera_proxy/{encoded_id}"
+                req = urllib.request.Request(
+                    target,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=3.5) as resp:
+                        content_type = resp.headers.get("Content-Type") or "image/jpeg"
+                        return resp.read(), content_type
+                except urllib.error.HTTPError as exc:
+                    last_status = exc.code
+                    last_err = f"Home Assistant HTTP {exc.code} su {base}"
+                except Exception as exc:
+                    last_err = f"{exc} ({base})"
+            raise HTTPException(status_code=last_status, detail=last_err)
+
+        loop = asyncio.get_running_loop()
+        payload_bytes, content_type = await loop.run_in_executor(None, _fetch_sync)
+        return Response(
+            content=payload_bytes,
+            media_type=content_type,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
 
     @app.websocket("/ws/spatial")
     async def ws_spatial(websocket: WebSocket) -> None:

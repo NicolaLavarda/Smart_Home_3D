@@ -10,7 +10,7 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
   constructor(streamName, options = {}) {
     super(streamName, options);
     this.mode = 'mse';
-    this.baseUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || 'http://localhost:1984').replace(/\/+$/, '');
+    this.baseUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || 'http://localhost:1984').replace(/\/+$/, '');
     this.timeoutMs = options.timeoutMs || 4500;
     this.ws = null;
     this.mediaSource = null;
@@ -18,6 +18,7 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
     this.queue = [];
     this.objectUrl = null;
     this._aborted = false;
+    this._connectTimer = null;
   }
 
   getSupportedCodecs() {
@@ -56,7 +57,7 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
 
     try {
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
+        this._connectTimer = setTimeout(() => {
           reject(new Error(`Timeout MSE (${this.timeoutMs}ms) per '${this.streamName}'`));
         }, this.timeoutMs);
 
@@ -78,13 +79,15 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
           };
 
           ws.onerror = () => {
-            clearTimeout(timer);
+            clearTimeout(this._connectTimer);
+            this._connectTimer = null;
             reject(new Error('Errore connessione WebSocket MSE go2rtc'));
           };
 
           ws.onclose = () => {
             if (!this.connected) {
-              clearTimeout(timer);
+              clearTimeout(this._connectTimer);
+              this._connectTimer = null;
               reject(new Error('WebSocket MSE chiuso prima dello stream'));
             }
           };
@@ -99,7 +102,8 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
                   this.sourceBuffer.mode = 'segments';
                   this.sourceBuffer.addEventListener('updateend', () => this.flushQueue());
                 } else if (msg.type === 'error') {
-                  clearTimeout(timer);
+                  clearTimeout(this._connectTimer);
+                  this._connectTimer = null;
                   reject(new Error(msg.value || 'Errore MSE go2rtc'));
                 }
               } catch (e) {
@@ -116,7 +120,8 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
               this.connected = true;
               this.latencyMs = Math.round(performance.now() - t0);
               this.lastError = null;
-              clearTimeout(timer);
+              clearTimeout(this._connectTimer);
+              this._connectTimer = null;
               this.videoElement.play().catch(() => {});
               this.notifyStatus();
               resolve();
@@ -156,6 +161,10 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
     this._aborted = true;
     this.connected = false;
     this.queue = [];
+    if (this._connectTimer) {
+      clearTimeout(this._connectTimer);
+      this._connectTimer = null;
+    }
     if (this.ws) {
       try {
         this.ws.close();

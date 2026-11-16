@@ -13,8 +13,15 @@ export class SecurityCameraModal {
     this.controller = controller;
     this.container = null;
     this.videoEl = null;
+    this.badgeEl = null;
+    this.latencyEl = null;
+    this.hintEl = null;
+    this.endpointEl = null;
     this.activeStreamName = 'carraio_main';
     this.isSyntheticActive = true;
+    this._unsubscribeStatus = null;
+    this._camIp = '192.168.86.47';
+    this._camName = 'Cam_Carraio';
   }
 
   async render(container, context = {}) {
@@ -25,6 +32,13 @@ export class SecurityCameraModal {
     const fovV = manifestCam?.fov_v_deg ?? 42;
     const lensMm = manifestCam?.lens_mm ?? 4.0;
     const camIp = manifestCam?.camera_ip || '192.168.86.47';
+    this._camIp = camIp;
+    this._camName = camName;
+    const haClient = this.controller.haClient || context.haClient;
+    const isTailscale = Boolean(haClient?.isTailscale);
+    const endpointLabel = isTailscale
+      ? `Tailscale Bridge → ${camIp} • ${camName}`
+      : `${camIp} • ${camName}`;
 
     // Controlla stato corrente del backend spaziale se disponibile
     let serverMode = 'synthetic';
@@ -67,8 +81,8 @@ export class SecurityCameraModal {
 
       <div class="control-row">
         <label>Endpoint Rete / Node 3D</label>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-main);">
-          ${camIp} • ${camName}
+        <span id="cam-endpoint-label" style="font-family:var(--font-mono);font-size:11px;color:var(--text-main);">
+          ${endpointLabel}
         </span>
       </div>
 
@@ -93,6 +107,7 @@ export class SecurityCameraModal {
     this.badgeEl = container.querySelector('#cam-stream-badge');
     this.latencyEl = container.querySelector('#cam-latency-badge');
     this.hintEl = container.querySelector('#cam-status-hint');
+    this.endpointEl = container.querySelector('#cam-endpoint-label');
 
     await this.connectStream(this.activeStreamName);
 
@@ -165,31 +180,83 @@ export class SecurityCameraModal {
     });
   }
 
+  updateStreamStatusUI(status) {
+    if (!this.badgeEl || !this.hintEl) return;
+    const isTailscale = Boolean(status.isTailscale || this.controller.haClient?.isTailscale);
+
+    if (status.mode === 'webrtc') {
+      this.badgeEl.textContent = 'WEBRTC LIVE';
+      this.badgeEl.style.background = 'rgba(16, 185, 129, 0.92)';
+      this.hintEl.textContent = `Stream reale a bassa latenza (${this.activeStreamName}) connesso via WebRTC.`;
+      if (this.endpointEl) {
+        this.endpointEl.textContent = isTailscale
+          ? `Tailscale Direct → ${this._camIp} • ${this._camName}`
+          : `${this._camIp} • ${this._camName}`;
+      }
+    } else if (status.mode === 'mse') {
+      this.badgeEl.textContent = 'MSE LIVE';
+      this.badgeEl.style.background = 'rgba(6, 182, 212, 0.92)';
+      this.hintEl.textContent = `Stream reale connesso via go2rtc MSE (${this.activeStreamName}).`;
+      if (this.endpointEl) {
+        this.endpointEl.textContent = isTailscale
+          ? `Tailscale Direct → ${this._camIp} • ${this._camName}`
+          : `${this._camIp} • ${this._camName}`;
+      }
+    } else if (status.hasLiveHaFrames) {
+      if (isTailscale) {
+        this.badgeEl.textContent = 'HA TAILSCALE LIVE';
+        this.badgeEl.style.background = 'rgba(16, 185, 129, 0.92)';
+        this.hintEl.textContent = `Streaming remoto attivo via Home Assistant Tailscale Bridge (${status.resolvedEntityId || 'camera'}).`;
+      } else {
+        this.badgeEl.textContent = 'HA PROXY LIVE';
+        this.badgeEl.style.background = 'rgba(6, 182, 212, 0.92)';
+        this.hintEl.textContent = `Stream attivo tramite proxy Home Assistant (${status.resolvedEntityId || 'camera'}).`;
+      }
+      if (this.endpointEl) {
+        this.endpointEl.textContent = isTailscale
+          ? `Tailscale Bridge → ${this._camIp} • ${this._camName}`
+          : `HA Proxy → ${this._camIp} • ${this._camName}`;
+      }
+    } else if (isTailscale) {
+      this.badgeEl.textContent = 'TAILSCALE • ATTESA BRIDGE';
+      this.badgeEl.style.background = 'rgba(99, 102, 241, 0.9)';
+      this.hintEl.textContent = 'Connesso via Tailscale: in attesa frame da HA Bridge (oppure attiva Subnet Router 192.168.86.0/24).';
+      if (this.endpointEl) {
+        this.endpointEl.textContent = `Tailscale Bridge → ${this._camIp} • ${this._camName}`;
+      }
+    } else {
+      this.badgeEl.textContent = 'SIMULAZIONE / ATTESA CREDENZIALI REOLINK';
+      this.badgeEl.style.background = 'rgba(99, 102, 241, 0.9)';
+      this.hintEl.textContent = 'Reolink non raggiungibile o credenziali mancanti in .env: attivo feed diagnostico.';
+    }
+
+    if (this.latencyEl) {
+      this.latencyEl.textContent = `${status.latencyMs ?? 0} ms`;
+    }
+  }
+
   async connectStream(streamName) {
     const vsm = this.controller.videoStreamManager;
     if (!vsm || !this.videoEl) return;
+
+    if (this._unsubscribeStatus) {
+      this._unsubscribeStatus();
+      this._unsubscribeStatus = null;
+    }
 
     this.badgeEl.textContent = 'CONNESSIONE...';
     this.badgeEl.style.background = 'rgba(245, 158, 11, 0.9)';
 
     try {
       const provider = await vsm.attachToVideoElement(streamName, this.videoEl, 'auto');
-      const status = provider.getStatus();
-      if (status.mode === 'webrtc') {
-        this.badgeEl.textContent = 'WEBRTC LIVE';
-        this.badgeEl.style.background = 'rgba(16, 185, 129, 0.92)';
-        this.hintEl.textContent = `Stream reale a bassa latenza (${streamName}) connesso via WebRTC.`;
-      } else if (status.mode === 'mse') {
-        this.badgeEl.textContent = 'MSE LIVE';
-        this.badgeEl.style.background = 'rgba(6, 182, 212, 0.92)';
-        this.hintEl.textContent = `Stream reale connesso via go2rtc MSE (${streamName}).`;
-      } else {
-        this.badgeEl.textContent = 'SIMULAZIONE / ATTESA CREDENZIALI REOLINK';
-        this.badgeEl.style.background = 'rgba(99, 102, 241, 0.9)';
-        this.hintEl.textContent = 'Reolink non raggiungibile o credenziali mancanti in .env: attivo feed diagnostico.';
-      }
-      if (this.latencyEl) {
-        this.latencyEl.textContent = `${status.latencyMs} ms`;
+      this.updateStreamStatusUI(provider.getStatus());
+
+      if (typeof provider.onStatusChange === 'function') {
+        this._unsubscribeStatus = provider.onStatusChange((st) => {
+          if (this.container && st.connected) {
+            this.updateStreamStatusUI(st);
+          }
+        });
       }
     } catch (err) {
       this.badgeEl.textContent = 'OFFLINE';
@@ -198,10 +265,18 @@ export class SecurityCameraModal {
   }
 
   destroy() {
+    if (this._unsubscribeStatus) {
+      this._unsubscribeStatus();
+      this._unsubscribeStatus = null;
+    }
     if (this.videoEl && this.controller.videoStreamManager) {
       this.controller.videoStreamManager.detachFromVideoElement(this.videoEl);
     }
     this.videoEl = null;
+    this.badgeEl = null;
+    this.latencyEl = null;
+    this.hintEl = null;
+    this.endpointEl = null;
     this.container = null;
   }
 }

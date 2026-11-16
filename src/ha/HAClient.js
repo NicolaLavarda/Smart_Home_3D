@@ -12,6 +12,8 @@ export class HAClient {
     this.url = options.url || import.meta.env.VITE_HA_URL || this.tailscaleUrl || this.localUrl || '';
     this.token = options.token || import.meta.env.VITE_HA_TOKEN || '';
     this.connection = null;
+    this.activeUrl = '';
+    this.isTailscale = false;
     this.isMockMode = false;
     this.subscribers = new Set();
     this.statusListeners = new Set();
@@ -541,6 +543,9 @@ export class HAClient {
 
         this.connection = await Promise.race([connectionPromise, timeoutPromise]);
         this.isMockMode = false;
+        this.activeUrl = authUrl;
+        this.url = authUrl;
+        this.isTailscale = isTailscale;
         const hostDisplay = authUrl.replace(/^https?:\/\//, '');
         this.notifyStatus('online', `Live HA (${tag}: ${hostDisplay})`);
         console.log(`[HAClient] Connessione WebSocket HA riuscita con successo tramite ${tag} (${authUrl})!`);
@@ -577,6 +582,8 @@ export class HAClient {
 
   initMockMode() {
     this.isMockMode = true;
+    this.activeUrl = '';
+    this.isTailscale = false;
     this.notifyStatus('mock', 'Modalità Demo Offline (Mock HA)');
     setTimeout(() => {
       this.notifyEntities(this.mockEntities);
@@ -889,6 +896,31 @@ export class HAClient {
       }
       this.notifyEntities({ ...this.mockEntities });
     }
+  }
+
+  getActiveUrl() {
+    return this.activeUrl || this.tailscaleUrl || this.localUrl || this.url || '';
+  }
+
+  resolveCameraEntityId(preferredId = 'camera.carraio_scorrevole') {
+    const entities = this.entities || {};
+    if (preferredId && entities[preferredId]) {
+      return preferredId;
+    }
+
+    const cameraIds = Object.keys(entities).filter((id) => id.startsWith('camera.'));
+    if (cameraIds.length === 0) {
+      return preferredId;
+    }
+
+    const keywords = ['carraio', 'cancello', 'reolink', 'rlc', 'ingresso', 'estern'];
+    const matched = cameraIds.find((id) => {
+      const lowerId = id.toLowerCase();
+      const friendly = String(entities[id]?.attributes?.friendly_name || '').toLowerCase();
+      return keywords.some((kw) => lowerId.includes(kw) || friendly.includes(kw));
+    });
+
+    return matched || cameraIds[0];
   }
 
   getEntity(entityId) {

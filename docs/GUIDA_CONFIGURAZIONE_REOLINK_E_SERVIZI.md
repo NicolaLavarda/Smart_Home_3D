@@ -132,3 +132,46 @@ Il sistema è già predisposto tramite **Strategy Pattern (`ICameraOpticalModel`
 3. Aggiungi gli stream della nuova Reolink in `go2rtc/go2rtc.yaml`.
 4. Il tracker `Kalman3DMultiTracker` fonderà automaticamente nello stesso `track_id` le rilevazioni provenienti da più telecamere con aree sovrapposte!
 
+---
+
+## 8. Accesso Remoto con Tailscale (Fuori dal Wi-Fi di Casa)
+
+Quando sei fuori dalla rete Wi-Fi domestica (`192.168.86.0/24`), il client `HAClient` si collega automaticamente a Home Assistant tramite l'indirizzo Tailscale (`VITE_HA_TAILSCALE_URL` in `.env`). Per combinare Tailscale e telecamere hai **due livelli di funzionamento** integrati:
+
+### Livello 1 — Automatico (Zero Configurazione Extra): Bridge Home Assistant via Tailscale
+* Se `go2rtc.exe` locale sul portatile non riesce a raggiungere `192.168.86.47` (perché sei su un'altra rete), `VideoStreamManager` esegue in ~1.5 secondi il fallback su **`HaSnapshotFallbackStream`**.
+* Il frontend passa tramite il proxy same-origin di Vite (`/api/ha-camera/snapshot`) o del microservizio Python (`/api/v1/ha-camera/snapshot/{entity_id}`), evitando qualsiasi blocco **CORS** del browser e risolvendo automaticamente l'entità Reolink reale su Home Assistant.
+* Nel modale della telecamera vedrai il badge verde **`HA TAILSCALE LIVE`** e l'endpoint **`Tailscale Bridge → 192.168.86.47`**.
+
+> [!NOTE]
+> Affinché il Bridge funzioni, è necessario che la Reolink sia già aggiunta come integrazione **Reolink** (o **Generic Camera**) dentro Home Assistant e che il file `.env` contenga `VITE_HA_TOKEN` valido.
+
+### Livello 2 — WebRTC / MSE a Bassa Latenza da Remoto (Consigliato)
+Per ottenere il flusso **WebRTC / MSE a 25 fps** anche fuori casa hai due opzioni:
+
+1. **Opzione A — Tailscale Subnet Router (Raggiunge `192.168.86.47` direttamente via VPN):**
+   * **Su Home Assistant (Add-on Tailscale):**
+     1. Vai in **Impostazioni → Componenti aggiuntivi → Tailscale → Configurazione**.
+     2. Aggiungi la subnet della LAN domestica nelle rotte annunciate (`advertise_routes`):
+        ```yaml
+        advertise_routes:
+          - 192.168.86.0/24
+        ```
+     3. Salva e riavvia l'add-on.
+     4. Apri la **Tailscale Admin Console** (`https://login.tailscale.com/admin/machines`), clicca sui tre puntini (`...`) della macchina Home Assistant → **Edit route settings** → attiva la spunta su **`192.168.86.0/24`**.
+   * **In alternativa sul PC Fisso Windows 10 (sempre acceso):**
+     Esegui una sola volta da terminale amministratore:
+     ```bat
+     tailscale up --advertise-routes=192.168.86.0/24
+     ```
+     e approva la rotta nella Tailscale Admin Console.
+   * Con il Subnet Router attivo, `go2rtc.exe` sul portatile può raggiungere direttamente `rtsp://192.168.86.47:554` e la pagina Web `http://192.168.86.47` ovunque ti trovi.
+
+2. **Opzione B — `go2rtc.exe` sul PC Fisso esposto via IP Tailscale:**
+   * Quando `go2rtc.exe` gira sul PC Fisso sempre acceso (`scripts\start_services.bat`), aggiungi in `.env` sul portatile:
+     ```env
+     VITE_GO2RTC_TAILSCALE_URL=http://IP_TAILSCALE_PC_FISSO:1984
+     ```
+   * Quando `HAClient` rileva che sei connesso via Tailscale, `VideoStreamManager` si collegherà automaticamente all'istanza `go2rtc` del PC Fisso senza bisogno del Subnet Router.
+
+

@@ -4,10 +4,13 @@ import { IVideoStreamProvider } from './IVideoStreamProvider.js';
  * HaSnapshotFallbackStream
  *
  * Provider di fallback garantito:
- * 1. Se Home Assistant fornisce `entity_picture` valida sull'entità camera, la aggiorna periodicamente.
+ * 1. Usa i proxy same-origin / server-to-server (`/api/ha-camera/snapshot` su Vite
+ *    e `/api/v1/ha-camera/snapshot/{entity_id}` su FastAPI) per recuperare i frame
+ *    da Home Assistant (anche su Tailscale) senza blocchi CORS e con risoluzione
+ *    automatica dell'entità camera reale.
  * 2. Altrimenti genera un feed diagnostico animato su Canvas (640x360 @ 15fps) con mirino ottico
  *    e stato della Reolink RLC-540A (192.168.86.47), così il player modale e THREE.VideoTexture
- *    restano sempre operativi senza errori WebGL anche prima di inserire la password Reolink.
+ *    restano sempre operativi senza errori WebGL.
  */
 export class HaSnapshotFallbackStream extends IVideoStreamProvider {
   constructor(streamName, options = {}) {
@@ -15,18 +18,38 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     this.mode = 'snapshot';
     this.haClient = options.haClient || null;
     this.cameraEntityId = options.cameraEntityId || 'camera.carraio_scorrevole';
+    this.resolvedEntityId = this.cameraEntityId;
+    const envSpatialUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_SPATIAL_SERVER_URL;
+    const defaultHost = typeof window !== 'undefined' && window.location?.hostname ? window.location.hostname : '127.0.0.1';
+    this.spatialServerUrl = (options.spatialServerUrl || envSpatialUrl || `http://${defaultHost}:8765`).replace(/\/+$/, '');
     this.canvas = null;
     this.ctx = null;
     this.timerId = null;
     this.snapshotTimerId = null;
     this.capturedStream = null;
     this.lastImage = null;
+    this.hasLiveHaFrames = false;
+    this.lastHaError = null;
+    this._fetching = false;
+    this._aborted = false;
+    this._fetchController = null;
     this.frameCounter = 0;
+  }
+
+  getStatus() {
+    return {
+      ...super.getStatus(),
+      hasLiveHaFrames: this.hasLiveHaFrames,
+      resolvedEntityId: this.resolvedEntityId,
+      isTailscale: Boolean(this.haClient?.isTailscale),
+      lastHaError: this.lastHaError,
+    };
   }
 
   async connect(videoElement) {
     if (!videoElement) throw new Error('HTMLVideoElement richiesto');
     this.disconnect();
+    this._aborted = false;
     this.videoElement = videoElement;
 
     this.canvas = document.createElement('canvas');
@@ -54,23 +77,115 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     return true;
   }
 
+  async _loadImageFromBlob(blob) {
+    if (typeof createImageBitmap === 'function') {
+      return await createImageBitmap(blob);
+    }
+    const objUrl = URL.createObjectURL(blob);
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(objUrl);
+        resolve(img);
+      };
+      img.onerror = (err) => {
+        URL.revokeObjectURL(objUrl);
+        reject(err);
+      };
+      img.src = objUrl;
+    });
+  }
+
+  _releaseImage(img) {
+    if (img && typeof img.close === 'function') {
+      try {
+        img.close();
+      } catch {}
+    }
+  }
+
   startHaSnapshotPolling() {
     if (!this.haClient || this.haClient.isMockMode) return;
-    const poll = () => {
-      const entity = this.haClient.entities?.[this.cameraEntityId];
-      const pic = entity?.attributes?.entity_picture;
-      if (!pic) return;
-      const base = (this.haClient.url || this.haClient.localUrl || '').replace(/\/+$/, '');
-      if (!base) return;
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        this.lastImage = img;
-      };
-      img.src = `${base}${pic}${pic.includes('?') ? '&' : '?'}t=${Date.now()}`;
+
+    const poll = async () => {
+      if (this._aborted || this._fetching) return;
+      if (!this.haClient || this.haClient.isMockMode) return;
+
+      const entityId = typeof this.haClient.resolveCameraEntityId === 'function'
+        ? this.haClient.resolveCameraEntityId(this.cameraEntityId)
+        : this.cameraEntityId;
+      this.resolvedEntityId = entityId;
+
+      const activeHaUrl = typeof this.haClient.getActiveUrl === 'function'
+        ? this.haClient.getActiveUrl()
+        : (this.haClient.activeUrl || this.haClient.url || this.haClient.localUrl || '');
+
+      const qsHaUrl = activeHaUrl ? `&ha_url=${encodeURIComponent(activeHaUrl)}` : '';
+      const ts = Date.now();
+      const proxyCandidates = [
+        `/api/ha-camera/snapshot?entity_id=${encodeURIComponent(entityId)}${qsHaUrl}&t=${ts}`,
+        `${this.spatialServerUrl}/api/v1/ha-camera/snapshot/${encodeURIComponent(entityId)}?${activeHaUrl ? `ha_url=${encodeURIComponent(activeHaUrl)}&` : ''}t=${ts}`,
+      ];
+
+      this._fetching = true;
+      const t0 = performance.now();
+      try {
+        let lastErr = null;
+        for (const url of proxyCandidates) {
+          if (this._aborted) return;
+          this._fetchController = new AbortController();
+          const timer = setTimeout(() => this._fetchController?.abort(), 3200);
+          try {
+            const resp = await fetch(url, {
+              cache: 'no-store',
+              signal: this._fetchController.signal,
+            });
+            clearTimeout(timer);
+
+            if (!resp.ok) {
+              const errText = await resp.text().catch(() => '');
+              lastErr = `HTTP ${resp.status}${errText ? `: ${errText.slice(0, 80)}` : ''}`;
+              continue;
+            }
+
+            const blob = await resp.blob();
+            if (!blob || blob.size === 0 || this._aborted) {
+              lastErr = 'Frame JPEG vuoto';
+              continue;
+            }
+
+            const nextImg = await this._loadImageFromBlob(blob);
+            if (this._aborted) {
+              this._releaseImage(nextImg);
+              return;
+            }
+
+            const prevImg = this.lastImage;
+            this.lastImage = nextImg;
+            this._releaseImage(prevImg);
+
+            const wasLive = this.hasLiveHaFrames;
+            this.hasLiveHaFrames = true;
+            this.lastHaError = null;
+            this.latencyMs = Math.round(performance.now() - t0);
+            if (!wasLive) {
+              this.notifyStatus();
+            }
+            return;
+          } catch (err) {
+            clearTimeout(timer);
+            lastErr = err?.message || 'Errore fetch snapshot HA';
+          }
+        }
+        this.lastHaError = lastErr;
+      } finally {
+        this._fetchController = null;
+        this._fetching = false;
+      }
     };
+
     poll();
-    this.snapshotTimerId = setInterval(poll, 1500);
+    this.snapshotTimerId = setInterval(poll, 650);
   }
 
   drawDiagnosticFrame() {
@@ -123,28 +238,52 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
       ctx.fillRect(0, scanY, w, 6);
 
       ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 17px "Segoe UI", system-ui, sans-serif';
+      ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('REOLINK RLC-540A • STREAM DIAGNOSTICO / STANDBY', w / 2, h / 2 - 58);
 
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '13px monospace';
-      ctx.fillText(`Stream: ${this.streamName} • IP 192.168.86.47`, w / 2, h / 2 + 64);
-      ctx.fillText('Abilita RTSP/FLV su Reolink & inserisci password in .env per video live', w / 2, h / 2 + 86);
+      if (this.haClient?.isTailscale) {
+        ctx.fillText('REOLINK RLC-540A • MODALITÀ TAILSCALE REMOTA', w / 2, h / 2 - 62);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '12px monospace';
+        ctx.fillText(`Stream: ${this.streamName} • Entità HA: ${this.resolvedEntityId}`, w / 2, h / 2 + 58);
+        ctx.fillText('Attesa frame HA Bridge (o attiva Tailscale Subnet Router 192.168.86.0/24)', w / 2, h / 2 + 80);
+        if (this.lastHaError) {
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillText(`Dettaglio: ${this.lastHaError.slice(0, 68)}`, w / 2, h / 2 + 102);
+        }
+      } else {
+        ctx.fillText('REOLINK RLC-540A • STREAM DIAGNOSTICO / STANDBY', w / 2, h / 2 - 58);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '13px monospace';
+        ctx.fillText(`Stream: ${this.streamName} • IP 192.168.86.47`, w / 2, h / 2 + 64);
+        ctx.fillText('Abilita RTSP/FLV su Reolink & inserisci password in .env per video live', w / 2, h / 2 + 86);
+      }
     }
 
     // Timestamp OSD in alto
     const nowStr = new Date().toLocaleTimeString('it-IT', { hour12: false });
+    const modeTag = this.hasLiveHaFrames
+      ? (this.haClient?.isTailscale ? 'HA TAILSCALE' : 'HA BRIDGE')
+      : 'STANDBY';
     ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-    ctx.fillRect(14, 14, 240, 26);
-    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(14, 14, 290, 26);
+    ctx.fillStyle = this.hasLiveHaFrames ? '#34d399' : '#38bdf8';
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`CAM_CARRAIO • ${nowStr}`, 22, 31);
+    ctx.fillText(`CAM_CARRAIO • ${modeTag} • ${nowStr}`, 22, 31);
   }
 
   disconnect() {
+    this._aborted = true;
     this.connected = false;
+    this.hasLiveHaFrames = false;
+    this._fetching = false;
+    if (this._fetchController) {
+      try {
+        this._fetchController.abort();
+      } catch {}
+      this._fetchController = null;
+    }
     if (this.timerId) {
       clearInterval(this.timerId);
       this.timerId = null;
@@ -157,6 +296,8 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
       this.capturedStream.getTracks().forEach((t) => t.stop());
       this.capturedStream = null;
     }
+    this._releaseImage(this.lastImage);
+    this.lastImage = null;
     if (this.videoElement && this.videoElement.srcObject) {
       this.videoElement.srcObject = null;
     }
