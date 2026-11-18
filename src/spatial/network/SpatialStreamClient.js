@@ -188,10 +188,17 @@ export class SpatialStreamClient {
   }
 
   async setIngestionMode(mode) {
-    return await this.requestJson('/api/v1/ingestion/mode', {
+    const res = await this.requestJson('/api/v1/ingestion/mode', {
       method: 'POST',
       body: JSON.stringify({ mode }),
     });
+    if (res && res.status === 'ok') {
+      this.emitStatus(this.connected, {
+        ...(this.lastStatusPayload || {}),
+        ingestion_mode: res.ingestion_mode,
+      });
+    }
+    return res;
   }
 }
 

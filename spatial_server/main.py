@@ -169,6 +169,7 @@ class SpatialPipelineService:
 
         details = [src.status_details() for src in self.active_sources]
         logger.info("Ingestion mode switched to '%s': %s", self.ingestion_mode, details)
+        await self.broadcast_status()
         return details
 
     async def process_detection_batch(self, events: list[DetectionEvent]) -> list[TrackedEntity3D]:
@@ -212,17 +213,10 @@ class SpatialPipelineService:
         await self.broadcast_frame(active_tracks, now_ts)
         return active_tracks
 
-    async def broadcast_frame(self, active_tracks: list[TrackedEntity3D], timestamp: float) -> None:
+    async def _broadcast_json(self, message: dict[str, Any]) -> None:
         if not self.ws_clients:
             return
-        payload = json.dumps(
-            {
-                "type": "spatial_frame",
-                "timestamp": timestamp,
-                "ingestion_mode": self.ingestion_mode,
-                "active_tracks": [tr.model_dump() for tr in active_tracks],
-            }
-        )
+        payload = json.dumps(message)
         dead: list[WebSocket] = []
         for ws in list(self.ws_clients):
             try:
@@ -231,6 +225,25 @@ class SpatialPipelineService:
                 dead.append(ws)
         for ws in dead:
             self.ws_clients.discard(ws)
+
+    async def broadcast_status(self) -> None:
+        await self._broadcast_json(
+            {
+                "type": "server_status",
+                "ingestion_mode": self.ingestion_mode,
+                "active_cameras": list(self.optical_models.keys()),
+            }
+        )
+
+    async def broadcast_frame(self, active_tracks: list[TrackedEntity3D], timestamp: float) -> None:
+        await self._broadcast_json(
+            {
+                "type": "spatial_frame",
+                "timestamp": timestamp,
+                "ingestion_mode": self.ingestion_mode,
+                "active_tracks": [tr.model_dump() for tr in active_tracks],
+            }
+        )
 
     async def flush_pending_to_db(self) -> int:
         async with self._persist_lock:
