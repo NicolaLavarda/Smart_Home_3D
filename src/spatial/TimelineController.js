@@ -224,6 +224,9 @@ export class TimelineController {
       this.trajectoryRenderer.setLiveMode(backendOnline);
       if (backendOnline) {
         this.clockDisplay.textContent = 'LIVE --:--:--';
+        if (this.hasRealIngestion()) {
+          this.entityCountEl.textContent = '0 Entità Live';
+        }
       }
     } else {
       this.replayModeBtn.classList.add('active');

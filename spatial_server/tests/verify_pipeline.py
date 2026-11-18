@@ -67,6 +67,84 @@ def test_optics_pinhole_and_panoramic() -> None:
     print("[PASS] Optics unit tests (PinholeRadTan + EquirectangularPanoramic 180-deg)")
 
 
+def test_openvino_letterbox_and_ovdict_parsing() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from spatial_server.ingestion.openvino_rtsp_source import OpenVINORtspDetectionSource
+
+    src = OpenVINORtspDetectionSource.__new__(OpenVINORtspDetectionSource)
+    src.camera_id = "Cam_Carraio"
+    src.conf_threshold = 0.35
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    canvas, pad_l, pad_t, new_w, new_h = src._letterbox_bgr(frame, 640)
+    assert canvas.shape == (640, 640, 3)
+    assert (pad_l, pad_t, new_w, new_h) == (0, 140, 640, 360)
+
+    # Synthetic (1, 84, 8400) OpenVINO output containing a car box near right edge
+    # Placed in 640x640 letterbox coords: center (512, 320), size (160, 180)
+    # -> normalized original 640x360 coords: x=[0.675, 0.925], y=[(320-90-140)/360, (320+90-140)/360] = [0.25, 0.75]
+    raw_out = np.zeros((1, 84, 8400), dtype=np.float32)
+    raw_out[0, 0, 10] = 512.0  # cx
+    raw_out[0, 1, 10] = 320.0  # cy
+    raw_out[0, 2, 10] = 160.0  # bw
+    raw_out[0, 3, 10] = 180.0  # bh
+    raw_out[0, 4 + 2, 10] = 0.39  # COCO class 2 = 'car' (below old 0.45, above 0.35)
+
+    out_port = object()
+
+    class _MockCompiled:
+        def output(self, idx: int):
+            assert idx == 0
+            return out_port
+
+        def __call__(self, inputs):
+            assert inputs[0].shape == (1, 3, 640, 640)
+            return {out_port: SimpleNamespace(data=raw_out)}
+
+    src._compiled_ov = _MockCompiled()
+    events = src._infer_openvino_yolo(frame, ts=1234.5)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.class_label == "car"
+    assert abs(ev.confidence - 0.39) < 1e-4
+    assert abs(ev.bbox.x_min - 0.675) < 1e-3 and abs(ev.bbox.x_max - 0.925) < 1e-3
+    assert abs(ev.bbox.y_min - 0.25) < 1e-3 and abs(ev.bbox.y_max - 0.75) < 1e-3
+
+    # Verify compile/warmup automatic fallback from AUTO to CPU if primary device raises
+    class _FakeCore:
+        def read_model(self, _p: str):
+            return object()
+
+        def compile_model(self, _m, device_name: str):
+            if device_name == "AUTO":
+                raise RuntimeError("Skylake HD 530 OpenCL unsupported kernel")
+            return _MockCompiled()
+
+    src_fb = OpenVINORtspDetectionSource.__new__(OpenVINORtspDetectionSource)
+    src_fb.openvino_device = "AUTO"
+    src_fb.model_path = Path("fake_model.xml")
+    src_fb._yolo_model = None
+    src_fb._compiled_ov = None
+    src_fb._hog = None
+    src_fb._bg_sub = None
+    src_fb._rtsp_connected = False
+    src_fb._frames_inferred = 0
+    src_fb._raw_detections_total = 0
+    src_fb._last_error = None
+    with tempfile.TemporaryDirectory() as tmp_ov:
+        fake_xml = Path(tmp_ov) / "yolov8n.xml"
+        fake_xml.write_text("<net/>", encoding="utf-8")
+        src_fb.model_path = fake_xml
+        fake_ov_mod = SimpleNamespace(Core=lambda: _FakeCore())
+        with patch.dict("sys.modules", {"openvino": fake_ov_mod}):
+            src_fb._init_detector()
+    assert src_fb._compiled_ov is not None
+    assert "CPU<-AUTO" in src_fb._backend_name
+    assert "rtsp=waiting" in src_fb.status_details()
+    print("[PASS] OpenVINO letterbox geometry, OVDict unwrapping & AUTO->CPU warmup fallback")
+
+
 def test_trimesh_ground_raycaster() -> None:
     manifest_path = REPO_ROOT / "public" / "models" / "scene_manifest.json"
     glb_path = REPO_ROOT / "public" / "models" / "house_optimized.glb"
@@ -251,6 +329,7 @@ def test_fastapi_rest_and_websocket() -> None:
 
 if __name__ == "__main__":
     test_optics_pinhole_and_panoramic()
+    test_openvino_letterbox_and_ovdict_parsing()
     test_trimesh_ground_raycaster()
     test_kalman_tracker_and_multicam_fusion()
     test_sqlite_wal_repository()

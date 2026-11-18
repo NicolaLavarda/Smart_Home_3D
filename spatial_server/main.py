@@ -81,6 +81,10 @@ class SpatialPipelineService:
         self._persist_lock = asyncio.Lock()
         self._flush_task: Optional[asyncio.Task[None]] = None
         self._pipeline_lock = asyncio.Lock()
+        self.raw_detections_count: int = 0
+        self.raycast_misses_count: int = 0
+        self.last_detection_info: Optional[dict[str, Any]] = None
+        self._last_miss_warn_ts: float = 0.0
 
     def get_optical_model(self, camera_id: str) -> Optional[ICameraOpticalModel]:
         return self.optical_models.get(camera_id)
@@ -108,6 +112,16 @@ class SpatialPipelineService:
                 logger.warning("Error stopping source %s: %s", src.mode_name, exc)
         self.active_sources.clear()
 
+    def _build_openvino_source(self) -> OpenVINORtspDetectionSource:
+        return OpenVINORtspDetectionSource(
+            rtsp_url=self.config.go2rtc_rtsp_url,
+            camera_id="Cam_Carraio",
+            openvino_device=self.config.openvino_device,
+            model_path=self.config.openvino_model_path,
+            target_fps=self.config.openvino_target_fps,
+            conf_threshold=self.config.openvino_conf_threshold,
+        )
+
     async def set_ingestion_mode(self, mode: str) -> list[str]:
         mode = mode.lower()
         next_sources: list[IDetectionSource]
@@ -121,15 +135,7 @@ class SpatialPipelineService:
                 )
             ]
         elif mode == "openvino":
-            next_sources = [
-                OpenVINORtspDetectionSource(
-                    rtsp_url=self.config.go2rtc_rtsp_url,
-                    camera_id="Cam_Carraio",
-                    openvino_device=self.config.openvino_device,
-                    model_path=self.config.openvino_model_path,
-                    target_fps=7.0,
-                )
-            ]
+            next_sources = [self._build_openvino_source()]
         elif mode == "mqtt":
             next_sources = [
                 MqttFrigateDetectionSource(
@@ -142,13 +148,7 @@ class SpatialPipelineService:
             ]
         elif mode == "hybrid":
             next_sources = [
-                OpenVINORtspDetectionSource(
-                    rtsp_url=self.config.go2rtc_rtsp_url,
-                    camera_id="Cam_Carraio",
-                    openvino_device=self.config.openvino_device,
-                    model_path=self.config.openvino_model_path,
-                    target_fps=7.0,
-                ),
+                self._build_openvino_source(),
                 MqttFrigateDetectionSource(
                     host=self.config.mqtt_host,
                     port=self.config.mqtt_port,
@@ -174,10 +174,15 @@ class SpatialPipelineService:
 
     async def process_detection_batch(self, events: list[DetectionEvent]) -> list[TrackedEntity3D]:
         if not events:
-            return []
+            now_ts = time.time()
+            async with self._pipeline_lock:
+                active_tracks = self.tracker.update([], now_ts)
+            await self.broadcast_frame(active_tracks, now_ts)
+            return active_tracks
 
         observations: list[TrackObservation3D] = []
         now_ts = max(e.timestamp for e in events)
+        self.raw_detections_count += len(events)
 
         for evt in events:
             model = self.optical_models.get(evt.camera_id)
@@ -188,8 +193,40 @@ class SpatialPipelineService:
             ray = model.pixel_to_world_ray(u, v)
             hit_pt = self.raycaster.intersect_ground(ray)
             if hit_pt is None:
+                self.raycast_misses_count += 1
+                self.last_detection_info = {
+                    "camera_id": evt.camera_id,
+                    "class_label": evt.class_label,
+                    "confidence": round(evt.confidence, 3),
+                    "uv": [round(u, 3), round(v, 3)],
+                    "hit_ground": False,
+                    "timestamp": evt.timestamp,
+                }
+                now_mono = time.monotonic()
+                if now_mono - self._last_miss_warn_ts >= 5.0:
+                    self._last_miss_warn_ts = now_mono
+                    logger.warning(
+                        "Detection %s (conf=%.2f) at uv=(%.3f, %.3f) from %s missed ground mesh/plane (ray_dir=(%.3f, %.3f, %.3f))",
+                        evt.class_label,
+                        evt.confidence,
+                        u,
+                        v,
+                        evt.camera_id,
+                        ray.direction[0],
+                        ray.direction[1],
+                        ray.direction[2],
+                    )
                 continue
 
+            self.last_detection_info = {
+                "camera_id": evt.camera_id,
+                "class_label": evt.class_label,
+                "confidence": round(evt.confidence, 3),
+                "uv": [round(u, 3), round(v, 3)],
+                "hit_ground": True,
+                "world_xyz": [round(hit_pt[0], 2), round(hit_pt[1], 2), round(hit_pt[2], 2)],
+                "timestamp": evt.timestamp,
+            }
             identity, id_conf = await self.identity_resolver.resolve_identity(evt)
             observations.append(
                 TrackObservation3D(
@@ -355,6 +392,9 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "sqlite_has_rtree": bool(getattr(repo, "has_rtree", False)),
             "active_tracks_count": len(service.tracker.get_active_tracks()),
             "connected_clients": len(service.ws_clients),
+            "raw_detections_count": service.raw_detections_count,
+            "raycast_misses_count": service.raycast_misses_count,
+            "last_detection": service.last_detection_info,
         }
 
     @app.get("/api/v1/tracks")

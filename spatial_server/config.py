@@ -50,6 +50,8 @@ class SpatialServerConfig:
     ha_tailscale_url: str = ""
     ha_local_url: str = ""
     ha_token: str = ""
+    openvino_target_fps: float = 7.0
+    openvino_conf_threshold: float = 0.35
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -81,5 +83,7 @@ class SpatialServerConfig:
             ha_tailscale_url=_normalize_ha_url(os.getenv("VITE_HA_TAILSCALE_URL") or os.getenv("VITE_HA_REMOTE_URL", "")),
             ha_local_url=_normalize_ha_url(os.getenv("VITE_HA_LOCAL_URL") or os.getenv("VITE_HA_URL", "")),
             ha_token=(os.getenv("VITE_HA_TOKEN") or os.getenv("HA_TOKEN", "")).strip(),
+            openvino_target_fps=float(os.getenv("OPENVINO_FPS_LIMIT", "7.0")),
+            openvino_conf_threshold=float(os.getenv("OPENVINO_CONF_THRESHOLD", "0.35")),
         )
 
