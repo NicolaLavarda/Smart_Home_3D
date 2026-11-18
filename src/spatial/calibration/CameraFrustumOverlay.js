@@ -17,9 +17,11 @@ export class CameraFrustumOverlay {
     this.depth = options.depth || 2.0;
     this.opacity = options.opacity ?? 0.5;
     this.isPOVMode = false;
+    this.requestedVisible = false;
     this.distortion = [0, 0, 0, 0, 0];
+    this.groundClipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
-    this.geometry = new THREE.PlaneGeometry(1, 1, 24, 24);
+    this.geometry = new THREE.PlaneGeometry(1, 1, 32, 32);
     this.basePositions = new Float32Array(this.geometry.attributes.position.array);
     this.baseUVs = new Float32Array(this.geometry.attributes.uv.array);
 
@@ -30,6 +32,7 @@ export class CameraFrustumOverlay {
       side: THREE.DoubleSide,
       depthTest: false,
       depthWrite: false,
+      clippingPlanes: [this.groundClipPlane],
       visible: false,
     });
 
@@ -46,21 +49,35 @@ export class CameraFrustumOverlay {
     this.videoTexture = videoTexture;
     this.material.map = videoTexture;
     this.material.needsUpdate = true;
+    this.syncMaterialVisibility();
+  }
+
+  syncMaterialVisibility() {
+    this.material.visible = Boolean(
+      this.requestedVisible &&
+      this.videoTexture &&
+      (this.isPOVMode || this.opacity > 0.001)
+    );
   }
 
   setVisible(visible) {
-    this.material.visible = Boolean(visible && this.videoTexture);
+    this.requestedVisible = Boolean(visible);
+    this.syncMaterialVisibility();
   }
 
   setOpacity(alpha) {
     this.opacity = THREE.MathUtils.clamp(Number(alpha), 0, 1);
     this.material.opacity = this.opacity;
+    this.syncMaterialVisibility();
   }
 
   setPOVMode(isPOV) {
     this.isPOVMode = Boolean(isPOV);
     this.depth = this.isPOVMode ? 2.0 : 15.95;
     this.material.depthTest = !this.isPOVMode;
+    this.material.clippingPlanes = this.isPOVMode ? null : [this.groundClipPlane];
+    this.material.needsUpdate = true;
+    this.syncMaterialVisibility();
     this.updateGeometry();
   }
 
