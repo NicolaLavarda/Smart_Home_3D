@@ -52,6 +52,8 @@ class SpatialServerConfig:
     ha_token: str = ""
     openvino_target_fps: float = 7.0
     openvino_conf_threshold: float = 0.35
+    persist_min_displacement_m: float = 0.15
+    persist_heartbeat_s: float = 10.0
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -85,5 +87,7 @@ class SpatialServerConfig:
             ha_token=(os.getenv("VITE_HA_TOKEN") or os.getenv("HA_TOKEN", "")).strip(),
             openvino_target_fps=float(os.getenv("OPENVINO_FPS_LIMIT", "7.0")),
             openvino_conf_threshold=float(os.getenv("OPENVINO_CONF_THRESHOLD", "0.35")),
+            persist_min_displacement_m=float(os.getenv("SPATIAL_PERSIST_MIN_DISPLACEMENT_M", "0.15")),
+            persist_heartbeat_s=float(os.getenv("SPATIAL_PERSIST_HEARTBEAT_S", "10.0")),
         )
 

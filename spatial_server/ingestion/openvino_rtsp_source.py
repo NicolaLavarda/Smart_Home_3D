@@ -21,6 +21,7 @@ COCO_TO_DOMAIN = {
     2: "car",
     7: "truck",
     16: "dog",
+    3: "motorbike",
 }
 
 

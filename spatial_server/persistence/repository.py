@@ -241,6 +241,8 @@ class SQLiteWALTrackRepository(ITrackRepository):
             cur.execute("DELETE FROM track_history WHERE timestamp < ?;", (float(cutoff_timestamp),))
             deleted = cur.rowcount or 0
             self._conn.commit()
+            if deleted > 0:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             return int(deleted)
 
     def close(self) -> None:

@@ -4,7 +4,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-EntityClassLabel = Literal["person", "car", "truck", "bicycle", "dog"]
+EntityClassLabel = Literal["person", "car", "truck", "bicycle", "dog", "motorbike"]
 
 
 class BoundingBox2D(BaseModel):

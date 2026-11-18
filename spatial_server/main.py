@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, Literal, Optional
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
@@ -53,6 +55,16 @@ class IngestionModeRequest(BaseModel):
     mode: Literal["synthetic", "openvino", "mqtt", "hybrid"]
 
 
+@dataclass
+class _PersistAnchor:
+    x: float
+    y: float
+    z: float
+    timestamp: float
+    class_label: str
+    identity: Optional[str]
+
+
 class SpatialPipelineService:
     """Central SOLID orchestrator injecting optical, raycasting, biometric, tracking & storage strategies."""
 
@@ -85,6 +97,9 @@ class SpatialPipelineService:
         self.raycast_misses_count: int = 0
         self.last_detection_info: Optional[dict[str, Any]] = None
         self._last_miss_warn_ts: float = 0.0
+        self._persist_anchors: dict[int, _PersistAnchor] = {}
+        self.persist_saved_count: int = 0
+        self.persist_skipped_count: int = 0
 
     def get_optical_model(self, camera_id: str) -> Optional[ICameraOpticalModel]:
         return self.optical_models.get(camera_id)
@@ -172,11 +187,59 @@ class SpatialPipelineService:
         await self.broadcast_status()
         return details
 
+    def _prune_stale_persist_anchors(self, active_tracks: list[TrackedEntity3D]) -> None:
+        active_ids = {tr.track_id for tr in active_tracks}
+        for tid in list(self._persist_anchors):
+            if tid not in active_ids:
+                del self._persist_anchors[tid]
+
+    def _select_tracks_to_persist(self, active_tracks: list[TrackedEntity3D]) -> list[TrackedEntity3D]:
+        """Deduplicate stationary targets against last persisted anchor (preventing slow drift loss)."""
+        self._prune_stale_persist_anchors(active_tracks)
+        if not active_tracks:
+            return []
+
+        min_disp = max(0.0, float(self.config.persist_min_displacement_m))
+        heartbeat_s = max(0.0, float(self.config.persist_heartbeat_s))
+        persistable: list[TrackedEntity3D] = []
+
+        for tr in active_tracks:
+            st = tr.state
+            anchor = self._persist_anchors.get(tr.track_id)
+            if anchor is None:
+                should_save = True
+            else:
+                disp = math.dist((st.x, st.y, st.z), (anchor.x, anchor.y, anchor.z))
+                dt = tr.last_seen - anchor.timestamp
+                should_save = (
+                    disp >= min_disp
+                    or (heartbeat_s > 0.0 and (dt >= heartbeat_s or dt < 0.0))
+                    or tr.identity != anchor.identity
+                    or tr.class_label != anchor.class_label
+                )
+
+            if should_save:
+                self._persist_anchors[tr.track_id] = _PersistAnchor(
+                    x=st.x,
+                    y=st.y,
+                    z=st.z,
+                    timestamp=tr.last_seen,
+                    class_label=tr.class_label,
+                    identity=tr.identity,
+                )
+                persistable.append(tr)
+                self.persist_saved_count += 1
+            else:
+                self.persist_skipped_count += 1
+
+        return persistable
+
     async def process_detection_batch(self, events: list[DetectionEvent]) -> list[TrackedEntity3D]:
         if not events:
             now_ts = time.time()
             async with self._pipeline_lock:
                 active_tracks = self.tracker.update([], now_ts)
+            self._prune_stale_persist_anchors(active_tracks)
             await self.broadcast_frame(active_tracks, now_ts)
             return active_tracks
 
@@ -243,9 +306,10 @@ class SpatialPipelineService:
         async with self._pipeline_lock:
             active_tracks = self.tracker.update(observations, now_ts)
 
-        if active_tracks:
+        persistable = self._select_tracks_to_persist(active_tracks)
+        if persistable:
             async with self._persist_lock:
-                self._pending_persist.extend(active_tracks)
+                self._pending_persist.extend(persistable)
 
         await self.broadcast_frame(active_tracks, now_ts)
         return active_tracks
@@ -394,6 +458,8 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "connected_clients": len(service.ws_clients),
             "raw_detections_count": service.raw_detections_count,
             "raycast_misses_count": service.raycast_misses_count,
+            "persist_saved_count": service.persist_saved_count,
+            "persist_skipped_count": service.persist_skipped_count,
             "last_detection": service.last_detection_info,
         }
 

@@ -145,6 +145,70 @@ def test_openvino_letterbox_and_ovdict_parsing() -> None:
     print("[PASS] OpenVINO letterbox geometry, OVDict unwrapping & AUTO->CPU warmup fallback")
 
 
+def test_stationary_persistence_anchor_and_slow_drift() -> None:
+    from spatial_server.domain.models import SpatialPoint3D, TrackedEntity3D
+    from spatial_server.main import build_pipeline_service
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        cfg = SpatialServerConfig(
+            host="127.0.0.1",
+            port=8765,
+            manifest_path=REPO_ROOT / "public" / "models" / "scene_manifest.json",
+            glb_path=REPO_ROOT / "public" / "models" / "house_optimized.glb",
+            sqlite_db_path=tmp_dir / "anchor_test.db",
+            calibration_override_path=tmp_dir / "calibs.json",
+            data_dir=tmp_dir,
+            models_dir=tmp_dir,
+            default_ingestion_mode="synthetic",
+            go2rtc_rtsp_url="",
+            mqtt_host="",
+            mqtt_port=1883,
+            mqtt_user="",
+            mqtt_password="",
+            mqtt_topic_prefix="",
+            openvino_device="CPU",
+            openvino_model_path="",
+            db_retention_days=30,
+            face_webhook_url="",
+            persist_min_displacement_m=0.15,
+            persist_heartbeat_s=10.0,
+        )
+        svc = build_pipeline_service(cfg)
+        try:
+            def mk_track(x: float, z: float, ts: float, identity=None) -> TrackedEntity3D:
+                return TrackedEntity3D(
+                    track_id=47,
+                    class_label="car",
+                    confidence=0.85,
+                    identity=identity,
+                    identity_confidence=0.9 if identity else 0.0,
+                    state=SpatialPoint3D(x=x, y=0.0, z=z, camera_sources=["Cam_Carraio"]),
+                    last_seen=ts,
+                )
+
+            # 1. First detection always persists
+            assert len(svc._select_tracks_to_persist([mk_track(-10.0, 10.0, 1000.0)])) == 1
+            # 2. Small jitter (< 0.15m) is skipped
+            assert len(svc._select_tracks_to_persist([mk_track(-10.05, 10.04, 1001.0)])) == 0
+            # 3. Slow drift (+0.04m per frame): each step < 0.15m vs t-1, but saves once >= 0.15m vs anchor
+            assert len(svc._select_tracks_to_persist([mk_track(-10.08, 10.0, 1002.0)])) == 0
+            assert len(svc._select_tracks_to_persist([mk_track(-10.12, 10.0, 1003.0)])) == 0
+            assert len(svc._select_tracks_to_persist([mk_track(-10.16, 10.0, 1004.0)])) == 1
+            # 4. Stationary heartbeat fires after >= 10s
+            assert len(svc._select_tracks_to_persist([mk_track(-10.16, 10.0, 1013.9)])) == 0
+            assert len(svc._select_tracks_to_persist([mk_track(-10.16, 10.0, 1014.1)])) == 1
+            # 5. Identity upgrade persists immediately even at 0m displacement
+            assert len(svc._select_tracks_to_persist([mk_track(-10.16, 10.0, 1015.0, identity="Nicola")])) == 1
+            assert svc.persist_saved_count == 4 and svc.persist_skipped_count == 4
+            # 6. Expired track clears anchor from RAM
+            assert svc._select_tracks_to_persist([]) == []
+            assert svc._persist_anchors == {}
+            print("[PASS] Stationary persistence anchor, slow-drift capture & checkpoint heartbeat")
+        finally:
+            svc.repository.close()
+
+
 def test_trimesh_ground_raycaster() -> None:
     manifest_path = REPO_ROOT / "public" / "models" / "scene_manifest.json"
     glb_path = REPO_ROOT / "public" / "models" / "house_optimized.glb"
@@ -330,6 +394,7 @@ def test_fastapi_rest_and_websocket() -> None:
 if __name__ == "__main__":
     test_optics_pinhole_and_panoramic()
     test_openvino_letterbox_and_ovdict_parsing()
+    test_stationary_persistence_anchor_and_slow_drift()
     test_trimesh_ground_raycaster()
     test_kalman_tracker_and_multicam_fusion()
     test_sqlite_wal_repository()
