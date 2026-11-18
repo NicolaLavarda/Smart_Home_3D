@@ -58,6 +58,8 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self._compiled_ov = None
         self._yolo_model = None
         self._hog = None
+        self._bg_sub = None
+        self._mog2_warmup = 0
         self._init_detector()
 
     def _init_detector(self) -> None:
@@ -95,10 +97,20 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             except Exception:
                 pass
 
-        # 3. Lightweight built-in OpenCV HOG fallback
-        self._hog = cv2.HOGDescriptor()
-        self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-        self._backend_name = "opencv_hog_fallback"
+        # 3. Lightweight built-in OpenCV HOG fallback (OpenCV 4.x)
+        if hasattr(cv2, "HOGDescriptor"):
+            self._hog = cv2.HOGDescriptor()
+            self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            self._backend_name = "opencv_hog_fallback"
+            return
+
+        # 4. OpenCV 5.x fallback: lightweight MOG2 motion detector until yolov8n_openvino_model is added
+        self._bg_sub = cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=36, detectShadows=False)
+        self._backend_name = "opencv_mog2_fallback"
+        logger.warning(
+            "OpenVINO YOLO model not found at %s and cv2.HOGDescriptor unavailable; using MOG2 motion fallback.",
+            self.model_path,
+        )
 
     def status_details(self) -> str:
         return f"openvino [{self._backend_name}]"
@@ -187,20 +199,63 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         if self._compiled_ov is not None:
             return self._infer_openvino_yolo(frame, ts)
 
-        # OpenCV HOG fallback (persons)
+        if self._hog is not None:
+            # OpenCV HOG fallback (persons)
+            resized = cv2.resize(frame, (640, 360))
+            rects, weights = self._hog.detectMultiScale(resized, winStride=(8, 8), padding=(8, 8), scale=1.08)
+            events = []
+            for (rx, ry, rw, rh), weight in zip(rects, weights):
+                conf = float(min(0.95, max(0.45, float(weight) * 0.55)))
+                if conf < 0.50:
+                    continue
+                events.append(
+                    DetectionEvent(
+                        camera_id=self.camera_id,
+                        timestamp=ts,
+                        class_label="person",
+                        confidence=conf,
+                        bbox=BoundingBox2D(
+                            x_min=max(0.0, rx / 640.0),
+                            y_min=max(0.0, ry / 360.0),
+                            x_max=min(1.0, (rx + rw) / 640.0),
+                            y_max=min(1.0, (ry + rh) / 360.0),
+                        ),
+                    )
+                )
+            return events
+
+        if self._bg_sub is not None:
+            return self._infer_mog2_motion(frame, ts)
+
+        return []
+
+    def _infer_mog2_motion(self, frame: np.ndarray, ts: float) -> list[DetectionEvent]:
         resized = cv2.resize(frame, (640, 360))
-        rects, weights = self._hog.detectMultiScale(resized, winStride=(8, 8), padding=(8, 8), scale=1.08)
-        events = []
-        for (rx, ry, rw, rh), weight in zip(rects, weights):
-            conf = float(min(0.95, max(0.45, float(weight) * 0.55)))
-            if conf < 0.50:
+        fg_mask = self._bg_sub.apply(resized)
+        self._mog2_warmup += 1
+        if self._mog2_warmup < 15:
+            return []
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        cleaned = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
+        cleaned = cv2.dilate(cleaned, kernel, iterations=2)
+        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        events: list[DetectionEvent] = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 1200.0 or area > 120000.0:
                 continue
+            rx, ry, rw, rh = cv2.boundingRect(cnt)
+            if rw < 14 or rh < 24:
+                continue
+            label = "car" if (rw > rh * 1.35 and area > 4500.0) else "person"
             events.append(
                 DetectionEvent(
                     camera_id=self.camera_id,
                     timestamp=ts,
-                    class_label="person",
-                    confidence=conf,
+                    class_label=label,  # type: ignore[arg-type]
+                    confidence=0.60,
                     bbox=BoundingBox2D(
                         x_min=max(0.0, rx / 640.0),
                         y_min=max(0.0, ry / 360.0),

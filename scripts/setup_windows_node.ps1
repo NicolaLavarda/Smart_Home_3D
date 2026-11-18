@@ -32,8 +32,7 @@ if (-not (Test-Path $Go2RtcExe)) {
     $ZipPath = Join-Path $RepoRoot "go2rtc\go2rtc_win64.zip"
     $Url = "https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_win64.zip"
     Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, (Join-Path $RepoRoot "go2rtc"), $true)
+    Expand-Archive -Path $ZipPath -DestinationPath (Join-Path $RepoRoot "go2rtc") -Force
     Remove-Item $ZipPath -Force
     Write-Host "[OK] go2rtc.exe installato in go2rtc\go2rtc.exe" -ForegroundColor Green
 } else {

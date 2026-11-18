@@ -110,11 +110,10 @@ class SpatialPipelineService:
 
     async def set_ingestion_mode(self, mode: str) -> list[str]:
         mode = mode.lower()
-        await self._stop_sources()
-        self.ingestion_mode = mode
+        next_sources: list[IDetectionSource]
 
         if mode == "synthetic":
-            self.active_sources = [
+            next_sources = [
                 SyntheticWalkSimulatorSource(
                     camera_id="Cam_Carraio",
                     optical_model_getter=self.get_optical_model,
@@ -122,7 +121,7 @@ class SpatialPipelineService:
                 )
             ]
         elif mode == "openvino":
-            self.active_sources = [
+            next_sources = [
                 OpenVINORtspDetectionSource(
                     rtsp_url=self.config.go2rtc_rtsp_url,
                     camera_id="Cam_Carraio",
@@ -132,7 +131,7 @@ class SpatialPipelineService:
                 )
             ]
         elif mode == "mqtt":
-            self.active_sources = [
+            next_sources = [
                 MqttFrigateDetectionSource(
                     host=self.config.mqtt_host,
                     port=self.config.mqtt_port,
@@ -142,7 +141,7 @@ class SpatialPipelineService:
                 )
             ]
         elif mode == "hybrid":
-            self.active_sources = [
+            next_sources = [
                 OpenVINORtspDetectionSource(
                     rtsp_url=self.config.go2rtc_rtsp_url,
                     camera_id="Cam_Carraio",
@@ -160,6 +159,10 @@ class SpatialPipelineService:
             ]
         else:
             raise ValueError(f"Unsupported ingestion mode: {mode}")
+
+        await self._stop_sources()
+        self.ingestion_mode = mode
+        self.active_sources = next_sources
 
         for src in self.active_sources:
             await src.start(self.process_detection_batch)
