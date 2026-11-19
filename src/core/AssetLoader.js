@@ -18,39 +18,12 @@ export class AssetLoader {
     this.groundColliders = [];
     this.cameras = new Map();
     this.sharedMaterials = new Map();
-    this.isMobileProfile = this.detectMobileTouchProfile();
 
     this.pbrTextures = this.initProceduralPbrTextures();
   }
 
-  detectMobileTouchProfile() {
-    const hasTouch = typeof navigator !== 'undefined' && Number(navigator.maxTouchPoints) > 0;
-    const isCoarse =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      Boolean(window.matchMedia('(pointer: coarse)')?.matches);
-    const isNarrow =
-      typeof window !== 'undefined' &&
-      Number(window.innerWidth) > 0 &&
-      Number(window.innerWidth) <= 900;
-    return Boolean(hasTouch || isCoarse || isNarrow);
-  }
-
   createSurfaceMaterial(params) {
-    if (!this.isMobileProfile) {
-      return new THREE.MeshStandardMaterial(params);
-    }
-    const lambertParams = {
-      name: params.name,
-      color: params.color,
-    };
-    if (params.map) lambertParams.map = params.map;
-    if (params.transparent !== undefined) lambertParams.transparent = params.transparent;
-    if (params.opacity !== undefined) lambertParams.opacity = params.opacity;
-    if (params.emissive !== undefined) lambertParams.emissive = params.emissive;
-    if (params.emissiveIntensity !== undefined) lambertParams.emissiveIntensity = params.emissiveIntensity;
-    if (params.side !== undefined) lambertParams.side = params.side;
-    return new THREE.MeshLambertMaterial(lambertParams);
+    return new THREE.MeshStandardMaterial(params);
   }
 
   getSharedMaterial(key, factory) {
@@ -134,20 +107,20 @@ export class AssetLoader {
 
   createGrassTexture() {
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
+    canvas.width = 512;
+    canvas.height = 512;
     const ctx = canvas.getContext('2d');
 
     // Verde prato vivo e luminoso identico a Blender Viewport
     ctx.fillStyle = '#6cb74a';
-    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillRect(0, 0, 512, 512);
 
     const tones = ['#5ea83c', '#6db74b', '#78be55', '#529933', '#85c960', '#64ae42'];
-    for (let i = 0; i < 8000; i++) {
-      const x = Math.random() * 256;
-      const y = Math.random() * 256;
+    for (let i = 0; i < 18000; i++) {
+      const x = Math.random() * 512;
+      const y = Math.random() * 512;
       ctx.fillStyle = tones[Math.floor(Math.random() * tones.length)];
-      ctx.fillRect(x, y, 1.5 + Math.random() * 1.5, 2 + Math.random() * 2);
+      ctx.fillRect(x, y, 2 + Math.random() * 2, 3 + Math.random() * 3);
     }
 
     const tex = new THREE.CanvasTexture(canvas);
@@ -195,18 +168,18 @@ export class AssetLoader {
 
   createGravelTexture() {
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
+    canvas.width = 512;
+    canvas.height = 512;
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = '#9aa0a6';
-    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillRect(0, 0, 512, 512);
 
     const pebbles = ['#92989e', '#9fa5ab', '#8a9096', '#a7adb3', '#82888e'];
-    for (let i = 0; i < 6000; i++) {
-      const x = Math.random() * 256;
-      const y = Math.random() * 256;
-      const r = 0.8 + Math.random() * 1.8;
+    for (let i = 0; i < 15000; i++) {
+      const x = Math.random() * 512;
+      const y = Math.random() * 512;
+      const r = 1 + Math.random() * 2.5;
       ctx.fillStyle = pebbles[Math.floor(Math.random() * pebbles.length)];
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -544,24 +517,9 @@ export class AssetLoader {
             node.castShadow = false;
             node.receiveShadow = false;
           }
-          // 15. Altri materiali (su mobile converte MeshStandardMaterial in MeshLambertMaterial leggero condiviso)
+          // 15. Altri materiali (preserva PBR completo sia su PC che su mobile)
           else {
-            if (this.isMobileProfile && node.material.isMeshStandardMaterial) {
-              const orig = node.material;
-              const origKey = `GLB_Lambert_${orig.uuid}`;
-              node.material = this.getSharedMaterial(origKey, () => new THREE.MeshLambertMaterial({
-                name: orig.name || origKey,
-                color: orig.color ? orig.color.clone() : 0xffffff,
-                map: orig.map || null,
-                transparent: Boolean(orig.transparent),
-                opacity: orig.opacity ?? 1.0,
-                emissive: orig.emissive ? orig.emissive.clone() : new THREE.Color(0x000000),
-                emissiveIntensity: orig.emissiveIntensity ?? 1.0,
-                side: orig.side,
-              }));
-            } else {
-              node.material.roughness = Math.max(node.material.roughness ?? 0.5, 0.3);
-            }
+            node.material.roughness = Math.max(node.material.roughness ?? 0.5, 0.3);
           }
         }
 

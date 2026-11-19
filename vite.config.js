@@ -108,10 +108,11 @@ export function createPwaOptions() {
     registerType: 'prompt',
     injectRegister: 'auto',
     includeAssets: [
-      'vite.svg',
+      'pwa/icon.svg',
       'pwa/icon-192.png',
       'pwa/icon-512.png',
       'pwa/icon-maskable-512.png',
+      'pwa/icon-monochrome-512.png',
       'pwa/apple-touch-icon.png',
     ],
     manifest: {
@@ -143,6 +144,12 @@ export function createPwaOptions() {
           sizes: '512x512',
           type: 'image/png',
           purpose: 'maskable',
+        },
+        {
+          src: '/pwa/icon-monochrome-512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'monochrome',
         },
       ],
     },

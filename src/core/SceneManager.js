@@ -19,18 +19,16 @@ export class SceneManager {
     this.camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 1000);
     this.camera.position.set(23.0, 18.0, 25.0);
 
-    // WebGL Renderer calibrato con profilo mobile/desktop adattivo
+    // WebGL Renderer calibrato con profilo mobile/desktop adattivo (qualità HD nitida + shadow map on-demand su mobile)
     this.renderer = new THREE.WebGLRenderer({
-      antialias: !this.isMobileProfile,
+      antialias: true,
       powerPreference: 'high-performance',
       alpha: false,
     });
     this.renderer.setSize(this.width, this.height);
     this.renderer.setPixelRatio(this.getEffectivePixelRatio());
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = this.isMobileProfile
-      ? THREE.BasicShadowMap
-      : THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.shadowMap.autoUpdate = !this.isMobileProfile;
     this.renderer.shadowMap.needsUpdate = true;
     this.renderer.localClippingEnabled = true;
@@ -77,16 +75,22 @@ export class SceneManager {
       typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&
       Boolean(window.matchMedia('(pointer: coarse)')?.matches);
+    const isFine =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      Boolean(window.matchMedia('(pointer: fine)')?.matches);
     const isNarrow =
       typeof window !== 'undefined' &&
       Number(window.innerWidth) > 0 &&
       Number(window.innerWidth) <= 900;
-    return Boolean(hasTouch || isCoarse || isNarrow);
+    // I portatili Windows con touchscreen hanno sia maxTouchPoints > 0 sia (pointer: fine) + schermo largo:
+    // trattali come Desktop e riserva il profilo mobile a smartphone/tablet touch-first.
+    return Boolean(isCoarse || isNarrow || (hasTouch && !isFine));
   }
 
   getEffectivePixelRatio() {
     const rawDpr = (typeof window !== 'undefined' && Number(window.devicePixelRatio)) || 1;
-    const cap = this.detectMobileTouchProfile() ? 1.0 : 2.0;
+    const cap = this.detectMobileTouchProfile() ? 1.5 : 2.0;
     return Math.min(rawDpr, cap);
   }
 
@@ -109,7 +113,7 @@ export class SceneManager {
   getPerfStats() {
     const info = this.renderer?.info?.render || {};
     return {
-      build: 'v2-opt',
+      build: 'v3-hd',
       fps: this.currentFps,
       calls: info.calls ?? 0,
       triangles: info.triangles ?? 0,
@@ -136,7 +140,7 @@ export class SceneManager {
     this.scene.add(this.hemiLight);
 
     // 3. Sole Principale (Key Sun Light): luce solare chiara e calda con ombre morbide
-    const shadowSize = this.isMobileProfile ? 512 : 2048;
+    const shadowSize = this.isMobileProfile ? 1024 : 2048;
     this.sunLight = new THREE.DirectionalLight(0xfffdf5, 1.4);
     this.sunLight.position.set(25, 45, 20);
     this.sunLight.castShadow = true;

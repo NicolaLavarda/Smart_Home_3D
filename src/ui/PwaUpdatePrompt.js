@@ -62,6 +62,19 @@ export class PwaUpdatePrompt {
             this.options.onOfflineReady();
           }
         },
+        onRegisteredSW: (_swUrl, registration) => {
+          if (!registration || typeof registration.update !== 'function') return;
+          this._registration = registration;
+          // Controlla subito aggiornamenti al rientro in foreground della PWA
+          if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && !this._visListenerAttached) {
+            this._visListenerAttached = true;
+            document.addEventListener('visibilitychange', () => {
+              if (!document.hidden) {
+                this._registration?.update?.().catch(() => {});
+              }
+            });
+          }
+        },
       });
     } catch (err) {
       console.warn('[PwaUpdatePrompt] Registrazione Service Worker non disponibile:', err?.message || err);
@@ -86,14 +99,28 @@ export class PwaUpdatePrompt {
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'pwa-update-toast';
-      toast.className = 'pwa-update-toast glass';
-      toast.setAttribute('role', 'alert');
-      toast.setAttribute('aria-live', 'polite');
+      toast.className = 'pwa-update-toast';
+      toast.setAttribute('role', 'alertdialog');
+      toast.setAttribute('aria-modal', 'true');
+      toast.setAttribute('aria-live', 'assertive');
       toast.innerHTML = `
-        <span class="sw-update-label">Nuova versione disponibile — Aggiorna</span>
-        <div class="sw-update-actions">
-          <button type="button" class="btn-pwa-update" id="btn-pwa-update">Aggiorna</button>
-          <button type="button" class="btn-pwa-dismiss" id="btn-pwa-dismiss" aria-label="Chiudi">Più tardi</button>
+        <div class="sw-update-card">
+          <div class="sw-update-icon" aria-hidden="true">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+              <path d="M16 16h5v5"></path>
+            </svg>
+          </div>
+          <h2 class="sw-update-label">Nuova versione disponibile</h2>
+          <p class="sw-update-subtitle">
+            È disponibile un aggiornamento importante di <strong>Smart Home 3D</strong>. Tocca il pulsante qui sotto per ricaricare subito l'app aggiornata.
+          </p>
+          <div class="sw-update-actions">
+            <button type="button" class="btn-pwa-update" id="btn-pwa-update">Aggiorna ora</button>
+            <button type="button" class="btn-pwa-dismiss" id="btn-pwa-dismiss" aria-label="Chiudi">Più tardi</button>
+          </div>
         </div>
       `;
 
@@ -101,6 +128,8 @@ export class PwaUpdatePrompt {
       const dismissBtn = toast.querySelector('#btn-pwa-dismiss');
 
       updateBtn?.addEventListener('click', async () => {
+        updateBtn.disabled = true;
+        updateBtn.textContent = 'Aggiornamento in corso...';
         await this.confirmUpdate();
       });
 

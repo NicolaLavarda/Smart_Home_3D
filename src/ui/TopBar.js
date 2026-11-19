@@ -76,7 +76,7 @@ export class TopBar {
               <span>Accedi con Home Assistant</span>
             </button>
             <div class="settings-dropdown-divider"></div>
-            <div class="settings-perf-stats" id="top-perf-stats" style="padding: 4px 10px 6px; font-size: 10px; line-height: 1.35; color: #94a3b8; word-break: break-word;">v2-opt</div>
+            <div class="settings-perf-stats" id="top-perf-stats" style="padding: 4px 10px 6px; font-size: 10px; line-height: 1.35; color: #94a3b8; word-break: break-word;">v3-hd</div>
           </div>
         </div>
       </div>
