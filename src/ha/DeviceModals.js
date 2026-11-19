@@ -25,7 +25,7 @@ export class DeviceModals {
       <div class="modal-header" id="modal-header-toggle" title="Clicca per comprimere / espandere">
         <div class="modal-title-box">
           <h3 id="modal-title">Dispositivo</h3>
-          <span id="modal-subtitle">entity_id</span>
+          <span id="modal-subtitle"></span>
         </div>
         <div class="modal-header-actions">
           <span class="modal-collapse-chevron" id="modal-collapse-icon">${icon('chevron-up', { size: 15 })}</span>
@@ -65,6 +65,26 @@ export class DeviceModals {
     }
   }
 
+  _setSubtitle(text) {
+    if (!this.modalSubtitle) return;
+    const clean = typeof text === 'string' ? text.trim() : '';
+    this.modalSubtitle.textContent = clean;
+    this.modalSubtitle.hidden = !clean;
+  }
+
+  _domainSubtitle(domain) {
+    const labels = {
+      light: 'Illuminazione',
+      switch: 'Interruttore',
+      cover: 'Accesso & Automazione',
+      camera: 'Telecamera',
+      media_player: 'Smart TV & Media',
+      sensor: 'Sensore',
+      climate: 'Climatizzazione',
+    };
+    return labels[domain] || '';
+  }
+
   open(entityId) {
     if (!entityId) return;
 
@@ -90,8 +110,8 @@ export class DeviceModals {
         attributes: { friendly_name: customController.name || entityId },
       });
 
-      this.modalTitle.textContent = customController.name || entity.attributes?.friendly_name || entityId;
-      this.modalSubtitle.textContent = customController.subtitle || customController.primaryEntityId || entityId;
+      this.modalTitle.textContent = customController.name || entity.attributes?.friendly_name || 'Dispositivo';
+      this._setSubtitle(customController.subtitle || '');
 
       customController.renderModal(this.modalContent, entity, {
         haClient: this.haClient,
@@ -114,8 +134,8 @@ export class DeviceModals {
     };
 
     const domain = entityId.split('.')[0];
-    this.modalTitle.textContent = entity.attributes?.friendly_name || entityId;
-    this.modalSubtitle.textContent = entityId;
+    this.modalTitle.textContent = entity.attributes?.friendly_name || 'Dispositivo';
+    this._setSubtitle(this._domainSubtitle(domain));
 
     if (domain === 'media_player') {
       this.renderTVModal(entity);

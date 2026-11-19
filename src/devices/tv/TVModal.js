@@ -16,7 +16,6 @@ export class TVModal {
   constructor(tvController) {
     this.controller = tvController;
     this.remoteView = new TVRemote(tvController);
-    this.isRemoteExpanded = false;
     this.container = null;
   }
 
@@ -160,20 +159,14 @@ export class TVModal {
         </div>
       </div>
 
-      <!-- Pulsante per Mostrare/Nascondere il Telecomando Virtuale -->
-      <button class="btn-remote-toggle ${this.isRemoteExpanded ? 'expanded' : ''}" id="btn-toggle-remote">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><rect x="6" y="2" width="12" height="20" rx="3"></rect><circle cx="12" cy="7" r="1"></circle><circle cx="12" cy="11" r="1"></circle><circle cx="12" cy="15" r="1"></circle></svg>
-        <span>${this.isRemoteExpanded ? 'Chiudi Telecomando LG' : 'Apri Telecomando LG Magic Remote'}</span>
-      </button>
-
-      <!-- Contenitore Telecomando a scomparsa -->
-      <div class="remote-collapsible-wrapper ${this.isRemoteExpanded ? 'open' : ''}" id="remote-slot">
+      <!-- Telecomando Virtuale sempre visibile -->
+      <div class="remote-collapsible-wrapper open" id="remote-slot">
       </div>
     `;
 
-    // Inietta il telecomando se espanso
+    // Inietta sempre il telecomando virtuale
     const remoteSlot = container.querySelector('#remote-slot');
-    if (this.isRemoteExpanded) {
+    if (remoteSlot) {
       remoteSlot.appendChild(this.remoteView.render());
     }
 
@@ -260,15 +253,6 @@ export class TVModal {
         setTimeout(() => this.render(container), 200);
       });
     });
-
-    // 6. Toggle Telecomando Virtuale
-    const remoteToggle = container.querySelector('#btn-toggle-remote');
-    if (remoteToggle) {
-      remoteToggle.addEventListener('click', () => {
-        this.isRemoteExpanded = !this.isRemoteExpanded;
-        this.render(container);
-      });
-    }
   }
 
   updateLive() {

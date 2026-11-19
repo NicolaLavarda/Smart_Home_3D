@@ -59,8 +59,13 @@ export class VideoStreamManager {
     }
 
     this.haClient = options.haClient || null;
+    this.cameraCatalog = options.cameraCatalog || null;
     this.activeElementProviders = new WeakMap();
     this.textureEntries = new Map(); // streamName -> { videoElement, texture, provider, refCount }
+  }
+
+  setCameraCatalog(cameraCatalog) {
+    this.cameraCatalog = cameraCatalog;
   }
 
   setHAClient(haClient) {
@@ -76,7 +81,7 @@ export class VideoStreamManager {
   /**
    * Collega lo stream migliore disponibile all'elemento <video> passato.
    */
-  async attachToVideoElement(streamName, videoElement, preferredMode = 'auto') {
+  async attachToVideoElement(streamName, videoElement, preferredMode = 'auto', extraOptions = {}) {
     if (!videoElement) throw new Error('HTMLVideoElement mancante');
 
     const prevProvider = this.activeElementProviders.get(videoElement);
@@ -85,7 +90,7 @@ export class VideoStreamManager {
       this.activeElementProviders.delete(videoElement);
     }
 
-    const candidates = this.buildProviderChain(streamName, preferredMode);
+    const candidates = this.buildProviderChain(streamName, preferredMode, extraOptions);
     for (const provider of candidates) {
       const ok = await provider.connect(videoElement);
       if (ok) {
@@ -98,7 +103,7 @@ export class VideoStreamManager {
     throw new Error(`Impossibile avviare alcuno stream per '${streamName}'`);
   }
 
-  buildProviderChain(streamName, preferredMode = 'auto') {
+  buildProviderChain(streamName, preferredMode = 'auto', extraOptions = {}) {
     const isTailscale = Boolean(this.haClient?.isTailscale);
     const activeGo2RtcUrl = (isTailscale && this.go2rtcTailscaleUrl)
       ? this.go2rtcTailscaleUrl
@@ -106,11 +111,17 @@ export class VideoStreamManager {
     const isLocalGo2Rtc = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(activeGo2RtcUrl);
     const timeoutMs = (isTailscale && isLocalGo2Rtc) ? 1500 : undefined;
 
+    const catalogEntry = this.cameraCatalog?.findByStreamName?.(streamName) || null;
+    const resolvedCameraEntityId =
+      extraOptions.cameraEntityId ||
+      catalogEntry?.entityId ||
+      'camera.carraio_scorrevole';
+
     const opts = {
       go2rtcUrl: activeGo2RtcUrl,
       haClient: this.haClient,
       spatialServerUrl: this.spatialServerUrl,
-      cameraEntityId: 'camera.carraio_scorrevole',
+      cameraEntityId: resolvedCameraEntityId,
       ...(timeoutMs ? { timeoutMs } : {}),
     };
 

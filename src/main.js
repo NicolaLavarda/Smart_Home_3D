@@ -7,12 +7,19 @@ import { EntityBinder } from './ha/EntityBinder.js';
 import { DeviceModals } from './ha/DeviceModals.js';
 import { CameraProjector } from './spatial/CameraProjector.js';
 import { TrajectoryRenderer } from './spatial/TrajectoryRenderer.js';
-import { TimelineController } from './spatial/TimelineController.js';
 import { SpatialStreamClient } from './spatial/network/SpatialStreamClient.js';
 import { CalibrationAssistantUI } from './spatial/calibration/CalibrationAssistantUI.js';
 import { VideoStreamManager } from './video/VideoStreamManager.js';
+import { CameraCatalog } from './video/CameraCatalog.js';
+import {
+  CameraRecordingManager,
+  SpatialServerNvrProvider,
+  EdgeCameraSdProvider,
+} from './video/recordings/index.js';
 import { deviceRegistry } from './devices/DeviceRegistry.js';
 import { TopBar } from './ui/TopBar.js';
+import { NavigationFabHub } from './ui/NavigationFabHub.js';
+import { SecurityFabHub } from './ui/SecurityFabHub.js';
 import { PwaUpdatePrompt } from './ui/PwaUpdatePrompt.js';
 import { icon } from './ui/icons.js';
 
@@ -88,6 +95,17 @@ function createAuthOverlay(haClient, uiLayer) {
   return { overlay, show, hide };
 }
 
+function ensureUiContainer(uiLayer, id, className) {
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = id;
+    el.className = className;
+    (uiLayer || document.body)?.appendChild(el);
+  }
+  return el;
+}
+
 async function bootstrap() {
   console.log('[Main] Inizializzazione Smart Home 3D Digital Twin...');
 
@@ -96,7 +114,9 @@ async function bootstrap() {
   const css2dContainer = document.getElementById('css2d-container');
   const topBarContainer = document.getElementById('top-bar');
   const modalContainer = document.getElementById('device-modal-drawer');
-  const timelineContainer = document.getElementById('timeline-container');
+  const uiLayer = document.querySelector('.ui-layer');
+  const securityHubContainer = ensureUiContainer(uiLayer, 'security-hub-root', 'security-hub-root');
+  const navHubContainer = ensureUiContainer(uiLayer, 'nav-hub-root', 'nav-hub-root');
 
   // 2. Core 3D Scene
   const sceneManager = new SceneManager(canvasContainer, css2dContainer);
@@ -113,6 +133,7 @@ async function bootstrap() {
     isMobileProfile: sceneManager.isMobileProfile,
     onSceneMoved: () => sceneManager.requestShadowUpdate(),
   });
+  entityBinder.setCameraController(cameraController);
 
   // 6. Device Modals
   const deviceModals = new DeviceModals(modalContainer, haClient, cameraController, assetLoader);
@@ -127,14 +148,22 @@ async function bootstrap() {
   );
   entityBinder.setInteractionManager(interactionManager);
 
-  // 8. Spatial CV Engine, Video Streaming & Calibrazione POV
+  // 8. Spatial CV Engine, Multi-Camera Catalog, Video Streaming & Architettura NVR/Edge OOP
+  const cameraCatalog = new CameraCatalog();
   const cameraProjector = new CameraProjector(sceneManager.scene, assetLoader);
   const trajectoryRenderer = new TrajectoryRenderer(sceneManager.scene);
-  const timelineController = new TimelineController(timelineContainer, trajectoryRenderer, cameraProjector);
   const spatialStreamClient = new SpatialStreamClient();
   const videoStreamManager = new VideoStreamManager({
     haClient,
+    cameraCatalog,
     spatialServerUrl: spatialStreamClient.baseUrl,
+  });
+  const recordingManager = new CameraRecordingManager({
+    cameraCatalog,
+    providers: [
+      new SpatialServerNvrProvider({ spatialStreamClient }),
+      new EdgeCameraSdProvider({ haClient }),
+    ],
   });
   const calibrationAssistant = new CalibrationAssistantUI({
     sceneManager,
@@ -145,8 +174,6 @@ async function bootstrap() {
     assetLoader,
     haClient,
   });
-
-  timelineController.setSpatialStreamClient(spatialStreamClient);
 
   const secCamCtrl = deviceRegistry.get('security_camera');
   if (secCamCtrl) {
@@ -161,8 +188,7 @@ async function bootstrap() {
     });
   }
 
-  // 9. Top Navigation Bar
-  const uiLayer = document.querySelector('.ui-layer');
+  // 9. Top Navigation Bar + Nuovi Hub FAB Material 3 (Sinistra: Sicurezza, Destra: Viste & Dispositivi)
   const topBar = new TopBar(topBarContainer, {
     sceneManager,
     cameraController,
@@ -174,23 +200,67 @@ async function bootstrap() {
     deviceModals,
   });
 
-  const syncSheetState = () => {
-    const anyOpen = modalContainer.classList.contains('open') || Boolean(calibrationAssistant?.isOpen);
-    uiLayer?.classList.toggle('sheet-open', anyOpen);
+  let navFabHub = null;
+  let securityFabHub = null;
+
+  const syncUiLayerState = () => {
+    const anyDrawerOpen = modalContainer.classList.contains('open') || Boolean(calibrationAssistant?.isOpen);
+    const secStripActive = Boolean(securityFabHub?.isStrip);
+    const secExpanded = Boolean(securityFabHub?.isExpanded);
+    const navExpanded = Boolean(navFabHub?.isOpen);
+
+    uiLayer?.classList.toggle('sheet-open', anyDrawerOpen);
+    uiLayer?.classList.toggle('sec-strip-active', secStripActive);
+    uiLayer?.classList.toggle('sec-expanded-active', secExpanded);
+    uiLayer?.classList.toggle('nav-expanded-active', navExpanded);
     topBar?.calibBtn?.classList.toggle('active', Boolean(calibrationAssistant?.isOpen));
   };
+
+  navFabHub = new NavigationFabHub(navHubContainer, {
+    cameraController,
+    deviceModals,
+    haClient,
+    onOpenChange: (opened) => {
+      if (opened && securityFabHub?.isExpanded) {
+        securityFabHub.close();
+      }
+      syncUiLayerState();
+    },
+  });
+
+  securityFabHub = new SecurityFabHub(securityHubContainer, {
+    cameraCatalog,
+    videoStreamManager,
+    recordingManager,
+    trajectoryRenderer,
+    spatialStreamClient,
+    cameraController,
+    assetLoader,
+    deviceModals,
+    onStateChange: (state) => {
+      if (state === 'expanded') {
+        navFabHub?.close();
+        if (window.innerWidth <= 1024) {
+          if (modalContainer.classList.contains('open')) deviceModals.close();
+          if (calibrationAssistant?.isOpen) calibrationAssistant.close();
+        }
+      }
+      syncUiLayerState();
+    },
+  });
 
   deviceModals.setLifecycleHooks({
     onOpen: () => {
       if (calibrationAssistant?.isOpen) {
         calibrationAssistant.close();
       }
-      if (window.innerWidth <= 1024) {
-        topBar.setQuickNavCollapsed(true);
+      navFabHub?.close();
+      if (window.innerWidth <= 1024 && securityFabHub?.isExpanded) {
+        securityFabHub.close();
       }
-      syncSheetState();
+      syncUiLayerState();
     },
-    onClose: syncSheetState,
+    onClose: syncUiLayerState,
   });
 
   calibrationAssistant.setLifecycleHooks({
@@ -198,12 +268,13 @@ async function bootstrap() {
       if (modalContainer.classList.contains('open')) {
         deviceModals.close();
       }
-      if (window.innerWidth <= 1024) {
-        topBar.setQuickNavCollapsed(true);
+      navFabHub?.close();
+      if (securityFabHub?.isExpanded) {
+        securityFabHub.close();
       }
-      syncSheetState();
+      syncUiLayerState();
     },
-    onClose: syncSheetState,
+    onClose: syncUiLayerState,
   });
 
   // 9b. Overlay Auth OAuth2 Home Assistant, PWA Update Prompt & Sincronizzazione Spatial Session
@@ -269,6 +340,9 @@ async function bootstrap() {
     const { model, manifest, haEntitiesMap, groundColliders } = await assetLoader.loadHouseModel('/models/house_optimized.glb');
     sceneManager.scene.add(model);
 
+    // Sincronizza il catalogo telecamere con Blender SSoT
+    cameraCatalog.syncFromManifest(manifest);
+
     // Registra ground colliders per il raycasting spaziale
     cameraProjector.setGroundColliders(groundColliders);
     cameraProjector.setupCameraFrustums();
@@ -291,10 +365,9 @@ async function bootstrap() {
   sceneManager.addUpdateCallback((delta) => {
     cameraController.update(delta);
     entityBinder.update(delta);
-    timelineController.update(delta);
+    securityFabHub.update(delta);
     interactionManager.update(sceneManager.camera);
   });
 }
 
 window.addEventListener('DOMContentLoaded', bootstrap);
-

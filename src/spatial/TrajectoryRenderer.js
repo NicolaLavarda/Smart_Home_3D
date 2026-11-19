@@ -268,7 +268,14 @@ export class TrajectoryRenderer {
   }
 
   updateAtTime(currentTime) {
-    if (this.liveModeActive) return;
+    if (this.liveModeActive) return 0;
+
+    // Soglie calibrate sul persist_heartbeat_s (10s) del backend:
+    // - gap <= 45s: interpolazione continua (copre sia veicoli in movimento sia parcheggiati con heartbeat)
+    // - gap > 45s: interruzione traccia (es. riavvio server con riuso track_id), evita scie o oggetti fantasma
+    const MAX_INTERP_GAP_SEC = 45.0;
+    const MAX_HOLD_AFTER_LAST_SEC = 25.0;
+    let visibleCount = 0;
 
     this.entities.forEach((entity) => {
       const { markerGroup, trailLine, points, class: entityClass } = entity;
@@ -283,34 +290,34 @@ export class TrajectoryRenderer {
       }
 
       const lastPoint = pastPoints[pastPoints.length - 1];
+      const nextPoint = futurePoints.length > 0 ? futurePoints[0] : null;
       const timeSinceLastDetection = currentTime - lastPoint.t;
+      const segDuration = nextPoint ? nextPoint.t - lastPoint.t : Infinity;
+      const hasContinuousBridge = Boolean(nextPoint && segDuration > 0.01 && segDuration <= MAX_INTERP_GAP_SEC);
 
-      if (timeSinceLastDetection > 15.0 && futurePoints.length === 0) {
+      if (!hasContinuousBridge && timeSinceLastDetection > MAX_HOLD_AFTER_LAST_SEC) {
         this.setEntityObjectVisible(entity, false, false);
         return;
       }
 
+      visibleCount += 1;
       this.setEntityObjectVisible(entity, true, true);
 
       let currentPos = new THREE.Vector3(lastPoint.x, lastPoint.y, lastPoint.z);
       let vx = lastPoint.vx || 0;
       let vz = lastPoint.vz || 0;
 
-      if (futurePoints.length > 0) {
-        const nextPoint = futurePoints[0];
-        const segDuration = nextPoint.t - lastPoint.t;
-        if (segDuration > 0.01) {
-          const factor = Math.min((currentTime - lastPoint.t) / segDuration, 1.0);
-          const pA = new THREE.Vector3(lastPoint.x, lastPoint.y, lastPoint.z);
-          const pB = new THREE.Vector3(nextPoint.x, nextPoint.y, nextPoint.z);
-          currentPos.lerpVectors(pA, pB, factor);
+      if (hasContinuousBridge) {
+        const factor = Math.min((currentTime - lastPoint.t) / segDuration, 1.0);
+        const pA = new THREE.Vector3(lastPoint.x, lastPoint.y, lastPoint.z);
+        const pB = new THREE.Vector3(nextPoint.x, nextPoint.y, nextPoint.z);
+        currentPos.lerpVectors(pA, pB, factor);
 
-          const dir = pB.clone().sub(pA);
-          vx = dir.x / segDuration;
-          vz = dir.z / segDuration;
-          if (dir.lengthSq() > 0.005) {
-            markerGroup.rotation.y = Math.atan2(dir.x, dir.z);
-          }
+        const dir = pB.clone().sub(pA);
+        vx = dir.x / segDuration;
+        vz = dir.z / segDuration;
+        if (dir.lengthSq() > 0.005) {
+          markerGroup.rotation.y = Math.atan2(dir.x, dir.z);
         }
       }
 
@@ -325,7 +332,16 @@ export class TrajectoryRenderer {
       });
 
       const trailWindowStart = currentTime - this.trailDuration;
-      const trailPoints = pastPoints.filter((p) => p.t >= trailWindowStart);
+      const rawTrail = pastPoints.filter((p) => p.t >= trailWindowStart);
+      // Tronca la scia se presente un gap > MAX_INTERP_GAP_SEC tra campioni consecutivi
+      const trailPoints = [];
+      for (let i = rawTrail.length - 1; i >= 0; i--) {
+        const pt = rawTrail[i];
+        if (trailPoints.length > 0 && (trailPoints[0].t - pt.t) > MAX_INTERP_GAP_SEC) {
+          break;
+        }
+        trailPoints.unshift(pt);
+      }
       trailPoints.push({ x: currentPos.x, y: currentPos.y, z: currentPos.z, t: currentTime });
 
       const geom = trailLine.geometry;
@@ -345,6 +361,8 @@ export class TrajectoryRenderer {
       colAttr.needsUpdate = true;
       geom.setDrawRange(0, n);
     });
+
+    return visibleCount;
   }
 
   removeLiveEntity(id, entry) {

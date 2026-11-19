@@ -37,6 +37,7 @@ export class DishwasherController extends BaseDeviceController {
       haClient: options.haClient,
     });
 
+    this.subtitle = 'Cucina • Programmi & Avanzamento';
     this.modalView = new DishwasherModal(this);
     this.displayMesh = null;
     this.doorPivot = null;

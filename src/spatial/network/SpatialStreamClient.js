@@ -302,24 +302,25 @@ export class SpatialStreamClient {
     return data;
   }
 
-  async fetchTracks(tStart, tEnd, classes = null) {
+  async fetchTracks(tStart, tEnd, classes = null, limit = 15000) {
     const params = new URLSearchParams({
       t_start: String(tStart),
       t_end: String(tEnd),
+      limit: String(Math.max(1, Math.min(20000, Number(limit) || 15000))),
     });
     if (Array.isArray(classes) && classes.length > 0) {
       params.set('classes', classes.join(','));
     }
-    return await this.requestJson(`/api/v1/tracks?${params.toString()}`, { method: 'GET', timeoutMs: 6000 });
+    return await this.requestJson(`/api/v1/tracks?${params.toString()}`, { method: 'GET', timeoutMs: 12000 });
   }
 
-  async fetchTimelineDensity(tStart, tEnd, buckets = 60) {
+  async fetchTimelineDensity(tStart, tEnd, buckets = 80) {
     const params = new URLSearchParams({
       t_start: String(tStart),
       t_end: String(tEnd),
       buckets: String(buckets),
     });
-    return await this.requestJson(`/api/v1/timeline-density?${params.toString()}`, { method: 'GET', timeoutMs: 4000 });
+    return await this.requestJson(`/api/v1/timeline-density?${params.toString()}`, { method: 'GET', timeoutMs: 10000 });
   }
 
   async fetchCameraCalibration(cameraId) {

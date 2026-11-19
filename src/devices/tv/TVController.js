@@ -21,6 +21,7 @@ export class TVController extends BaseDeviceController {
       ],
     });
 
+    this.subtitle = 'Salotto • Controllo & Telecomando';
     this.wolEntityId = 'button.wake_on_lan_58_fd_b1_ae_99_79';
     this.haClient = options.haClient || null;
     this.latestStateObj = null; // Cache dell'ultimo stato reale ricevuto via WebSocket da HA

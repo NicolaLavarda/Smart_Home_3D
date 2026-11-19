@@ -17,7 +17,7 @@ export class VacuumController extends BaseDeviceController {
   constructor(options = {}) {
     super('vacuum', {
       name: 'Ecovacs Deebot',
-      subtitle: 'vacuum.deebot • Sala da pranzo',
+      subtitle: 'Sala da pranzo • Robot Aspirapolvere',
       primaryEntityId: 'vacuum.deebot',
       associatedEntityIds: [
         'vacuum.deebot',
@@ -507,10 +507,26 @@ export class VacuumController extends BaseDeviceController {
     }
   }
 
+  hasRobotCoordinates() {
+    if (this.robotPivot) {
+      const p = new THREE.Vector3();
+      this.robotPivot.getWorldPosition(p);
+      if (Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
+        return true;
+      }
+    }
+    if (this.lastTelemetry && this.targetPosition) {
+      return Number.isFinite(this.targetPosition.x) && Number.isFinite(this.targetPosition.z);
+    }
+    return false;
+  }
+
   getRobotWorldPosition() {
     const pos = new THREE.Vector3();
     if (this.robotPivot) {
       this.robotPivot.getWorldPosition(pos);
+    } else if (this.lastTelemetry && this.targetPosition) {
+      pos.copy(this.targetPosition);
     } else {
       pos.copy(this.dockPosition);
     }
@@ -521,16 +537,24 @@ export class VacuumController extends BaseDeviceController {
     return pos;
   }
 
-  zoomToRobot() {
-    const camCtrl = this.cameraController || this.modalView?.context?.cameraController;
-    if (!camCtrl) return;
+  zoomToRobot(cameraControllerOverride = null) {
+    const camCtrl = cameraControllerOverride || this.cameraController || this.modalView?.context?.cameraController;
+    if (!camCtrl) return false;
+    this.cameraController = camCtrl;
+
+    const pos = this.getRobotWorldPosition();
+    if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) {
+      return false;
+    }
 
     const followOffset = new THREE.Vector3(-2.1, 1.65, 2.1);
+    const targetFov = typeof camCtrl.getResponsiveFov === 'function' ? camCtrl.getResponsiveFov(46) : 46;
     camCtrl.startFollowing(
       () => this.getRobotWorldPosition(),
       followOffset,
       1.1,
-      46
+      targetFov
     );
+    return true;
   }
 }

@@ -270,94 +270,12 @@ export class TopBar {
       const isVisible = this.interactionManager.toggleBadges();
       this.badgesBtn.classList.toggle('active', isVisible);
     });
-
-    // Quicknav laterale per viste
-    this.setupQuickNav();
   }
 
-  setupQuickNav() {
-    const quicknav = document.createElement('div');
-    quicknav.className = 'side-quicknav glass';
-    quicknav.innerHTML = `
-      <div class="side-header" id="quicknav-header-toggle" role="button" tabindex="0" title="Comprimi / Espandi Viste Rapide">
-        <span class="side-header-left">
-          ${icon('compass', { size: 14, className: 'side-header-icon' })}
-          <span class="side-header-title">Viste Rapide</span>
-        </span>
-        <span class="side-collapse-icon" id="quicknav-collapse-icon">
-          ${icon('chevron-left', { size: 14 })}
-        </span>
-      </div>
-      <div class="quicknav-list">
-        <button class="quicknav-btn active" data-preset="overview">${icon('globe', { size: 15 })}<span>Panoramica</span></button>
-        <button class="quicknav-btn" data-preset="carraio_cam">${icon('cctv', { size: 15 })}<span>POV Telecamera Carraio</span></button>
-        <button class="quicknav-btn" data-preset="gate">${icon('door-open', { size: 15 })}<span>Cancello & Accessi</span></button>
-        <button class="quicknav-btn" data-preset="garden">${icon('trees', { size: 15 })}<span>Giardino & Lampioncini</span></button>
-        <button class="quicknav-btn" data-preset="irrigation_area1">${icon('droplets', { size: 15 })}<span>Impianto Irrigazione</span></button>
-        <button class="quicknav-btn" data-preset="living">${icon('sofa', { size: 15 })}<span>Salotto</span></button>
-        <button class="quicknav-btn" data-preset="dining">${icon('utensils', { size: 15 })}<span>Sala da pranzo</span></button>
-        <button class="quicknav-btn" data-preset="kitchen">${icon('cooking-pot', { size: 15 })}<span>Cucina</span></button>
-        <button class="quicknav-btn" data-preset="laundry">${icon('flame', { size: 15 })}<span>Impianto Termico</span></button>
-        <button class="quicknav-btn" data-preset="topdown">${icon('compass', { size: 15 })}<span>Pianta Zenitale</span></button>
-      </div>
-    `;
-    (document.querySelector('.ui-layer') || document.body)?.appendChild(quicknav);
-
-    const headerToggle = quicknav.querySelector('#quicknav-header-toggle');
-    const collapseIconEl = quicknav.querySelector('#quicknav-collapse-icon');
-
-    const setCollapsed = (collapsed) => {
-      quicknav.classList.toggle('collapsed', collapsed);
-      collapseIconEl.innerHTML = icon(collapsed ? 'chevron-right' : 'chevron-left', { size: 14 });
-      headerToggle.title = collapsed ? 'Espandi Viste Rapide' : 'Comprimi Viste Rapide';
-    };
-    this._setQuickNavCollapsed = setCollapsed;
-
-    // Su tablet e smartphone parte compresso per lasciare libera la scena 3D
-    if (window.innerWidth <= 1024) {
-      setCollapsed(true);
-    }
-
-    headerToggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      setCollapsed(!quicknav.classList.contains('collapsed'));
-    });
-
-    headerToggle.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        setCollapsed(!quicknav.classList.contains('collapsed'));
-      }
-    });
-
-    quicknav.addEventListener('click', () => {
-      if (quicknav.classList.contains('collapsed')) {
-        setCollapsed(false);
-      }
-    });
-
-    const buttons = quicknav.querySelectorAll('.quicknav-btn');
-    buttons.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        buttons.forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        const preset = btn.dataset.preset;
-        if (preset === 'carraio_cam') {
-          const camNode = this.assetLoader?.cameras?.get('Cam_Carraio');
-          if (camNode) {
-            this.cameraController.flyToCameraPOV(camNode, 1.3);
-            return;
-          }
-        }
-        this.cameraController.flyToPreset(preset);
-      });
-    });
-  }
-
-  setQuickNavCollapsed(collapsed) {
-    if (this._setQuickNavCollapsed) {
-      this._setQuickNavCollapsed(Boolean(collapsed));
-    }
-  }
+  /**
+   * Metodo mantenuto per retrocompatibilità dopo la migrazione delle viste
+   * al nuovo FAB Material 3 in basso a destra (NavigationFabHub).
+   */
+  setQuickNavCollapsed(_collapsed) {}
 }
 

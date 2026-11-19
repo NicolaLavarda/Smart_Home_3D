@@ -15,6 +15,7 @@ from typing import Any, Literal, Optional
 import numpy as np
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from spatial_server.biometrics import (
@@ -56,6 +57,7 @@ from spatial_server.optics import (
 )
 from spatial_server.optics.pinhole_model import matrix_gl_to_cv
 from spatial_server.persistence import ITrackRepository, SQLiteWALTrackRepository
+from spatial_server.recordings import FilesystemNvrArchiveRepository, IVideoArchiveRepository
 from spatial_server.tracking import IMultiTargetTracker3D, Kalman3DMultiTracker, TrackObservation3D
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s: %(message)s")
@@ -457,6 +459,9 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
     app.state.pipeline = service
     app.state.config = service.config
     app.state.auth_verifier = HomeAssistantAuthVerifier.from_config(service.config)
+    app.state.recording_archive: IVideoArchiveRepository = FilesystemNvrArchiveRepository(
+        storage_dir=service.config.nvr_storage_dir
+    )
 
     @app.post("/api/v1/auth/session")
     async def create_auth_session(
@@ -579,6 +584,71 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
     ) -> dict[str, Any]:
         bins = service.repository.query_timeline_density(t_start, t_end, buckets=buckets)
         return {"status": "ok", "bins": bins}
+
+    @app.get("/api/v1/recordings/status")
+    async def get_recordings_status(
+        request: Request,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        archive: IVideoArchiveRepository = request.app.state.recording_archive
+        return {
+            "status": "ok",
+            "configured": archive.is_configured,
+            "storage_type": archive.storage_type,
+            "storage_dir": str(getattr(archive, "storage_dir", "") or ""),
+            "cameras": archive.list_cameras(),
+        }
+
+    @app.get("/api/v1/recordings/{camera_id}/segments")
+    async def get_camera_recording_segments(
+        request: Request,
+        camera_id: str,
+        t_start: float = Query(...),
+        t_end: float = Query(...),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        archive: IVideoArchiveRepository = request.app.state.recording_archive
+        segments = archive.query_segments(camera_id, t_start, t_end)
+        return {
+            "status": "ok",
+            "camera_id": camera_id,
+            "configured": archive.is_configured,
+            "count": len(segments),
+            "segments": [s.to_api_dict() for s in segments],
+        }
+
+    @app.get("/api/v1/recordings/{camera_id}/resolve")
+    async def resolve_camera_recording(
+        request: Request,
+        camera_id: str,
+        t: float = Query(...),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        archive: IVideoArchiveRepository = request.app.state.recording_archive
+        resolution = archive.resolve_timestamp(camera_id, t)
+        return {
+            "status": "ok",
+            **resolution.to_api_dict(),
+        }
+
+    @app.get("/api/v1/recordings/{camera_id}/file/{filename}")
+    async def stream_camera_recording_file(
+        request: Request,
+        camera_id: str,
+        filename: str,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> FileResponse:
+        archive: IVideoArchiveRepository = request.app.state.recording_archive
+        file_path = archive.resolve_segment_file(camera_id, filename)
+        if file_path is None or not file_path.exists():
+            raise HTTPException(status_code=404, detail="Segmento video non trovato")
+        media_type = "video/mp4"
+        suffix = file_path.suffix.lower()
+        if suffix == ".webm":
+            media_type = "video/webm"
+        elif suffix == ".mkv":
+            media_type = "video/x-matroska"
+        return FileResponse(path=file_path, media_type=media_type, filename=file_path.name)
 
     @app.get("/api/v1/calibration/{camera_id}")
     async def get_camera_calibration(

@@ -41,7 +41,6 @@ export class IrrigationModal {
     const valve3 = this.controller.isAreaValveOn(3);
 
     const anyValveOn = valve1 || valve2 || valve3;
-    const activeGettini = (valve1 ? 4 : 0) + (valve2 ? 2 : 0) + (valve3 ? 5 : 0);
     const enabledCount = (area1Enabled ? 1 : 0) + (area2Enabled ? 1 : 0) + (area3Enabled ? 1 : 0);
     const totalMinutes = this.controller.getTotalDurationMinutes();
 
@@ -77,10 +76,6 @@ export class IrrigationModal {
           <div class="irrigation-stat-box">
             <span class="stat-label">Aree Abilitate</span>
             <span class="stat-value"><strong>${enabledCount}</strong> / 3</span>
-          </div>
-          <div class="irrigation-stat-box">
-            <span class="stat-label">Gettini Attivi</span>
-            <span class="stat-value"><strong>${activeGettini}</strong> / 11</span>
           </div>
           <div class="irrigation-stat-box">
             <span class="stat-label">Durata Totale</span>
@@ -154,11 +149,11 @@ export class IrrigationModal {
               </div>
 
               <!-- Pulsante Valvola Manuale Rapida (Icona Goccia d'Acqua) -->
-              <button class="btn-valve-trigger ${valve1 ? 'on' : ''}" data-valve-area="1" title="Attiva/Disattiva gettini manualmente">
+              <button class="btn-valve-trigger ${valve1 ? 'on' : ''}" data-valve-area="1" title="Attiva/Disattiva Area 1 manualmente">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="${valve1 ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
                 </svg>
-                <span>${valve1 ? 'Gettini ON' : 'Manuale'}</span>
+                <span>${valve1 ? 'Attiva' : 'Manuale'}</span>
               </button>
 
               <!-- Inquadra Camera 3D -->
@@ -205,11 +200,11 @@ export class IrrigationModal {
               </div>
 
               <!-- Pulsante Valvola Manuale Rapida (Icona Goccia d'Acqua) -->
-              <button class="btn-valve-trigger ${valve2 ? 'on' : ''}" data-valve-area="2" title="Attiva/Disattiva gettini manualmente">
+              <button class="btn-valve-trigger ${valve2 ? 'on' : ''}" data-valve-area="2" title="Attiva/Disattiva Area 2 manualmente">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="${valve2 ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
                 </svg>
-                <span>${valve2 ? 'Gettini ON' : 'Manuale'}</span>
+                <span>${valve2 ? 'Attiva' : 'Manuale'}</span>
               </button>
 
               <!-- Inquadra Camera 3D -->
@@ -256,11 +251,11 @@ export class IrrigationModal {
               </div>
 
               <!-- Pulsante Valvola Manuale Rapida (Icona Goccia d'Acqua) -->
-              <button class="btn-valve-trigger ${valve3 ? 'on' : ''}" data-valve-area="3" title="Attiva/Disattiva gettini manualmente">
+              <button class="btn-valve-trigger ${valve3 ? 'on' : ''}" data-valve-area="3" title="Attiva/Disattiva Area 3 manualmente">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="${valve3 ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
                 </svg>
-                <span>${valve3 ? 'Gettini ON' : 'Manuale'}</span>
+                <span>${valve3 ? 'Attiva' : 'Manuale'}</span>
               </button>
 
               <!-- Inquadra Camera 3D -->

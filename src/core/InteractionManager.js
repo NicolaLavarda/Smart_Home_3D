@@ -192,7 +192,6 @@ export class InteractionManager {
       } else if (entityId.startsWith('switch.smart_switch_area')) {
         // Badge Impianto Irrigazione Giardino
         const areaNum = entityId.replace('switch.smart_switch_area', '');
-        const areaCounts = { '1': '4 gettini', '2': '2 gettini', '3': '5 gettini' };
         badgeEl = document.createElement('div');
         badgeEl.className = 'device-badge-3d state-off badge-irrigation';
         badgeEl.dataset.entityId = entityId;
@@ -200,7 +199,7 @@ export class InteractionManager {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
             <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
           </svg>
-          <span class="badge-name">Area ${areaNum} (${areaCounts[areaNum] || ''}):</span>
+          <span class="badge-name">Area ${areaNum}:</span>
           <span class="badge-val" style="color: #94a3b8; font-weight: 600;">Spento</span>
         `;
         valEl = badgeEl.querySelector('.badge-val');

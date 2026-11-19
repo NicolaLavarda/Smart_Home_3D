@@ -10,9 +10,10 @@ export class CameraController {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
-    this.controls.minDistance = 1.5;
+    this.controls.minDistance = 0.8;
     this.controls.maxDistance = 160.0;
     this.controls.target.set(-0.5, 1.0, 16.0);
+    this.activePresetKey = 'overview';
 
     this.isTransitioning = false;
     this.transitionStart = 0;
@@ -77,9 +78,9 @@ export class CameraController {
         fov: 50,
       },
       laundry: {
-        eye: new THREE.Vector3(0.95, 1.65, 12.7),
-        target: new THREE.Vector3(0.95, 0.95, 14.85),
-        fov: 52,
+        eye: new THREE.Vector3(1.12, 1.46, 12.90),
+        target: new THREE.Vector3(0.98, 0.95, 14.78),
+        fov: 54,
       },
       garden: {
         eye: new THREE.Vector3(-24.0, 19.0, 36.0),
@@ -102,11 +103,158 @@ export class CameraController {
         fov: 48,
       },
       topdown: {
-        eye: new THREE.Vector3(-0.5, 42.0, 16.01),
-        target: new THREE.Vector3(-0.5, 0.0, 16.0),
+        eye: new THREE.Vector3(-0.5, 45.0, 15.01),
+        target: new THREE.Vector3(-0.5, 0.0, 15.0),
         fov: 45,
       },
+      // Viste contestuali dedicate per i 5 centri di controllo / dispositivi (primo piano + contesto stanza/giardino)
+      device_thermal: {
+        // Interno lavanderia (oltre il muro nord a Z=12.63 verso il portico) con caldaia e puffer in primo piano
+        eye: new THREE.Vector3(1.12, 1.46, 12.90),
+        target: new THREE.Vector3(0.98, 0.95, 14.78),
+        fov: 54,
+      },
+      device_irrigation: {
+        eye: new THREE.Vector3(-16.0, 17.5, 34.0),
+        target: new THREE.Vector3(0.5, 0.5, 16.5),
+        fov: 48,
+      },
+      device_tv: {
+        eye: new THREE.Vector3(5.3, 2.05, 4.7),
+        target: new THREE.Vector3(1.0, 1.15, 2.85),
+        fov: 48,
+      },
+      device_dishwasher: {
+        // Stessa angolazione diagonale della vista cucina, centrata e leggermente avvicinata sulla lavastoviglie
+        eye: new THREE.Vector3(10.55, 1.88, 4.75),
+        target: new THREE.Vector3(8.38, 0.72, 7.00),
+        fov: 48,
+      },
+      device_deebot: {
+        // Vista di fallback usata solo se le coordinate live/3D del robot non sono disponibili
+        eye: new THREE.Vector3(9.4, 2.25, 4.3),
+        target: new THREE.Vector3(13.2, 0.45, 2.1),
+        fov: 48,
+      },
     };
+
+    // Varianti responsive dedicate a schermi verticali/mobile (aspect < 0.85)
+    // Garantiscono inquadratura completa della casa principale e proporzioni corrette senza tagli
+    this.mobilePresets = {
+      overview: {
+        eye: new THREE.Vector3(20.0, 32.0, 37.5),
+        target: new THREE.Vector3(7.2, 1.0, 7.5),
+        fov: 54,
+      },
+      topdown: {
+        eye: new THREE.Vector3(6.9, 46.0, 10.21),
+        target: new THREE.Vector3(6.9, 0.0, 10.2),
+        fov: 50,
+      },
+      garden: {
+        eye: new THREE.Vector3(-27.0, 24.5, 40.0),
+        target: new THREE.Vector3(-1.5, 1.0, 14.0),
+        fov: 58,
+      },
+      living: {
+        eye: new THREE.Vector3(6.1, 3.1, 6.5),
+        target: new THREE.Vector3(2.6, 1.15, 3.1),
+        fov: 60,
+      },
+      dining: {
+        eye: new THREE.Vector3(7.8, 1.45, 7.0),
+        target: new THREE.Vector3(12.6, 1.15, 3.6),
+        fov: 60,
+      },
+      kitchen: {
+        eye: new THREE.Vector3(11.3, 2.55, 3.4),
+        target: new THREE.Vector3(7.8, 1.05, 6.2),
+        fov: 60,
+      },
+      laundry: {
+        eye: new THREE.Vector3(1.12, 1.46, 12.90),
+        target: new THREE.Vector3(0.98, 0.90, 14.78),
+        fov: 68,
+      },
+      device_thermal: {
+        eye: new THREE.Vector3(1.12, 1.46, 12.90),
+        target: new THREE.Vector3(0.98, 0.90, 14.78),
+        fov: 68,
+      },
+      device_irrigation: {
+        eye: new THREE.Vector3(-22.0, 24.5, 40.0),
+        target: new THREE.Vector3(-0.5, 0.5, 15.0),
+        fov: 58,
+      },
+      device_tv: {
+        eye: new THREE.Vector3(5.3, 2.05, 4.7),
+        target: new THREE.Vector3(1.0, 1.15, 2.85),
+        fov: 60,
+      },
+      device_dishwasher: {
+        eye: new THREE.Vector3(10.55, 1.88, 4.75),
+        target: new THREE.Vector3(8.38, 0.72, 7.00),
+        fov: 60,
+      },
+      device_deebot: {
+        eye: new THREE.Vector3(9.4, 2.25, 4.3),
+        target: new THREE.Vector3(13.2, 0.45, 2.1),
+        fov: 58,
+      },
+    };
+
+    // Avvio immediato in vista Panoramica adattata al viewport corrente (PC o Mobile)
+    this.applyPresetImmediate('overview');
+  }
+
+  isPortraitViewport() {
+    let aspect = this.camera?.aspect;
+    if (!Number.isFinite(aspect) || aspect <= 0) {
+      if (typeof window !== 'undefined' && window.innerHeight > 0) {
+        aspect = window.innerWidth / window.innerHeight;
+      } else {
+        aspect = 16 / 9;
+      }
+    }
+    return aspect < 0.85;
+  }
+
+  getResponsiveFov(baseFov = 46) {
+    return this.isPortraitViewport() ? Math.min(66, baseFov + 10) : baseFov;
+  }
+
+  getPresetForViewport(presetKey) {
+    const base = this.presets[presetKey];
+    if (!base) return null;
+    if (this.isPortraitViewport()) {
+      if (this.mobilePresets[presetKey]) {
+        return this.mobilePresets[presetKey];
+      }
+      return {
+        eye: base.eye,
+        target: base.target,
+        fov: Math.min(64, (base.fov || 45) + 8),
+      };
+    }
+    return base;
+  }
+
+  applyPresetImmediate(presetKey) {
+    const preset = this.getPresetForViewport(presetKey);
+    if (!preset) return false;
+    this.stopFollowing();
+    this.isTransitioning = false;
+    this.controls.enabled = true;
+    this.onTransitionComplete = null;
+    this.activePresetKey = presetKey;
+
+    this.camera.position.copy(preset.eye);
+    this.controls.target.copy(preset.target);
+    this.camera.fov = preset.fov || 45;
+    this.camera.updateProjectionMatrix();
+    this.camera.lookAt(preset.target);
+    this.controls.update();
+    return true;
   }
 
   startFollowing(getTargetFn, offset = new THREE.Vector3(-2.1, 1.65, 2.1), duration = 1.1, targetFov = 46) {
@@ -215,9 +363,14 @@ export class CameraController {
     }
 
     flyToPreset(presetKey, duration = 1.2) {
-      const preset = this.presets[presetKey];
+      const preset = this.getPresetForViewport(presetKey);
       if (preset) {
-        this.flyTo(preset.eye, preset.target, duration, null, preset.fov || 45);
+        this.activePresetKey = presetKey;
+        if (duration <= 0) {
+          this.applyPresetImmediate(presetKey);
+        } else {
+          this.flyTo(preset.eye, preset.target, duration, null, preset.fov || 45);
+        }
       }
     }
 

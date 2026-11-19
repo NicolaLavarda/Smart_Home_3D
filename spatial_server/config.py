@@ -4,6 +4,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
@@ -137,6 +138,7 @@ class SpatialServerConfig:
     auth_cache_ttl_s: float = 120.0
     session_secret_key: str = ""
     allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS
+    nvr_storage_dir: Optional[Path] = None
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -156,6 +158,8 @@ class SpatialServerConfig:
             os.getenv("SPATIAL_ALLOWED_ORIGINS", ""),
             ha_public_url=ha_public_url,
         )
+        raw_nvr_dir = (os.getenv("SPATIAL_NVR_STORAGE_DIR") or "").strip()
+        nvr_storage_dir = Path(raw_nvr_dir) if raw_nvr_dir else None
 
         return cls(
             host=host,
@@ -189,5 +193,6 @@ class SpatialServerConfig:
             auth_cache_ttl_s=auth_cache_ttl_s,
             session_secret_key=session_secret_key,
             allowed_origins=allowed_origins,
+            nvr_storage_dir=nvr_storage_dir,
         )
 

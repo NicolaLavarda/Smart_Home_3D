@@ -3,6 +3,7 @@ import { DishwasherController } from './dishwasher/index.js';
 import { IrrigationController } from './irrigation/index.js';
 import { VacuumController } from './vacuum/index.js';
 import { SecurityCameraController } from './camera/index.js';
+import { ThermalController } from './thermal/index.js';
 
 /**
  * DeviceRegistry
@@ -37,6 +38,9 @@ export class DeviceRegistry {
 
     // 5. Modulo Telecamera Sicurezza Reolink (Cam_Carraio)
     this.register(new SecurityCameraController());
+
+    // 6. Modulo Impianto Termico (Caldaia & Accumulo Puffer in Lavanderia)
+    this.register(new ThermalController());
   }
 
   /**
@@ -134,7 +138,7 @@ export class DeviceRegistry {
         });
       }
 
-      if (allMeshes.length > 0 || controller.id === 'irrigation' || controller.id === 'vacuum' || controller.id === 'security_camera') {
+      if (allMeshes.length > 0 || controller.id === 'irrigation' || controller.id === 'vacuum' || controller.id === 'security_camera' || controller.id === 'thermal') {
         controller.bind3D(allMeshes, scene, context);
         console.log(`[DeviceRegistry] Mesh 3D collegate a '${controller.id}': ${allMeshes.length} nodi.`);
       }

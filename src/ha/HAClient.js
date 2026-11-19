@@ -151,6 +151,146 @@ export class HAClient {
           friendly_name: 'Interruttore Caldaia',
         },
       },
+      'switch.valvola_acqua_calda': {
+        entity_id: 'switch.valvola_acqua_calda',
+        state: 'off',
+        attributes: {
+          friendly_name: 'Valvola Acqua Calda',
+        },
+      },
+      'input_boolean.gestione_automatica_acqua_calda': {
+        entity_id: 'input_boolean.gestione_automatica_acqua_calda',
+        state: 'on',
+        attributes: {
+          friendly_name: 'Gestione automatica acqua calda',
+        },
+      },
+      'input_boolean.doccia_in_corso': {
+        entity_id: 'input_boolean.doccia_in_corso',
+        state: 'off',
+        attributes: {
+          friendly_name: 'Doccia in corso',
+        },
+      },
+      'sensor.litri_acqua_calda': {
+        entity_id: 'sensor.litri_acqua_calda',
+        state: '68',
+        attributes: {
+          friendly_name: 'Litri acqua calda',
+          unit_of_measurement: 'L',
+        },
+      },
+      'sensor.minuti_doccia_disponibili': {
+        entity_id: 'sensor.minuti_doccia_disponibili',
+        state: '8.0',
+        attributes: {
+          friendly_name: 'Minuti doccia disponibili',
+          unit_of_measurement: 'min',
+        },
+      },
+      'sensor.minuti_di_attesa': {
+        entity_id: 'sensor.minuti_di_attesa',
+        state: '0',
+        attributes: {
+          friendly_name: 'Minuti di attesa',
+          unit_of_measurement: 'min',
+        },
+      },
+      'input_number.minuti_doccia_desiderati': {
+        entity_id: 'input_number.minuti_doccia_desiderati',
+        state: '12',
+        attributes: {
+          friendly_name: 'Minuti doccia desiderati',
+          unit_of_measurement: 'min',
+          min: 1,
+          max: 60,
+          step: 1,
+        },
+      },
+      'input_datetime.orario_accensione_caldaia': {
+        entity_id: 'input_datetime.orario_accensione_caldaia',
+        state: '06:30:00',
+        attributes: {
+          friendly_name: 'Orario accensione caldaia',
+          has_date: false,
+          has_time: true,
+        },
+      },
+      'automation.accensione_programmata_caldaia': {
+        entity_id: 'automation.accensione_programmata_caldaia',
+        state: 'off',
+        attributes: {
+          friendly_name: 'Accensione programmata caldaia',
+        },
+      },
+      'input_datetime.orario_spegnimento_caldaia': {
+        entity_id: 'input_datetime.orario_spegnimento_caldaia',
+        state: '22:30:00',
+        attributes: {
+          friendly_name: 'Orario spegnimento caldaia',
+          has_date: false,
+          has_time: true,
+        },
+      },
+      'automation.spegnimento_programmato_caldaia': {
+        entity_id: 'automation.spegnimento_programmato_caldaia',
+        state: 'off',
+        attributes: {
+          friendly_name: 'Spegnimento programmato caldaia',
+        },
+      },
+      'input_number.temperatura_doccia': {
+        entity_id: 'input_number.temperatura_doccia',
+        state: '39',
+        attributes: {
+          friendly_name: 'Temperatura doccia',
+          unit_of_measurement: '°C',
+          min: 30,
+          max: 48,
+          step: 0.5,
+        },
+      },
+      'input_select.doccia_selezionata': {
+        entity_id: 'input_select.doccia_selezionata',
+        state: 'Doccia Bagno',
+        attributes: {
+          friendly_name: 'Doccia selezionata',
+          options: ['Doccia Bagno', 'Doccia Lavanderia'],
+        },
+      },
+      'sensor.temperatura_calda_caldaia': {
+        entity_id: 'sensor.temperatura_calda_caldaia',
+        state: '48.5',
+        attributes: {
+          friendly_name: 'Temperatura calda caldaia',
+          unit_of_measurement: '°C',
+          device_class: 'temperature',
+        },
+      },
+      'automation.controllo_valvola_acqua_calda': {
+        entity_id: 'automation.controllo_valvola_acqua_calda',
+        state: 'on',
+        attributes: {
+          friendly_name: 'Valvola Automatica',
+        },
+      },
+      'sensor.minuti_caldaia_accesa': {
+        entity_id: 'sensor.minuti_caldaia_accesa',
+        state: '0.8',
+        attributes: {
+          friendly_name: 'Minuti caldaia accesa',
+          unit_of_measurement: 'h',
+        },
+      },
+      'sensor.temperatura_esterna_attuale': {
+        entity_id: 'sensor.temperatura_esterna_attuale',
+        state: '12.5',
+        attributes: {
+          friendly_name: 'Temperatura esterna attuale',
+          unit_of_measurement: '°C',
+          device_class: 'temperature',
+        },
+      },
       // Impianto Irrigazione Smart Giardino (3 Aree, 11 Gettini pop-up)
       'switch.smart_switch_area1': {
         entity_id: 'switch.smart_switch_area1',
@@ -1158,7 +1298,7 @@ export class HAClient {
       } else if (service === 'turn_off') {
         ent.state = 'off';
       }
-    } else if (domain === 'cover' || domain === 'switch' || domain === 'input_boolean') {
+    } else if (domain === 'cover' || domain === 'switch' || domain === 'input_boolean' || domain === 'automation') {
       if (service === 'toggle') {
         ent.state = (ent.state === 'open' || ent.state === 'on') ? 'off' : 'on';
       } else if (service === 'turn_on' || service === 'open_cover') {
@@ -1191,6 +1331,16 @@ export class HAClient {
     } else if (domain === 'input_number') {
       if (service === 'set_value' && serviceData.value !== undefined) {
         ent.state = String(serviceData.value);
+      }
+    } else if (domain === 'input_datetime') {
+      if (service === 'set_datetime') {
+        if (serviceData.time) ent.state = String(serviceData.time);
+        else if (serviceData.datetime) ent.state = String(serviceData.datetime);
+        else if (serviceData.date) ent.state = String(serviceData.date);
+      }
+    } else if (domain === 'select' || domain === 'input_select') {
+      if (service === 'select_option' && serviceData.option) {
+        ent.state = serviceData.option;
       }
     } else if (domain === 'media_player') {
       if (service === 'toggle') {

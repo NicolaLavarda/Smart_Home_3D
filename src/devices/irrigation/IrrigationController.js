@@ -38,7 +38,7 @@ export class IrrigationController extends BaseDeviceController {
       haClient: options.haClient,
     });
 
-    this.subtitle = 'Home Assistant • Controllo Cicli & Zone';
+    this.subtitle = 'Giardino • Cicli & Zone';
     this.modalView = new IrrigationModal(this);
     this.isModalOpen = false;
     this.waterSpray = null;

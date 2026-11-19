@@ -18,6 +18,7 @@ export class BaseDeviceController {
     }
     this.id = id;
     this.name = options.name || id;
+    this.subtitle = options.subtitle || '';
     this.primaryEntityId = options.primaryEntityId || null;
     this.associatedEntityIds = new Set(options.associatedEntityIds || options.monitoredEntities || []);
     if (this.primaryEntityId) {

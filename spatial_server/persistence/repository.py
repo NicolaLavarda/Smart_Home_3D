@@ -205,26 +205,35 @@ class SQLiteWALTrackRepository(ITrackRepository):
 
     def query_timeline_density(self, t_start: float, t_end: float, buckets: int = 60) -> list[dict[str, Any]]:
         buckets = max(1, min(int(buckets), 360))
-        span = max(float(t_end) - float(t_start), 1.0)
+        start_f = float(t_start)
+        end_f = float(t_end)
+        span = max(end_f - start_f, 1.0)
         step = span / buckets
         counts = [0] * buckets
 
         with self._lock:
             rows = self._conn.execute(
-                "SELECT timestamp FROM track_history WHERE timestamp >= ? AND timestamp <= ?;",
-                (float(t_start), float(t_end)),
+                """
+                SELECT CAST((timestamp - ?) / ? AS INTEGER) AS bucket_idx, COUNT(*) AS cnt
+                FROM track_history
+                WHERE timestamp >= ? AND timestamp <= ?
+                GROUP BY bucket_idx;
+                """,
+                (start_f, step, start_f, end_f),
             ).fetchall()
 
         for row in rows:
-            idx = int((float(row[0]) - float(t_start)) / step)
+            idx = int(row[0])
+            if idx == buckets:
+                idx = buckets - 1
             if 0 <= idx < buckets:
-                counts[idx] += 1
+                counts[idx] += int(row[1])
 
         return [
             {
                 "bucket": i,
-                "t_start": float(t_start) + i * step,
-                "t_end": float(t_start) + (i + 1) * step,
+                "t_start": start_f + i * step,
+                "t_end": start_f + (i + 1) * step,
                 "count": counts[i],
             }
             for i in range(buckets)
