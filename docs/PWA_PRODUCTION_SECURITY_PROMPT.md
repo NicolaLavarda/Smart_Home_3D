@@ -8,7 +8,7 @@
 Agisci come **Principal Full-Stack Architect, Security/DevOps Engineer (Windows Native / Reverse Proxy / Tailscale) e Senior Web/PWA Engineer (Three.js / Vite / FastAPI)**.
 
 ## 1. Contesto del Progetto e Stato Attuale (Smart Home 3D)
-Il progetto **Smart Home 3D** (`Digital Twin & Spatial CV Engine`) è ora pronto sul piano 3D, telecamere e calibrazione sul PC Fisso Windows 10 (**Intel i5-6400 / 8 GB RAM / Zero Docker / Zero WSL2**), con Home Assistant OS + Mosquitto MQTT in VM VirtualBox (`192.168.86.24`), `go2rtc.exe` e il microservizio Python `spatial_server` (FastAPI + OpenVINO + SQLite3 WAL + `camera_calibrations.json`) nativi su Windows.
+Il progetto **Smart Home 3D** (`Digital Twin & Spatial CV Engine`) è ora operativo sul piano 3D, telecamera (`Cam_Carraio`), calibrazione e pipeline OpenVINO live sul PC Fisso Windows 10 (**Intel i5-6400 / 8 GB RAM / Zero Docker / Zero WSL2**), con Home Assistant OS + Mosquitto MQTT in VM VirtualBox (`192.168.86.24`), `go2rtc.exe` e il microservizio Python `spatial_server` (FastAPI + OpenVINO `yolov8n_openvino_model` + deduplica DB + SQLite3 WAL + `camera_calibrations.json`) gestiti dagli script in `scripts/` (`setup_windows_node.ps1`, `start_services.bat`, `stop_services.bat`, `update_services.bat`).
 
 Ora l'obiettivo è portare l'applicazione in **produzione familiare multi-dispositivo** (smartphone iOS/Android, tablet domestici/a muro e PC) come **PWA installabile, sicura e aggiornabile centralmente**, utilizzabile senza attriti sia **in locale sul Wi-Fi di casa** sia **da remoto via Tailscale**.
 
@@ -18,11 +18,12 @@ Ora l'obiettivo è portare l'applicazione in **produzione familiare multi-dispos
 È stata già valutata e scelta l'architettura **PWA Self-Hosted sul PC Fisso + Reverse Proxy HTTPS Same-Origin + Home Assistant OAuth2 + Tailscale**:
 - **NO** pubblicazione del sistema reale su Firebase Hosting (esporrebbe `VITE_HA_TOKEN` nel bundle statico, causerebbe blocchi Mixed Content `HTTPS -> HTTP/WS`, eliminerebbe i backend/proxy locali).
 - **NO** distribuzione di pacchetti statici/APK/ZIP per singolo dispositivo.
-- **SÌ** a un **Reverse Proxy HTTPS Same-Origin sul PC Fisso Windows 10** (es. **Caddy** nativo Windows, zero Docker) che espone sotto un'unica origine HTTPS:
-  - `/` → build statica Vite di produzione (`dist/`)
-  - `/api/v1/*` e `/ws/spatial` → `spatial_server` FastAPI (`127.0.0.1:8765`)
-  - `/go2rtc/*` → `go2rtc` (`127.0.0.1:1984`)
-  - *(da valutare nel piano)* `/ha/*` o connessione diretta HTTPS/WSS verso Home Assistant (`192.168.86.24:8123`), evitando qualsiasi problema di CORS e Mixed Content (`https://` + `wss://`).
+- **SÌ** alla configurazione adottata: **`Tailscale Serve` (terminazione TLS HTTPS automatica) + `Caddy` su `127.0.0.1`** sul PC Fisso Windows 10 (zero Docker, zero gestione manuale di certificati):
+  - **Sulla porta `443` (`https://<pc-fisso>.<tailnet>.ts.net`):** `Tailscale Serve` gestisce TLS/Let's Encrypt e inoltra a Caddy su `127.0.0.1:8080`, che espone sotto un'unica origine HTTPS:
+    - `/` → build statica Vite di produzione (`dist/`)
+    - `/api/v1/*` e `/ws/spatial` → `spatial_server` FastAPI (`127.0.0.1:8765`)
+    - `/go2rtc/*` → `go2rtc` (`127.0.0.1:1984`)
+  - **Per Home Assistant (`192.168.86.24:8123` — niente subpath `/ha/*`):** Home Assistant **non supporta** il reverse proxy su subpath `/ha/*` (OAuth, asset statici e WebSocket richiedono root `/`). Esponi quindi HA in HTTPS/WSS sulla root tramite **`Tailscale Serve` su porta alternativa `:8443`** dal PC Fisso (`tailscale serve --bg --https=8443 http://192.168.86.24:8123` → `https://<pc-fisso>.<tailnet>.ts.net:8443`, impostando `trusted_proxies` in HA) oppure via **`Tailscale Serve` dell'Add-on HA**, evitando qualsiasi problema di Mixed Content (`https://` + `wss://`) e funzionando anche con singolo nodo condiviso.
 
 ---
 
@@ -46,15 +47,22 @@ Un requisito fondamentale è che **in locale a casa mia NON basti conoscere la p
    - Verifica i permessi dell'utente HA autenticato (`is_owner` / `is_admin` tramite API HA):
      - **Lato Frontend:** nascondi/disabilita controlli amministrativi (es. `Calibra Cam` in `src/ui/TopBar.js`, `CalibrationAssistantUI`, toggle `CV_INGESTION_MODE` in `src/devices/camera/SecurityCameraModal.js`) agli utenti non-admin.
      - **Lato Backend (`spatial_server/main.py`):** proteggi con controllo ruolo Admin gli endpoint mutativi/sensibili (`POST /api/v1/calibration/*`, `POST /api/v1/calibration/solve-pnp`, `POST /api/v1/ingestion/mode`).
-4. **Sicurezza di Rete (Runbook operativo fuori codice):**
-   - Documentazione chiara per: rete **Wi-Fi Ospiti con Isolamento Client** (così gli ospiti non vedono `192.168.86.0/24`), onboarding su **Tailscale** per i familiari (piano Free fino a 3 utenti / 100 dispositivi o *Tailscale Sharing*) e **ACL Tailscale** per limitare i dispositivi familiari alla sola porta HTTPS della PWA/HA (bloccando RDP, SMB, SSH sul PC Fisso).
+4. **Sicurezza di Rete & Topologia Tailscale (Runbook operativo fuori codice):**
+   - **Stato attuale della tailnet:** oggi Tailscale gira come Add-on nella VM Home Assistant (`192.168.86.24`) ed è collegato al portatile, al mio telefono e a un altro dispositivo non pertinente; inoltre i familiari hanno già un proprio account Tailscale/HA.
+   - **Installazione su PC Fisso + Condivisione Famiglia (Piano Free Personal):** installa il client Tailscale nativo anche su **Windows 10 del PC Fisso**. Sul piano gratuito **Personal** (fino a **6 utenti** nella tailnet, dispositivi utente **illimitati**, fino a 50 risorse taggate e 3 gruppi ACL) puoi scegliere:
+     - **Node Sharing (`Share...`) del solo nodo PC Fisso:** isola completamente il dispositivo estraneo e il portatile (i familiari vedono *solo* `pc-fisso.<tailnet>.ts.net`, inclusa `:443` per la PWA e `:8443` per HA, ricordando che i nodi condivisi *non* ereditano i Subnet Router);
+     - **Oppure utenti nella tailnet (fino a 6 utenti) + ACL Tailscale** per limitare i dispositivi familiari alle sole porte `443` e `8443` del PC Fisso (bloccando RDP, SMB, SSH).
+   - Documenta anche la rete **Wi-Fi Ospiti con Isolamento Client** (così gli ospiti non vedono `192.168.86.0/24`).
 
-### B. Strategia HTTPS & URL Unico (100% Gratuito con Solo Tailscale — Zero Domini a Pagamento)
+### B. Strategia HTTPS & URL Unico (100% Gratuito con `Tailscale Serve` — Zero Domini a Pagamento)
 Per una PWA installabile su iOS ("Aggiungi a schermata Home") e Android (Service Worker + schermo intero), l'applicazione deve essere servita **in HTTPS valido sullo stesso identico URL** sia sul Wi-Fi di casa sia da remoto, **senza acquistare alcun dominio esterno e senza aprire porte sul router**:
-- **Soluzione scelta — Dominio gratuito Tailscale (`https://<nome-pc>.<tailnet>.ts.net`) con certificato Let's Encrypt automatico:**
-  - Usa **`Tailscale Serve`** (terminazione TLS automatica gestita da Tailscale verso Caddy in ascolto locale su `127.0.0.1`) oppure **Caddy con certificato generato via `tailscale cert`** (con rinnovo automatico schedulato).
-  - **Vantaggi:** zero costi, zero configurazione DNS esterna, zero port-forwarding, certificato HTTPS reale accettato nativamente da iOS/Android/Desktop, e **stesso URL sia a casa sia fuori** (con l'app Tailscale attiva / *VPN On-Demand* sui telefoni e tablet di famiglia).
-  - **Nota per la rete locale / tablet fissi in casa:** valuta e documenta come assicurare l'accesso fluido anche quando si è sul Wi-Fi domestico (es. attivando *Tailscale On-Demand* o lasciando Tailscale connesso sui dispositivi con routing limitato alla sola tailnet `100.64.0.0/10` + eventuale subnet locale, così il resto del traffico Internet esce diretto senza rallentamenti né consumo batteria significativo).
+- **Soluzione scelta e confermata — `Tailscale Serve` + Caddy locale su `127.0.0.1`:**
+  - `Tailscale Serve` (`tailscale serve --bg 8080` + opzionale `--https=8443 http://192.168.86.24:8123`) gestisce automaticamente rilascio e rinnovo del certificato HTTPS Let's Encrypt su `https://<pc-fisso>.<tailnet>.ts.net` (senza configurazione TLS manuale in Caddy né `tailscale cert`).
+  - **Vantaggi:** zero costi, zero DNS esterno, zero port-forwarding, certificato accettato nativamente da iOS/Android/Desktop, **stesso URL identico sia a casa sia fuori** (funziona anche verso utenti esterni tramite FQDN completo con *Node Sharing*).
+  - **Instradamento mobile (nessun Exit Node richiesto) & App Browser:**
+    - Non serve configurare né attivare un *Exit Node*: il traffico Internet normale (ricerche Google, YouTube, app terze) esce sempre diretto dalla rete del telefono. Tailscale instrada nel tunnel **solo** il traffico diretto agli indirizzi della tailnet (`100.64.0.0/10` / `*.ts.net`).
+    - Se sui telefoni Android/iOS viene usato il filtro *App Split Tunneling* di Tailscale, nella guida chiarisci che va incluso il browser che gestisce la PWA (es. Chrome/Safari), spiegando che ciò non fa comunque passare da casa la normale navigazione web.
+    - Documenta *Tailscale On-Demand* / risparmio batteria per uso fluido su iOS e Android sia sul Wi-Fi domestico sia fuori casa.
 
 ### C. Trasformazione Frontend in Vera PWA & Refactoring di Rete/Streaming
 Analizza lo stato aggiornato dei file frontend e prevedi nel piano:
@@ -63,7 +71,7 @@ Analizza lo stato aggiornato dei file frontend e prevedi nel piano:
    - Strategia Service Worker mirata:
      - Precache degli asset statici dell'app (`HTML/JS/CSS`, loghi in `public/logos/`).
      - Gestione intelligente di `public/models/house_optimized.glb` (~2,6 MB+) e `public/models/scene_manifest.json` (`NetworkFirst` o hash di versione, affinché ogni export aggiornato da Blender venga scaricato automaticamente dai dispositivi senza rimanere bloccati sulla vecchia casa in cache).
-     - **Esclusione tassativa dalla cache** (NetworkOnly) per `/api/*`, `/ws/*`, `/go2rtc/*`, `/ha/*` e callback OAuth di Home Assistant.
+     - **Esclusione tassativa dalla cache** (NetworkOnly) per `/api/*`, `/ws/*`, `/go2rtc/*` e per i callback OAuth di Home Assistant.
      - Banner/toast discreto in italiano per notificare quando è disponibile una nuova versione ("Nuova versione disponibile — Aggiorna") con `skipWaiting` controllato.
 2. **Eliminazione dipendenze da `localhost` e supporto Same-Origin:**
    - Rimuovi il presupposto di `http://localhost:8765` e `http://localhost:1984` in produzione in `src/spatial/network/SpatialStreamClient.js`, `src/video/VideoStreamManager.js`, `src/video/Go2RtcWebRTCStream.js`, `src/video/Go2RtcMSEStream.js`, `src/video/HaSnapshotFallbackStream.js` e `src/ha/HAClient.js`.
@@ -78,15 +86,21 @@ Analizza lo stato aggiornato dei file frontend e prevedi nel piano:
 
 ### D. Pipeline di Sviluppo, Versioning, Deploy & Servizi Windows
 Progetta una pipeline chiara e riproducibile tra **Portatile (Dev)**, **Git** e **PC Fisso Windows 10 (Prod)**:
-1. **Igiene Repository (`.gitignore`):** assicurati che `.env`, `.env.local`, `.venv/`, `node_modules/`, `dist/`, file DB `spatial_server/data/*.db*`, `spatial_server/data/camera_calibrations.json` (se specifico dell'ambiente server) ed eseguibili scaricati (`go2rtc.exe`, `caddy.exe`) non creino conflitti tra portatile e PC Fisso.
-2. **Build & Deploy Script One-Click (`scripts/deploy_prod.ps1` o `.bat`):** sul PC Fisso esegue `git pull`, `npm ci && npm run build`, eventuale aggiornamento `.venv`, verifica configurazione Caddy/go2rtc e riavvio pulito dei servizi.
-3. **Esecuzione Unattended al Boot di Windows 10:** gestione di `go2rtc`, `spatial_server` (`uvicorn`) e `Caddy` come **Servizi di Windows** (es. tramite **NSSM** o Task Scheduler senza sessione utente richiesta, con restart automatico su crash e log rotati), rispettando il vincolo di memoria (8 GB RAM totali condivisi con la VM Home Assistant).
-4. **Runbook Finale in Italiano (`docs/`):** guida passo-passo per configurare utenti HA, Caddy + Tailscale HTTPS (`Tailscale Serve` / `tailscale cert`), Windows Firewall, servizi Windows, e onboarding una-tantum sui telefoni/tablet di famiglia (Safari iOS / Chrome Android + Tailscale On-Demand).
+1. **Igiene Repository (`.gitignore`):** `.gitignore` esclude già `.env`, `.env.local`, `.venv/`, `node_modules/`, `dist/`, `go2rtc/go2rtc.exe`, `spatial_server/data/*.db*` e `spatial_server/models/`, ma **aggiungi anche `spatial_server/data/camera_calibrations.json`** (e l'eventuale eseguibile `caddy.exe` / certificati locali) affinché le calibrazioni locali del PC Fisso non creino conflitti né vengano sovrascritte da commit dal portatile.
+2. **Estensione Script di Deploy / Update (`scripts/update_services.bat`, `start_services.bat`, `stop_services.bat`, `setup_windows_node.ps1`):**
+   - NON creare script duplicati da zero: integra e potenzia `scripts/update_services.bat` (che oggi fa già `git fetch` + `reset --hard origin/main`, aggiornamento `.venv`/`npm` su diff, rebuild condizionale di `dist/` se presente e riavvio servizi).
+   - Fai in modo che in produzione `dist/` venga sempre ricostruito quando cambia il frontend (anche alla prima configurazione), integrando gestione/reload di **Caddy** (e download opzionale in `setup_windows_node.ps1`), check prerequisiti (`VC_redist.x64` per OpenVINO) e uniformazione di `REOLINK_CARRAIO_PASS` / `REOLINK_CARRAIO_PASSWORD`.
+3. **Esecuzione Unattended al Boot di Windows 10 (Post-Blackout / Auto-Login):** gestione di `go2rtc`, `spatial_server` (`uvicorn`) e `Caddy` come **Servizi di Windows nativi** (es. tramite **NSSM** sotto account di sistema/servizio senza dipendere da password utente interattive o errori dell'Utilità di pianificazione su PC con auto-login al boot), con restart automatico su crash e log rotati, rispettando il vincolo di memoria (`8 GB` RAM condivisi con la VM VirtualBox di Home Assistant).
+4. **Runbook Finale in Italiano (`docs/`):** guida passo-passo per configurare:
+   - utenti Home Assistant (ruoli Admin vs Residente) e modifica a `configuration.yaml` di HA (`use_x_forwarded_for: true` + aggiunta dell'IP LAN del PC Fisso in `trusted_proxies` senza rimuovere eventuali proxy già presenti, **lasciando acceso e invariato l'Add-on Tailscale di HA** così l'App ufficiale HA e Tasker continuano a usare lo stesso indirizzo attuale);
+   - installazione di Tailscale nativo su Windows 10 del PC Fisso, Caddy + `Tailscale Serve` HTTPS (`:443` + `:8443`), *Node Sharing* / ACL Tailscale e Wi-Fi Ospiti;
+   - Windows Firewall e servizi Windows NSSM;
+   - onboarding una-tantum sui telefoni/tablet di famiglia (Safari iOS / Chrome Android + inclusione del browser nello Split Tunneling senza Exit Node + Tailscale On-Demand).
 
 ---
 
 ## 4. Procedura Richiesta (Usa `/plan`)
 1. **Ispeziona prima lo stato aggiornato del repository** (tutti i file in `src/`, `spatial_server/`, `go2rtc/`, `scripts/`, `public/models/`, `vite.config.js`, `package.json`, `.env.example`, `.gitignore`) perché rispetto alla stesura di questo prompt potrei aver aggiunto nuove telecamere, dispositivi o modificato file.
-2. **Segnala subito eventuali gap, conflitti o domande di allineamento** (es. architettura `Tailscale Serve` davanti a Caddy vs Caddy diretto con `tailscale cert`, eventuale reverse proxy anche per Home Assistant `/ha/*`, gestione WebRTC porta `8555` vs solo MSE su `443`, configurazione *Tailscale On-Demand* sui dispositivi di famiglia).
+2. **Segnala subito eventuali gap, conflitti o domande di allineamento** (es. esposizione HA su porta `:8443` via `Tailscale Serve` dal PC Fisso vs uso dell'Add-on Tailscale HA, *Node Sharing* vs utenti nella stessa tailnet con ACL, gestione WebRTC porta `8555` vs solo MSE su `443`, configurazione *Tailscale On-Demand* sui dispositivi di famiglia).
 3. **Produci un Piano di Implementazione dettagliato ed esaustivo (stile `/plan`)** suddiviso in fasi atomiche, ordinate per dipendenze, con elenco esatto dei file da creare/modificare, architettura OOP/SOLID coerente col resto del progetto, criteri di verifica end-to-end (desktop, mobile iOS/Android, LAN vs Tailscale, admin vs utente famiglia, installazione PWA e offline/update test) **prima di applicare modifiche**.
 ```

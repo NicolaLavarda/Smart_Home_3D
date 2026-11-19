@@ -311,6 +311,7 @@ def test_fastapi_rest_and_websocket() -> None:
             openvino_model_path="",
             db_retention_days=30,
             face_webhook_url="",
+            auth_required=False,
         )
         app = create_app(cfg)
 

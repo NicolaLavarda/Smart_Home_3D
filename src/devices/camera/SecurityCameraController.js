@@ -34,6 +34,7 @@ export class SecurityCameraController extends BaseDeviceController {
   }
 
   setServices(services = {}) {
+    if (services.haClient) this.haClient = services.haClient;
     if (services.videoStreamManager) this.videoStreamManager = services.videoStreamManager;
     if (services.cameraProjector) this.cameraProjector = services.cameraProjector;
     if (services.calibrationAssistant) this.calibrationAssistant = services.calibrationAssistant;

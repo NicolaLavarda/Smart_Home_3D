@@ -13,7 +13,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
+set "OLD_HEAD="
 for /f "delims=" %%H in ('git rev-parse HEAD') do set "OLD_HEAD=%%H"
+if "%OLD_HEAD%"=="" (
+    echo [ERRORE] Impossibile determinare il commit corrente HEAD.
+    exit /b 1
+)
 
 echo [*] Scaricamento aggiornamenti da origin/main...
 git fetch origin main
@@ -24,6 +29,10 @@ if errorlevel 1 (
 
 echo [*] Arresto servizi attivi...
 call "%REPO_ROOT%\scripts\stop_services.bat"
+if errorlevel 1 (
+    echo [ERRORE] Arresto servizi fallito: aggiornamento annullato per evitare conflitti sui file.
+    exit /b 1
+)
 
 echo [*] Riallineamento forzato dei file tracciati a origin/main...
 git checkout -f -B main origin/main
@@ -37,10 +46,21 @@ if errorlevel 1 (
     exit /b 1
 )
 
+set "NEW_HEAD="
 for /f "delims=" %%H in ('git rev-parse HEAD') do set "NEW_HEAD=%%H"
+if "%NEW_HEAD%"=="" (
+    echo [ERRORE] Impossibile determinare il nuovo commit HEAD.
+    exit /b 1
+)
 
-if not exist "go2rtc\go2rtc.exe" (
-    echo [*] go2rtc.exe mancante: eseguo setup_windows_node.ps1...
+set "NEED_BOOTSTRAP=0"
+if not exist "%REPO_ROOT%\go2rtc\go2rtc.exe" set "NEED_BOOTSTRAP=1"
+if not exist "%REPO_ROOT%\.venv\Scripts\python.exe" set "NEED_BOOTSTRAP=1"
+if not exist "%REPO_ROOT%\caddy\caddy.exe" set "NEED_BOOTSTRAP=1"
+if not exist "%REPO_ROOT%\tools\nssm.exe" set "NEED_BOOTSTRAP=1"
+
+if "%NEED_BOOTSTRAP%"=="1" (
+    echo [*] Componenti nativi o .venv mancanti: eseguo setup_windows_node.ps1...
     powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\scripts\setup_windows_node.ps1" -WithOpenVINO
     if errorlevel 1 (
         echo [ERRORE] setup_windows_node.ps1 fallito.
@@ -48,23 +68,23 @@ if not exist "go2rtc\go2rtc.exe" (
     )
 )
 
-if not exist ".venv\Scripts\python.exe" (
-    echo [*] Virtualenv .venv mancante: eseguo setup_windows_node.ps1...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\scripts\setup_windows_node.ps1" -WithOpenVINO
-    if errorlevel 1 (
-        echo [ERRORE] setup_windows_node.ps1 fallito.
-        exit /b 1
+set "NEED_PIP=0"
+set "NEED_NPM=0"
+if /I "%~1"=="--deps" (
+    set "NEED_PIP=1"
+    set "NEED_NPM=1"
+) else (
+    if not exist "%REPO_ROOT%\node_modules" set "NEED_NPM=1"
+    if /I not "%OLD_HEAD%"=="%NEW_HEAD%" (
+        git diff --quiet "%OLD_HEAD%" "%NEW_HEAD%" -- spatial_server/requirements.txt
+        if errorlevel 1 set "NEED_PIP=1"
+        git diff --quiet "%OLD_HEAD%" "%NEW_HEAD%" -- package.json package-lock.json
+        if errorlevel 1 set "NEED_NPM=1"
     )
 )
 
-if /I "%~1"=="--deps" goto force_deps
-if /I "%OLD_HEAD%"=="%NEW_HEAD%" goto check_node_build
-
-echo [*] Controllo dipendenze tra %OLD_HEAD:~0,7% e %NEW_HEAD:~0,7%...
-
-git diff --quiet "%OLD_HEAD%" "%NEW_HEAD%" -- spatial_server/requirements.txt
-if errorlevel 1 (
-    echo [*] spatial_server\requirements.txt modificato: aggiorno .venv...
+if "%NEED_PIP%"=="1" (
+    echo [*] Aggiornamento dipendenze Python ^(.venv^)...
     "%REPO_ROOT%\.venv\Scripts\python.exe" -m pip install -r "%REPO_ROOT%\spatial_server\requirements.txt"
     if errorlevel 1 (
         echo [ERRORE] Aggiornamento dipendenze Python fallito.
@@ -72,54 +92,79 @@ if errorlevel 1 (
     )
 )
 
-where npm.cmd >nul 2>&1
-if not errorlevel 1 (
-    git diff --quiet "%OLD_HEAD%" "%NEW_HEAD%" -- package.json package-lock.json
+if "%NEED_NPM%"=="1" (
+    where npm.cmd >nul 2>&1
     if errorlevel 1 (
-        echo [*] package.json / package-lock.json modificati: eseguo npm.cmd install...
-        call npm.cmd install
-        if errorlevel 1 (
-            echo [ERRORE] npm.cmd install fallito ^(se hai npm run dev aperto, fermalo con Ctrl+C e riprova^).
-            exit /b 1
-        )
+        echo [ERRORE] npm.cmd non trovato nel PATH: impossibile installare le dipendenze Node.
+        exit /b 1
+    )
+    echo [*] Aggiornamento dipendenze Node ^(npm.cmd install^)...
+    call npm.cmd install
+    if errorlevel 1 (
+        echo [ERRORE] npm.cmd install fallito ^(se hai npm run dev aperto, fermalo con Ctrl+C e riprova^).
+        exit /b 1
     )
 )
-goto check_node_build
 
-:force_deps
-echo [*] Aggiornamento forzato dipendenze (--deps)...
-"%REPO_ROOT%\.venv\Scripts\python.exe" -m pip install -r "%REPO_ROOT%\spatial_server\requirements.txt"
-if errorlevel 1 (
-    echo [ERRORE] Aggiornamento dipendenze Python fallito.
-    exit /b 1
+set "NEED_BUILD=0"
+if not exist "%REPO_ROOT%\dist" set "NEED_BUILD=1"
+if not exist "%REPO_ROOT%\dist\index.html" set "NEED_BUILD=1"
+if not exist "%REPO_ROOT%\dist\sw.js" set "NEED_BUILD=1"
+if /I "%~1"=="--deps" set "NEED_BUILD=1"
+if "%NEED_BUILD%"=="0" if /I not "%OLD_HEAD%"=="%NEW_HEAD%" (
+    git diff --quiet "%OLD_HEAD%" "%NEW_HEAD%" -- index.html package.json package-lock.json vite.config.js src public
+    if errorlevel 1 set "NEED_BUILD=1"
 )
-where npm.cmd >nul 2>&1
-if not errorlevel 1 (
-    if exist "%REPO_ROOT%\node_modules" (
+
+if "%NEED_BUILD%"=="1" (
+    where npm.cmd >nul 2>&1
+    if errorlevel 1 (
+        echo [ERRORE] npm.cmd non trovato nel PATH: impossibile compilare il frontend dist\.
+        exit /b 1
+    )
+    if not exist "%REPO_ROOT%\node_modules" (
         call npm.cmd install
         if errorlevel 1 (
             echo [ERRORE] npm.cmd install fallito.
             exit /b 1
         )
     )
+    echo [*] Compilazione frontend PWA ^(npm.cmd run build^)...
+    call npm.cmd run build
+    if errorlevel 1 (
+        echo [ERRORE] npm.cmd run build fallito.
+        exit /b 1
+    )
 )
 
-:check_node_build
-if exist "%REPO_ROOT%\dist" (
-    where npm.cmd >nul 2>&1
+set "HAS_NSSM=0"
+sc query SmartHome3D-go2rtc >nul 2>&1 && set "HAS_NSSM=1"
+sc query SmartHome3D-SpatialServer >nul 2>&1 && set "HAS_NSSM=1"
+sc query SmartHome3D-Caddy >nul 2>&1 && set "HAS_NSSM=1"
+if "%HAS_NSSM%"=="1" if exist "%REPO_ROOT%\scripts\install_windows_services.ps1" (
+    net session >nul 2>&1
     if not errorlevel 1 (
-        if /I "%~1"=="--deps" (
-            echo [*] Cartella dist\ presente: ricostruisco frontend...
-            call npm.cmd run build
-            if errorlevel 1 exit /b 1
-        ) else if /I not "%OLD_HEAD%"=="%NEW_HEAD%" (
-            git diff --quiet "%OLD_HEAD%" "%NEW_HEAD%" -- index.html package.json vite.config.js src public
-            if errorlevel 1 (
-                echo [*] Cartella dist\ presente e frontend modificato: eseguo npm.cmd run build...
-                call npm.cmd run build
-                if errorlevel 1 exit /b 1
-            )
+        echo [*] Aggiornamento variabili .env e configurazione servizi NSSM...
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\scripts\install_windows_services.ps1" -NoStart -SkipFirewall
+        if errorlevel 1 (
+            echo [ERRORE] Aggiornamento configurazione servizi NSSM fallito.
+            exit /b 1
         )
+    ) else (
+        echo [AVVISO] Servizi NSSM installati ma prompt non Amministratore: se hai modificato .env, riesegui scripts\install_windows_services.ps1 da Admin.
+    )
+)
+
+if exist "%REPO_ROOT%\caddy\caddy.exe" if exist "%REPO_ROOT%\caddy\Caddyfile" (
+    echo [*] Validazione caddy\Caddyfile...
+    "%REPO_ROOT%\caddy\caddy.exe" validate --config "%REPO_ROOT%\caddy\Caddyfile" --adapter caddyfile
+    if errorlevel 1 (
+        echo [ERRORE] caddy\Caddyfile non valido.
+        exit /b 1
+    )
+    tasklist /FI "IMAGENAME eq caddy.exe" | find /I "caddy.exe" >nul 2>&1
+    if not errorlevel 1 (
+        "%REPO_ROOT%\caddy\caddy.exe" reload --config "%REPO_ROOT%\caddy\Caddyfile" --adapter caddyfile >nul 2>&1
     )
 )
 
@@ -134,3 +179,4 @@ echo.
 echo [OK] Aggiornamento completato (%OLD_HEAD:~0,7% -^> %NEW_HEAD:~0,7%).
 echo Se hai "npm.cmd run dev" attivo nell'altro terminale, ricarica la pagina (F5).
 endlocal
+exit /b 0

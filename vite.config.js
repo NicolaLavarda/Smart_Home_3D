@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 function normalizeHaUrl(raw) {
   if (!raw || typeof raw !== 'string') return '';
@@ -102,22 +103,145 @@ function haCameraBridgePlugin(env) {
   };
 }
 
+export function createPwaOptions() {
+  return {
+    registerType: 'prompt',
+    injectRegister: 'auto',
+    includeAssets: [
+      'vite.svg',
+      'pwa/icon-192.png',
+      'pwa/icon-512.png',
+      'pwa/icon-maskable-512.png',
+      'pwa/apple-touch-icon.png',
+    ],
+    manifest: {
+      name: 'Smart Home 3D - Digital Twin & Spatial CV Engine',
+      short_name: 'SmartHome 3D',
+      description: 'Digital Twin 3D interattivo e motore Spatial CV con integrazione Home Assistant',
+      lang: 'it',
+      start_url: '/',
+      scope: '/',
+      display: 'standalone',
+      orientation: 'any',
+      background_color: '#09111e',
+      theme_color: '#0f172a',
+      icons: [
+        {
+          src: '/pwa/icon-192.png',
+          sizes: '192x192',
+          type: 'image/png',
+          purpose: 'any',
+        },
+        {
+          src: '/pwa/icon-512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'any',
+        },
+        {
+          src: '/pwa/icon-maskable-512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'maskable',
+        },
+      ],
+    },
+    workbox: {
+      globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+      globIgnores: ['**/models/*.glb', '**/*.glb', '**/node_modules/**/*'],
+      navigateFallback: '/index.html',
+      navigateFallbackDenylist: [
+        /^\/api\//,
+        /^\/ws\//,
+        /^\/go2rtc\//,
+        /[?&]auth_callback=/,
+      ],
+      runtimeCaching: [
+        {
+          urlPattern: /(\/api\/|\/ws\/|\/go2rtc\/|[?&]auth_callback=)/,
+          handler: 'NetworkOnly',
+        },
+        {
+          urlPattern: /\/models\/scene_manifest\.json(\?.*)?$/i,
+          handler: 'NetworkFirst',
+          options: {
+            cacheName: 'sh3d-scene-manifest',
+            networkTimeoutSeconds: 3,
+            expiration: {
+              maxEntries: 4,
+              maxAgeSeconds: 7 * 24 * 60 * 60,
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        {
+          urlPattern: /\/models\/.*\.glb(\?.*)?$/i,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'sh3d-3d-models',
+            expiration: {
+              maxEntries: 4,
+              maxAgeSeconds: 30 * 24 * 60 * 60,
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        {
+          urlPattern: /^https:\/\/www\.gstatic\.com\/draco\/.*/i,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'sh3d-draco-decoder',
+            expiration: {
+              maxEntries: 10,
+              maxAgeSeconds: 365 * 24 * 60 * 60,
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
+  const isProd = mode === 'production';
+  const pwaOptions = createPwaOptions();
+  const rawPwaPlugins = VitePWA(pwaOptions);
+  const pwaPlugins = (Array.isArray(rawPwaPlugins) ? rawPwaPlugins : [rawPwaPlugins]).map((plugin) => {
+    if (plugin && typeof plugin === 'object' && plugin.api) {
+      plugin.api.userOptions = pwaOptions;
+      if (!plugin.api.options) {
+        plugin.api.options = pwaOptions;
+      }
+    }
+    return plugin;
+  });
+
   return {
     root: '.',
     publicDir: 'public',
-    plugins: [haCameraBridgePlugin(env)],
+    define: isProd
+      ? {
+          'import.meta.env.VITE_HA_TOKEN': JSON.stringify(''),
+        }
+      : {},
+    plugins: [haCameraBridgePlugin(env), ...pwaPlugins],
     server: {
       port: 3000,
       open: false,
-      host: true
+      host: true,
     },
     build: {
       outDir: 'dist',
       assetsDir: 'assets',
-      sourcemap: true
-    }
+      sourcemap: true,
+    },
   };
 });
-

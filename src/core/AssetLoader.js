@@ -11,12 +11,32 @@ export class AssetLoader {
     this.gltfLoader.setDRACOLoader(dracoLoader);
 
     this.manifest = null;
+    this.manifestVersion = 'v1-default';
     this.model = null;
     this.haEntitiesMap = new Map();
     this.groundColliders = [];
     this.cameras = new Map();
 
     this.pbrTextures = this.initProceduralPbrTextures();
+  }
+
+  computeManifestVersion(manifestObj) {
+    if (!manifestObj || typeof manifestObj !== 'object') {
+      return 'v1-fallback';
+    }
+    const raw = JSON.stringify(manifestObj);
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < raw.length; i++) {
+      hash ^= raw.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    const hashHex = hash.toString(16).padStart(8, '0');
+    const explicit = manifestObj.version || manifestObj.exported_at || manifestObj.generated_at || '';
+    if (explicit) {
+      const clean = String(explicit).trim().replace(/[^a-zA-Z0-9._-]/g, '_');
+      return `${clean}-${hashHex}`;
+    }
+    return `m-${hashHex}`;
   }
 
   initProceduralPbrTextures() {
@@ -161,26 +181,26 @@ export class AssetLoader {
 
   async loadManifest(manifestUrl = '/models/scene_manifest.json') {
     try {
-      const url = `${manifestUrl}?t=${Date.now()}`;
-      const response = await fetch(url);
+      const response = await fetch(manifestUrl, { cache: 'no-cache' });
       if (!response.ok) throw new Error(`HTTP error ${response.status}`);
       this.manifest = await response.json();
+      this.manifestVersion = this.computeManifestVersion(this.manifest);
       return this.manifest;
     } catch (err) {
       console.warn('[AssetLoader] Fallback manifest:', err);
       this.manifest = { ha_entities: {}, cameras: {}, ground_colliders: [] };
+      this.manifestVersion = 'v1-fallback';
       return this.manifest;
     }
   }
 
   async loadHouseModel(modelUrl = '/models/house_optimized.glb') {
-    if (!this.manifest) {
-      await this.loadManifest();
-    }
+    await this.loadManifest();
+    const versionTag = encodeURIComponent(this.manifestVersion || 'v1-fallback');
 
     const tryLoad = (url) => {
-      // Cache busting per evitare che il browser ricarichi il vecchio file
-      const finalUrl = `${url}?t=${Date.now()}`;
+      const sep = url.includes('?') ? '&' : '?';
+      const finalUrl = `${url}${sep}v=${versionTag}`;
       return new Promise((resolve, reject) => {
         this.gltfLoader.load(
           finalUrl,

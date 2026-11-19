@@ -1,17 +1,35 @@
 import { IVideoStreamProvider } from './IVideoStreamProvider.js';
 
+function isProdSameOriginMode() {
+  let isProdBuild = false;
+  try { isProdBuild = Boolean(import.meta.env.PROD); } catch {}
+  const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+  return isProdBuild || isHttps;
+}
+
 /**
  * Go2RtcWebRTCStream
  *
  * Provider a bassissima latenza (sub-secondo) tramite protocollo WebRTC (WHEP/SDP)
- * esposto nativamente da go2rtc sulla porta 1984.
+ * esposto nativamente da go2rtc sulla porta 1984 (o via reverse proxy /go2rtc in produzione).
  */
 export class Go2RtcWebRTCStream extends IVideoStreamProvider {
   constructor(streamName, options = {}) {
     super(streamName, options);
     this.mode = 'webrtc';
-    this.baseUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || 'http://localhost:1984').replace(/\/+$/, '');
-    this.timeoutMs = options.timeoutMs || 4000;
+    const prodSameOrigin = isProdSameOriginMode();
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    let devGo2rtcUrl = '';
+    try {
+      if (!import.meta.env.PROD) {
+        devGo2rtcUrl = import.meta.env.VITE_GO2RTC_URL || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || '';
+      }
+    } catch {}
+    const fallbackUrl = prodSameOrigin
+      ? (origin ? `${origin}/go2rtc` : '/go2rtc')
+      : (devGo2rtcUrl || 'http://localhost:1984');
+    this.baseUrl = (options.go2rtcUrl || fallbackUrl).replace(/\/+$/, '');
+    this.timeoutMs = options.timeoutMs ?? 2200;
     this.pc = null;
     this.mediaStream = null;
     this._aborted = false;
@@ -67,6 +85,7 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
           }
         };
       });
+      trackPromise.catch(() => {});
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -79,8 +98,9 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
 
       const response = await fetch(endpoint, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/sdp' },
-        body: pc.localDescription.sdp,
+        body: pc.localDescription?.sdp ?? offer?.sdp ?? '',
         signal: controller.signal,
       });
       clearTimeout(fetchTimer);

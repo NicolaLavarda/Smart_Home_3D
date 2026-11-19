@@ -46,6 +46,13 @@ import {
   Home,
   Eye,
   EyeOff,
+  LogIn,
+  LogOut,
+  Shield,
+  ShieldCheck,
+  UserCheck,
+  Lock,
+  AlertCircle,
 } from 'lucide';
 
 const ICON_MAP = {
@@ -95,6 +102,13 @@ const ICON_MAP = {
   home: Home,
   eye: Eye,
   'eye-off': EyeOff,
+  'log-in': LogIn,
+  'log-out': LogOut,
+  shield: Shield,
+  'shield-check': ShieldCheck,
+  'user-check': UserCheck,
+  lock: Lock,
+  'alert-circle': AlertCircle,
 };
 
 /**

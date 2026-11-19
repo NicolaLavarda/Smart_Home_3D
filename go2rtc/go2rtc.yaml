@@ -1,14 +1,15 @@
 api:
-  listen: ":1984"
-  origin: "*"
+  listen: "127.0.0.1:1984"
+  origin: ""
 
 rtsp:
-  listen: ":8554"
+  listen: "127.0.0.1:8554"
 
 webrtc:
   listen: ":8555"
   candidates:
-    - 127.0.0.1:8555
+    - "${GO2RTC_CANDIDATE_LAN:127.0.0.1:8555}"
+    - "${GO2RTC_CANDIDATE_TAILSCALE:127.0.0.1:8555}"
     - stun:8555
 
 streams:

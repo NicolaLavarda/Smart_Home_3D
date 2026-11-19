@@ -1,3 +1,10 @@
+function isProdSameOrigin() {
+  let isProdBuild = false;
+  try { isProdBuild = Boolean(import.meta.env.PROD); } catch {}
+  const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+  return isProdBuild || isHttps;
+}
+
 /**
  * SpatialStreamClient
  *
@@ -6,10 +13,31 @@
  */
 export class SpatialStreamClient {
   constructor(baseUrl = null) {
-    const envUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_SPATIAL_SERVER_URL;
+    const prodMode = isProdSameOrigin();
+    let envUrl = '';
+    try {
+      if (!import.meta.env.PROD) {
+        envUrl = import.meta.env.VITE_SPATIAL_SERVER_URL || '';
+      }
+    } catch {}
     const defaultHost = typeof window !== 'undefined' && window.location?.hostname ? window.location.hostname : '127.0.0.1';
-    this.baseUrl = (baseUrl || envUrl || `http://${defaultHost}:8765`).replace(/\/+$/, '');
-    this.wsUrl = this.baseUrl.replace(/^http/i, 'ws') + '/ws/spatial';
+
+    if (baseUrl !== null) {
+      this.baseUrl = String(baseUrl).replace(/\/+$/, '');
+    } else if (prodMode) {
+      this.baseUrl = '';
+    } else {
+      this.baseUrl = (envUrl || `http://${defaultHost}:8765`).replace(/\/+$/, '');
+    }
+
+    if (this.baseUrl === '' && typeof window !== 'undefined' && window.location?.host) {
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      this.wsUrl = `${wsProto}//${window.location.host}/ws/spatial`;
+    } else if (this.baseUrl === '') {
+      this.wsUrl = '/ws/spatial';
+    } else {
+      this.wsUrl = this.baseUrl.replace(/^http/i, 'ws') + '/ws/spatial';
+    }
 
     this.ws = null;
     this.connected = false;
@@ -18,9 +46,34 @@ export class SpatialStreamClient {
     this.maxReconnectDelayMs = 15000;
     this.reconnectTimer = null;
 
+    this.authToken = null;
+    this.isAuthenticated = false;
+    this._tokenProvider = null;
+    this._authRetryCount = 0;
+
     this.frameListeners = new Set();
     this.statusListeners = new Set();
+    this.authErrorListeners = new Set();
     this.lastStatusPayload = null;
+  }
+
+  setTokenProvider(fn) {
+    this._tokenProvider = typeof fn === 'function' ? fn : null;
+  }
+
+  onAuthError(callback) {
+    this.authErrorListeners.add(callback);
+    return () => this.authErrorListeners.delete(callback);
+  }
+
+  _emitAuthError(info) {
+    this.authErrorListeners.forEach((cb) => {
+      try {
+        cb(info);
+      } catch (e) {
+        console.warn('[SpatialStreamClient] Errore listener authError:', e);
+      }
+    });
   }
 
   onFrame(callback) {
@@ -47,6 +100,10 @@ export class SpatialStreamClient {
 
   connectWebSocket() {
     this.shouldReconnect = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -60,6 +117,7 @@ export class SpatialStreamClient {
 
     this.ws.onopen = () => {
       this.reconnectDelayMs = 1500;
+      this._authRetryCount = 0;
       this.emitStatus(true, this.lastStatusPayload);
     };
 
@@ -76,9 +134,34 @@ export class SpatialStreamClient {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = async (event) => {
       this.ws = null;
       this.emitStatus(false, this.lastStatusPayload);
+
+      if (event?.code === 4401) {
+        this.isAuthenticated = false;
+        if (this.shouldReconnect && this._authRetryCount < 1 && typeof this._tokenProvider === 'function') {
+          this._authRetryCount += 1;
+          try {
+            const token = await this._tokenProvider();
+            const session = token ? await this.authenticateWithHaToken(token, { resetRetry: false }) : false;
+            if ((session === true || session?.authenticated) && this.shouldReconnect) {
+              if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+              this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = null;
+                if (this.shouldReconnect) {
+                  this.connectWebSocket();
+                }
+              }, 500);
+              return;
+            }
+          } catch {}
+        }
+        this.shouldReconnect = false;
+        this._emitAuthError({ source: 'ws', code: 4401 });
+        return;
+      }
+
       if (this.shouldReconnect) {
         this.scheduleReconnect();
       }
@@ -118,26 +201,97 @@ export class SpatialStreamClient {
   }
 
   async requestJson(path, options = {}) {
+    const {
+      headers: customHeaders,
+      timeoutMs = 5000,
+      skipAuthRetry = false,
+      ...fetchOptions
+    } = options;
+
+    const hasCustomAuth = Boolean(
+      customHeaders &&
+      (Object.prototype.hasOwnProperty.call(customHeaders, 'Authorization') ||
+        Object.prototype.hasOwnProperty.call(customHeaders, 'authorization'))
+    );
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(this.authToken && !hasCustomAuth ? { Authorization: `Bearer ${this.authToken}` } : {}),
+      ...(customHeaders || {}),
+    };
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 5000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    let resp;
     try {
-      const resp = await fetch(`${this.baseUrl}${path}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.headers || {}),
-        },
+      resp = await fetch(`${this.baseUrl}${path}`, {
+        credentials: 'include',
+        ...fetchOptions,
+        headers,
         signal: controller.signal,
-        ...options,
       });
-      if (!resp.ok) {
-        return null;
-      }
-      return await resp.json();
     } catch {
       return null;
     } finally {
       clearTimeout(timeoutId);
     }
+
+    if (resp.status === 401) {
+      if (!skipAuthRetry && typeof this._tokenProvider === 'function') {
+        try {
+          const freshToken = await this._tokenProvider();
+          if (freshToken) {
+            const session = await this.authenticateWithHaToken(freshToken);
+            if (session === true || session?.authenticated) {
+              return await this.requestJson(path, { ...options, skipAuthRetry: true });
+            }
+          }
+        } catch {}
+      }
+      this.isAuthenticated = false;
+      this._emitAuthError({ source: 'http', status: 401, path });
+      return null;
+    }
+
+    if (!resp.ok) {
+      return null;
+    }
+
+    try {
+      return await resp.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async authenticateWithHaToken(accessToken, { resetRetry = true } = {}) {
+    if (!accessToken) return false;
+    this.authToken = accessToken;
+    const res = await this.requestJson('/api/v1/auth/session', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ token: accessToken }),
+      skipAuthRetry: true,
+    });
+    this.isAuthenticated = Boolean(res?.authenticated);
+    if (this.isAuthenticated && resetRetry) {
+      this._authRetryCount = 0;
+    }
+    return this.isAuthenticated;
+  }
+
+  async logout() {
+    this.disconnect();
+    await this.requestJson('/api/v1/auth/logout', {
+      method: 'POST',
+      skipAuthRetry: true,
+    }).catch(() => null);
+    this.authToken = null;
+    this.isAuthenticated = false;
+    this.lastStatusPayload = null;
+    this._authRetryCount = 0;
   }
 
   async fetchStatus() {

@@ -22,11 +22,16 @@ export class SecurityCameraModal {
     this.activeStreamName = 'carraio_main';
     this.isSyntheticActive = true;
     this._unsubscribeStatus = null;
+    this._unsubscribeAuth = null;
     this._camIp = '192.168.86.47';
     this._camName = 'Cam_Carraio';
   }
 
   async render(container, context = {}) {
+    if (this._unsubscribeAuth) {
+      this._unsubscribeAuth();
+      this._unsubscribeAuth = null;
+    }
     this.container = container;
     const camName = this.controller.findMatchingBlenderCameraName();
     const manifestCam = context.assetLoader?.manifest?.cameras?.[camName];
@@ -92,11 +97,11 @@ export class SecurityCameraModal {
         ${icon('crosshair', { size: 15 })} <span>Entra in Vista POV 3D</span>
       </button>
 
-      <button class="btn-icon-text" id="btn-camera-calibrate" style="width:100%;justify-content:center;border-color:rgba(6,182,212,0.45);color:#38bdf8;">
+      <button class="btn-icon-text" id="btn-camera-calibrate" hidden disabled style="width:100%;justify-content:center;border-color:rgba(6,182,212,0.45);color:#38bdf8;display:none;">
         ${icon('sliders-horizontal', { size: 15 })} <span>Apri Calibrazione Ottica POV</span>
       </button>
 
-      <button class="btn-icon-text" id="btn-toggle-simulator" style="width:100%;justify-content:center;">
+      <button class="btn-icon-text" id="btn-toggle-simulator" hidden disabled style="width:100%;justify-content:center;display:none;">
         ${this.isSyntheticActive
           ? `${icon('brain', { size: 15 })} <span>Passa a Rilevamento OpenVINO Live</span>`
           : `${icon('footprints', { size: 15 })} <span>Avvia Simulatore Camminata 3D</span>`}
@@ -145,9 +150,32 @@ export class SecurityCameraModal {
       povBtn.textContent = 'Camera POV non trovata nella scena';
     }
 
-    // Apri Calibrazione Ottica POV
+    // Apri Calibrazione Ottica POV (solo Admin)
     const calibBtn = container.querySelector('#btn-camera-calibrate');
+    const simBtn = container.querySelector('#btn-toggle-simulator');
+
+    const applyRbacVisibility = (adminFlag) => {
+      const allowed = Boolean(adminFlag);
+      if (calibBtn) {
+        calibBtn.hidden = !allowed;
+        calibBtn.disabled = !allowed;
+        calibBtn.style.display = allowed ? '' : 'none';
+      }
+      if (simBtn) {
+        simBtn.hidden = !allowed;
+        simBtn.disabled = !allowed;
+        simBtn.style.display = allowed ? '' : 'none';
+      }
+    };
+    applyRbacVisibility(haClient?.isAdmin);
+    if (typeof haClient?.onAuthChange === 'function') {
+      this._unsubscribeAuth = haClient.onAuthChange((authState) => {
+        applyRbacVisibility(authState?.isAdmin ?? haClient?.isAdmin);
+      });
+    }
+
     calibBtn?.addEventListener('click', async () => {
+      if (!haClient?.isAdmin) return;
       const calibUI = this.controller.calibrationAssistant;
       if (camNode && camCtrl) {
         camCtrl.flyToCameraPOV(camNode, 1.3, () => {
@@ -162,9 +190,9 @@ export class SecurityCameraModal {
       }
     });
 
-    // Toggle Simulatore / OpenVINO
-    const simBtn = container.querySelector('#btn-toggle-simulator');
+    // Toggle Simulatore / OpenVINO (solo Admin)
     simBtn?.addEventListener('click', async () => {
+      if (!haClient?.isAdmin) return;
       const client = this.controller.spatialStreamClient || context.spatialStreamClient;
       if (!client) {
         this.hintEl.textContent = 'Microservizio spaziale non collegato (porta 8765).';
@@ -272,6 +300,10 @@ export class SecurityCameraModal {
     if (this._unsubscribeStatus) {
       this._unsubscribeStatus();
       this._unsubscribeStatus = null;
+    }
+    if (this._unsubscribeAuth) {
+      this._unsubscribeAuth();
+      this._unsubscribeAuth = null;
     }
     if (this.videoEl && this.controller.videoStreamManager) {
       this.controller.videoStreamManager.detachFromVideoElement(this.videoEl);

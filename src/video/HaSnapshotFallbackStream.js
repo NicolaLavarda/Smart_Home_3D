@@ -1,10 +1,17 @@
 import { IVideoStreamProvider } from './IVideoStreamProvider.js';
 
+function isProdSameOriginMode() {
+  let isProdBuild = false;
+  try { isProdBuild = Boolean(import.meta.env.PROD); } catch {}
+  const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+  return isProdBuild || isHttps;
+}
+
 /**
  * HaSnapshotFallbackStream
  *
  * Provider di fallback garantito:
- * 1. Usa i proxy same-origin / server-to-server (`/api/ha-camera/snapshot` su Vite
+ * 1. Usa i proxy same-origin / server-to-server (`/api/ha-camera/snapshot` su Vite dev
  *    e `/api/v1/ha-camera/snapshot/{entity_id}` su FastAPI) per recuperare i frame
  *    da Home Assistant (anche su Tailscale) senza blocchi CORS e con risoluzione
  *    automatica dell'entità camera reale.
@@ -19,9 +26,23 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     this.haClient = options.haClient || null;
     this.cameraEntityId = options.cameraEntityId || 'camera.carraio_scorrevole';
     this.resolvedEntityId = this.cameraEntityId;
-    const envSpatialUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_SPATIAL_SERVER_URL;
+    const prodSameOrigin = isProdSameOriginMode();
     const defaultHost = typeof window !== 'undefined' && window.location?.hostname ? window.location.hostname : '127.0.0.1';
-    this.spatialServerUrl = (options.spatialServerUrl || envSpatialUrl || `http://${defaultHost}:8765`).replace(/\/+$/, '');
+
+    let envSpatialUrl = '';
+    try {
+      if (!import.meta.env.PROD) {
+        envSpatialUrl = import.meta.env.VITE_SPATIAL_SERVER_URL || '';
+      }
+    } catch {}
+
+    if (typeof options.spatialServerUrl === 'string') {
+      this.spatialServerUrl = options.spatialServerUrl.replace(/\/+$/, '');
+    } else if (prodSameOrigin) {
+      this.spatialServerUrl = '';
+    } else {
+      this.spatialServerUrl = (envSpatialUrl || `http://${defaultHost}:8765`).replace(/\/+$/, '');
+    }
     this.canvas = null;
     this.ctx = null;
     this.timerId = null;
@@ -122,22 +143,47 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
 
       const qsHaUrl = activeHaUrl ? `&ha_url=${encodeURIComponent(activeHaUrl)}` : '';
       const ts = Date.now();
-      const proxyCandidates = [
-        `/api/ha-camera/snapshot?entity_id=${encodeURIComponent(entityId)}${qsHaUrl}&t=${ts}`,
-        `${this.spatialServerUrl}/api/v1/ha-camera/snapshot/${encodeURIComponent(entityId)}?${activeHaUrl ? `ha_url=${encodeURIComponent(activeHaUrl)}&` : ''}t=${ts}`,
-      ];
-
       this._fetching = true;
       const t0 = performance.now();
       try {
+        let accessToken = null;
+        if (typeof this.haClient?.getAccessToken === 'function') {
+          try {
+            accessToken = await this.haClient.getAccessToken();
+          } catch {
+            accessToken = null;
+          }
+        } else if (this.haClient?.token) {
+          accessToken = this.haClient.token;
+        }
+        if (this._aborted) return;
+
+        const spatialParams = new URLSearchParams();
+        if (activeHaUrl) spatialParams.set('ha_url', activeHaUrl);
+        spatialParams.set('t', String(ts));
+        const spatialSnapshotUrl = `${this.spatialServerUrl}/api/v1/ha-camera/snapshot/${encodeURIComponent(entityId)}?${spatialParams.toString()}`;
+
+        const proxyCandidates = isProdSameOriginMode()
+          ? [spatialSnapshotUrl]
+          : [
+              `/api/ha-camera/snapshot?entity_id=${encodeURIComponent(entityId)}${qsHaUrl}&t=${ts}`,
+              spatialSnapshotUrl,
+            ];
+
         let lastErr = null;
         for (const url of proxyCandidates) {
           if (this._aborted) return;
           this._fetchController = new AbortController();
           const timer = setTimeout(() => this._fetchController?.abort(), 3200);
           try {
+            const headers = {};
+            if (accessToken) {
+              headers.Authorization = `Bearer ${accessToken}`;
+            }
             const resp = await fetch(url, {
               cache: 'no-store',
+              credentials: 'include',
+              headers,
               signal: this._fetchController.signal,
             });
             clearTimeout(timer);
@@ -145,6 +191,12 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
             if (!resp.ok) {
               const errText = await resp.text().catch(() => '');
               lastErr = `HTTP ${resp.status}${errText ? `: ${errText.slice(0, 80)}` : ''}`;
+              continue;
+            }
+
+            const contentType = resp.headers?.get?.('content-type') || '';
+            if (!contentType.toLowerCase().startsWith('image/')) {
+              lastErr = `Risposta non immagine (${contentType || 'content-type mancante'})`;
               continue;
             }
 

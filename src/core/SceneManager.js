@@ -13,19 +13,20 @@ export class SceneManager {
 
     this.width = window.innerWidth;
     this.height = window.innerHeight;
+    this.isMobileProfile = this.detectMobileTouchProfile();
 
     // Setup Camera
     this.camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 1000);
     this.camera.position.set(23.0, 18.0, 25.0);
 
-    // WebGL Renderer calibrato
+    // WebGL Renderer calibrato con profilo mobile/desktop adattivo
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: 'high-performance',
       alpha: false,
     });
     this.renderer.setSize(this.width, this.height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.getEffectivePixelRatio());
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.localClippingEnabled = true;
@@ -45,14 +46,40 @@ export class SceneManager {
 
     this.setupLighting();
 
-    window.addEventListener('resize', this.onWindowResize.bind(this));
+    this._onWindowResize = this.onWindowResize.bind(this);
+    window.addEventListener('resize', this._onWindowResize);
 
     this.updateCallbacks = [];
     this.isNightMode = false;
     this.clock = new THREE.Clock();
+    this._rafId = null;
 
     this.animate = this.animate.bind(this);
-    requestAnimationFrame(this.animate);
+    this._onVisibilityChange = this.handleVisibilityChange.bind(this);
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', this._onVisibilityChange);
+    }
+
+    this._scheduleNextFrame();
+  }
+
+  detectMobileTouchProfile() {
+    const hasTouch = typeof navigator !== 'undefined' && Number(navigator.maxTouchPoints) > 0;
+    const isCoarse =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      Boolean(window.matchMedia('(pointer: coarse)')?.matches);
+    const isNarrow =
+      typeof window !== 'undefined' &&
+      Number(window.innerWidth) > 0 &&
+      Number(window.innerWidth) <= 900;
+    return Boolean(hasTouch || isCoarse || isNarrow);
+  }
+
+  getEffectivePixelRatio() {
+    const rawDpr = (typeof window !== 'undefined' && Number(window.devicePixelRatio)) || 1;
+    const cap = this.detectMobileTouchProfile() ? 1.5 : 2.0;
+    return Math.min(rawDpr, cap);
   }
 
   setupLighting() {
@@ -66,11 +93,12 @@ export class SceneManager {
     this.scene.add(this.hemiLight);
 
     // 3. Sole Principale (Key Sun Light): luce solare chiara e calda con ombre morbide
+    const shadowSize = this.isMobileProfile ? 1024 : 2048;
     this.sunLight = new THREE.DirectionalLight(0xfffdf5, 1.4);
     this.sunLight.position.set(25, 45, 20);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.width = 2048;
-    this.sunLight.shadow.mapSize.height = 2048;
+    this.sunLight.shadow.mapSize.width = shadowSize;
+    this.sunLight.shadow.mapSize.height = shadowSize;
     this.sunLight.shadow.camera.near = 0.5;
     this.sunLight.shadow.camera.far = 150;
     this.sunLight.shadow.camera.left = -32;
@@ -114,11 +142,12 @@ export class SceneManager {
   onWindowResize() {
     this.width = window.innerWidth;
     this.height = window.innerHeight;
+    this.isMobileProfile = this.detectMobileTouchProfile();
     this.camera.aspect = this.width / this.height;
     this.camera.updateProjectionMatrix();
 
     this.renderer.setSize(this.width, this.height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.getEffectivePixelRatio());
     this.css2dRenderer.setSize(this.width, this.height);
   }
 
@@ -130,8 +159,40 @@ export class SceneManager {
     this.updateCallbacks = this.updateCallbacks.filter((cb) => cb !== fn);
   }
 
+  _scheduleNextFrame() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
+    if (this._rafId !== null) {
+      return;
+    }
+    this._rafId = requestAnimationFrame(this.animate);
+  }
+
+  handleVisibilityChange() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      if (this._rafId !== null) {
+        if (typeof cancelAnimationFrame === 'function') {
+          cancelAnimationFrame(this._rafId);
+        }
+        this._rafId = null;
+      }
+      return;
+    }
+
+    // Al ritorno in foreground, azzera il salto temporale accumulato dal Clock e riprendi il loop
+    this.clock.start();
+    this.clock.getDelta();
+    this._scheduleNextFrame();
+  }
+
   animate() {
-    requestAnimationFrame(this.animate);
+    this._rafId = null;
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
+
+    this._scheduleNextFrame();
     const delta = this.clock.getDelta();
     const elapsed = this.clock.getElapsedTime();
 

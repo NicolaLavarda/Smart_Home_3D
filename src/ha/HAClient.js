@@ -3,22 +3,60 @@ import {
   subscribeEntities,
   callService,
   createLongLivedTokenAuth,
+  getAuth,
+  getUser,
+  ERR_INVALID_AUTH,
+  ERR_INVALID_AUTH_CALLBACK,
+  ERR_INVALID_HTTPS_TO_HTTP,
+  ERR_HASS_HOST_REQUIRED,
+  ERR_CANNOT_CONNECT,
 } from 'home-assistant-js-websocket';
+
+const HA_TOKENS_STORAGE_KEY = 'sh3d_ha_oauth_tokens';
 
 export class HAClient {
   constructor(options = {}) {
-    this.tailscaleUrl = options.tailscaleUrl || import.meta.env.VITE_HA_TAILSCALE_URL || import.meta.env.VITE_HA_REMOTE_URL || '';
-    this.localUrl = options.localUrl || import.meta.env.VITE_HA_LOCAL_URL || '';
-    this.url = options.url || import.meta.env.VITE_HA_URL || this.tailscaleUrl || this.localUrl || '';
-    this.token = options.token || import.meta.env.VITE_HA_TOKEN || '';
+    let envPublicUrl = '';
+    let envTailscaleUrl = '';
+    let envLocalUrl = '';
+    let envUrl = '';
+    let envToken = '';
+    try { envPublicUrl = import.meta.env.VITE_HA_PUBLIC_URL || ''; } catch {}
+    try { envTailscaleUrl = import.meta.env.VITE_HA_TAILSCALE_URL || import.meta.env.VITE_HA_REMOTE_URL || ''; } catch {}
+    try { envLocalUrl = import.meta.env.VITE_HA_LOCAL_URL || ''; } catch {}
+    try { envUrl = import.meta.env.VITE_HA_URL || ''; } catch {}
+    try {
+      if (!import.meta.env.PROD) {
+        envToken = import.meta.env.VITE_HA_TOKEN || '';
+      }
+    } catch {}
+
+    this.publicUrl = this._normalizeUrl(options.publicUrl || envPublicUrl);
+    this.tailscaleUrl = this._normalizeUrl(options.tailscaleUrl || envTailscaleUrl);
+    this.localUrl = this._normalizeUrl(options.localUrl || envLocalUrl);
+    this.url = this._normalizeUrl(options.url || envUrl || this.publicUrl || this.tailscaleUrl || this.localUrl);
+    if (this._isProdMode()) {
+      const oauthUrl = this.resolveOAuthHassUrl();
+      if (!this.publicUrl && oauthUrl) this.publicUrl = oauthUrl;
+      if (!this.url && oauthUrl) this.url = oauthUrl;
+    }
+    this.token = options.token || (!this._isProdMode() ? envToken : '');
+
     this.connection = null;
+    this.auth = null;
+    this.currentUser = null;
+    this.isAdmin = false;
+    this.authStatus = 'idle';
     this.activeUrl = '';
     this.isTailscale = false;
     this.isMockMode = false;
     this.subscribers = new Set();
     this.statusListeners = new Set();
+    this.authListeners = new Set();
     this.mqttSubscribers = new Map(); // topic -> Set<callback>
     this.entities = {}; // Cache delle entità in tempo reale ricevute da Home Assistant WebSocket
+    this._connectPromise = null;
+    this._refreshPromise = null;
 
     // Inizializza stato Mock reattivo (allineato con le entità reali di Home Assistant dell'utente)
     this.mockEntities = {
@@ -488,26 +526,329 @@ export class HAClient {
     };
   }
 
+  _isProdMode() {
+    let isProdBuild = false;
+    try { isProdBuild = Boolean(import.meta.env.PROD); } catch {}
+    const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+    return isProdBuild || isHttps;
+  }
+
+  _normalizeUrl(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    return raw
+      .trim()
+      .replace(/^ws:\/\//i, 'http://')
+      .replace(/^wss:\/\//i, 'https://')
+      .replace(/\/api\/websocket\/?$/i, '')
+      .replace(/\/+$/, '');
+  }
+
+  _isAllowedHassUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    if (typeof window !== 'undefined' && window.location?.protocol === 'https:') {
+      if (/^http:\/\//i.test(url)) {
+        return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(url);
+      }
+    }
+    return /^https?:\/\//i.test(url);
+  }
+
+  resolveOAuthHassUrl() {
+    if (this.publicUrl && this._isAllowedHassUrl(this.publicUrl)) {
+      return this.publicUrl;
+    }
+    if (typeof window !== 'undefined' && window.location?.hostname?.endsWith('.ts.net')) {
+      return `https://${window.location.hostname}:8443`;
+    }
+    const candidates = [this.tailscaleUrl, this.localUrl, this.url];
+    for (const candidate of candidates) {
+      if (this._isAllowedHassUrl(candidate)) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  _saveTokens(data) {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      if (!data) {
+        localStorage.removeItem(HA_TOKENS_STORAGE_KEY);
+      } else {
+        localStorage.setItem(HA_TOKENS_STORAGE_KEY, JSON.stringify(data));
+      }
+    } catch (err) {
+      console.warn('[HAClient] Impossibile salvare token OAuth in localStorage:', err?.message || err);
+    }
+  }
+
+  _loadTokens() {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem(HA_TOKENS_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed.access_token !== 'string') return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  _cleanOAuthCallbackUrl() {
+    try {
+      if (typeof window === 'undefined' || !window.location || !window.history?.replaceState) return;
+      const url = new URL(window.location.href);
+      let changed = false;
+      for (const key of ['auth_callback', 'code', 'state']) {
+        if (url.searchParams.has(key)) {
+          url.searchParams.delete(key);
+          changed = true;
+        }
+      }
+      if (changed) {
+        const clean = `${url.pathname}${url.search}${url.hash}`;
+        window.history.replaceState({}, (typeof document !== 'undefined' ? document.title : '') || '', clean || '/');
+      }
+    } catch (err) {
+      console.warn('[HAClient] Impossibile ripulire i parametri OAuth dall\'URL:', err?.message || err);
+    }
+  }
+
   onStatusChange(fn) {
     this.statusListeners.add(fn);
+    return () => this.statusListeners.delete(fn);
   }
 
   notifyStatus(status, details = '') {
     this.statusListeners.forEach((fn) => fn(status, details));
   }
 
+  onAuthChange(cb) {
+    this.authListeners.add(cb);
+    return () => this.authListeners.delete(cb);
+  }
+
+  _notifyAuthChange(extra = {}) {
+    const payload = {
+      authenticated: Boolean(this.connection && !this.isMockMode),
+      status: this.authStatus,
+      user: this.currentUser,
+      isAdmin: this.isAdmin,
+      isMockMode: this.isMockMode,
+      token: this.auth?.accessToken || null,
+      ...extra,
+    };
+    this.authListeners.forEach((cb) => {
+      try {
+        cb(payload);
+      } catch (err) {
+        console.error('[HAClient] Errore nel callback auth:', err);
+      }
+    });
+  }
+
+  _handleAuthInvalid(message = 'Sessione Home Assistant non valida') {
+    if (this.connection) {
+      try {
+        this.connection.close();
+      } catch {}
+      this.connection = null;
+    }
+    this._saveTokens(null);
+    this.auth = null;
+    this.currentUser = null;
+    this.isAdmin = false;
+    this.isMockMode = false;
+    this.activeUrl = '';
+    this.isTailscale = false;
+    this.entities = {};
+    this.authStatus = 'auth_required';
+    this.notifyStatus('auth_required', 'Accesso HA richiesto');
+    this._notifyAuthChange({ error: message, reason: 'auth_invalid' });
+  }
+
+  _attachConnectionListeners(conn) {
+    if (!conn || typeof conn.addEventListener !== 'function') return;
+    conn.addEventListener('reconnect-error', (_conn, err) => {
+      if (err === ERR_INVALID_AUTH) {
+        this._handleAuthInvalid('Sessione Home Assistant scaduta');
+      }
+    });
+    conn.addEventListener('disconnected', () => {
+      if (this.authStatus === 'authenticated') {
+        this.notifyStatus('connecting', 'Riconnessione HA...');
+      }
+    });
+    conn.addEventListener('ready', () => {
+      if (this.authStatus === 'authenticated') {
+        const tag = this.isTailscale ? 'remoto' : 'locale';
+        this.notifyStatus('online', `Live HA (${tag})`);
+      }
+    });
+  }
+
+  async _populateCurrentUser(conn) {
+    try {
+      const user = await getUser(conn);
+      if (user) {
+        this.currentUser = {
+          id: user.id,
+          name: user.name || 'Utente HA',
+          is_owner: Boolean(user.is_owner),
+          is_admin: Boolean(user.is_admin || user.is_owner),
+        };
+        this.isAdmin = Boolean(this.currentUser.is_admin || this.currentUser.is_owner);
+        return;
+      }
+    } catch (err) {
+      console.warn('[HAClient] Impossibile recuperare auth/current_user:', err?.message || err);
+    }
+    this.currentUser = null;
+    this.isAdmin = false;
+  }
+
+  _attachSubscriptions() {
+    if (!this.connection) return;
+    subscribeEntities(this.connection, (entities) => {
+      this.notifyEntities(entities);
+    });
+
+    if (this.mqttSubscribers && this.mqttSubscribers.size > 0) {
+      for (const [topic, cbs] of this.mqttSubscribers.entries()) {
+        this.connection.subscribeMessage(
+          (msg) => {
+            let data = msg.payload ?? msg;
+            if (typeof data === 'string') {
+              try { data = JSON.parse(data); } catch {}
+            }
+            cbs.forEach((cb) => cb(data, msg.topic || topic));
+          },
+          { type: 'mqtt/subscribe', topic }
+        ).catch((err) => console.warn(`[HAClient] MQTT sub error for ${topic}:`, err.message));
+      }
+    }
+  }
+
   async connect() {
-    if (!this.token) {
-      console.info('[HAClient] Nessun VITE_HA_TOKEN configurato in .env: avvio in MODALITÀ MOCK/DEMO.');
+    if (this._connectPromise) {
+      return this._connectPromise;
+    }
+    this._connectPromise = this._connectInternal().finally(() => {
+      this._connectPromise = null;
+    });
+    return this._connectPromise;
+  }
+
+  async _connectInternal() {
+    if (!this._isProdMode() && this.token) {
+      await this._connectWithLongLivedToken();
+      return;
+    }
+
+    const search = (typeof window !== 'undefined' && window.location?.search) ? window.location.search : '';
+    const searchParams = new URLSearchParams(search);
+    const hasAuthCallback = searchParams.has('auth_callback');
+    const hassUrl = this.resolveOAuthHassUrl();
+    const storedTokens = this._loadTokens();
+    const hasMatchingStoredTokens = Boolean(
+      storedTokens?.access_token &&
+      (!hassUrl || !storedTokens.hassUrl || storedTokens.hassUrl === hassUrl)
+    );
+
+    if (!this._isProdMode() && !hassUrl && !hasAuthCallback && !hasMatchingStoredTokens) {
+      console.info('[HAClient] Nessuna configurazione HA locale/OAuth in dev: avvio in MODALITÀ MOCK/DEMO.');
       this.initMockMode();
       return;
     }
 
+    if (!hasAuthCallback && !hasMatchingStoredTokens) {
+      this.connection = null;
+      this.auth = null;
+      this.isMockMode = false;
+      this.currentUser = null;
+      this.isAdmin = false;
+      this.authStatus = 'auth_required';
+      this.notifyStatus('auth_required', 'Accesso HA richiesto');
+      this._notifyAuthChange();
+      return;
+    }
+
+    try {
+      this.authStatus = 'connecting';
+      this.notifyStatus('connecting', 'Autenticazione HA...');
+
+      const auth = await getAuth({
+        ...(hassUrl ? { hassUrl } : {}),
+        saveTokens: (t) => this._saveTokens(t),
+        loadTokens: () => this._loadTokens(),
+      });
+      if (hasAuthCallback) {
+        this._cleanOAuthCallbackUrl();
+      }
+
+      this.auth = auth;
+      let timeoutId = null;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Timeout connessione Home Assistant')), 10000);
+      });
+      try {
+        this.connection = await Promise.race([createConnection({ auth }), timeoutPromise]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+
+      this._attachConnectionListeners(this.connection);
+      await this._populateCurrentUser(this.connection);
+
+      this.isMockMode = false;
+      this.activeUrl = this._normalizeUrl(auth.data?.hassUrl || hassUrl);
+      this.url = this.activeUrl;
+      this.isTailscale = Boolean(
+        this.activeUrl.includes('100.') ||
+        this.activeUrl.includes('.ts.net') ||
+        (typeof window !== 'undefined' && window.location?.hostname?.endsWith('.ts.net'))
+      );
+      this.authStatus = 'authenticated';
+
+      this._attachSubscriptions();
+
+      const tag = this.isTailscale ? 'remoto' : 'locale';
+      this.notifyStatus('online', `Live HA (${tag})`);
+      this._notifyAuthChange();
+    } catch (err) {
+      if (hasAuthCallback) {
+        this._cleanOAuthCallbackUrl();
+      }
+      const isAuthErr = (
+        err === ERR_INVALID_AUTH ||
+        err === ERR_INVALID_AUTH_CALLBACK ||
+        err === ERR_INVALID_HTTPS_TO_HTTP ||
+        err === ERR_HASS_HOST_REQUIRED ||
+        String(err?.message || '').toLowerCase().includes('refresh_token')
+      );
+      if (isAuthErr) {
+        this._handleAuthInvalid('Sessione scaduta o non valida. Effettua nuovamente il login.');
+      } else {
+        this.connection = null;
+        this.isMockMode = false;
+        this.currentUser = null;
+        this.isAdmin = false;
+        this.authStatus = 'error';
+        const errCodeMsg = err === ERR_CANNOT_CONNECT ? 'Impossibile connettersi a Home Assistant' : (err?.message || 'Home Assistant non raggiungibile');
+        this.notifyStatus('offline', 'HA non raggiungibile');
+        this._notifyAuthChange({ error: errCodeMsg });
+      }
+    }
+  }
+
+  async _connectWithLongLivedToken() {
     // Lista ordinata di candidati URL (Zero IP privati cablati nel codice!):
     // 1. Tailscale / VPN da .env (prioritario: consente l'accesso continuo ovunque ti trovi)
     // 2. URL principale / LAN da .env (VITE_HA_LOCAL_URL o VITE_HA_URL)
     // 3. Fallback mDNS standard 'http://homeassistant.local:8123'
     const rawCandidates = [
+      this.publicUrl,
       this.tailscaleUrl,
       this.localUrl,
       this.url,
@@ -516,13 +857,7 @@ export class HAClient {
 
     const candidateUrls = [];
     for (const raw of rawCandidates) {
-      if (!raw || typeof raw !== 'string' || !raw.trim()) continue;
-      const clean = raw
-        .trim()
-        .replace(/^ws:\/\//i, 'http://')
-        .replace(/^wss:\/\//i, 'https://')
-        .replace(/\/api\/websocket\/?$/i, '')
-        .replace(/\/+$/, '');
+      const clean = this._normalizeUrl(raw);
       if (clean && !candidateUrls.includes(clean)) {
         candidateUrls.push(clean);
       }
@@ -532,43 +867,37 @@ export class HAClient {
       try {
         const isTailscale = authUrl.includes('100.') || authUrl.includes('.ts.net') || authUrl === this.tailscaleUrl;
         const tag = isTailscale ? 'remoto' : 'locale';
+        this.authStatus = 'connecting';
         this.notifyStatus('connecting', 'Connessione HA...');
         console.log(`[HAClient] Tentativo connessione WebSocket (${tag}) a: ${authUrl}`);
 
         const auth = createLongLivedTokenAuth(authUrl, this.token);
         const connectionPromise = createConnection({ auth });
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout connessione a ${authUrl} (${tag})`)), 4500)
-        );
+        let timeoutId = null;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error(`Timeout connessione a ${authUrl} (${tag})`)), 4500);
+        });
 
-        this.connection = await Promise.race([connectionPromise, timeoutPromise]);
+        try {
+          this.connection = await Promise.race([connectionPromise, timeoutPromise]);
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+
+        this.auth = auth;
+        this._attachConnectionListeners(this.connection);
+        await this._populateCurrentUser(this.connection);
+
         this.isMockMode = false;
         this.activeUrl = authUrl;
         this.url = authUrl;
         this.isTailscale = isTailscale;
+        this.authStatus = 'authenticated';
         this.notifyStatus('online', `Live HA (${tag})`);
         console.log(`[HAClient] Connessione WebSocket HA riuscita con successo tramite ${tag} (${authUrl})!`);
 
-        subscribeEntities(this.connection, (entities) => {
-          this.notifyEntities(entities);
-        });
-
-        // Sottoscrivi eventuali topic MQTT registrati dai controller
-        if (this.mqttSubscribers && this.mqttSubscribers.size > 0) {
-          for (const [topic, cbs] of this.mqttSubscribers.entries()) {
-            this.connection.subscribeMessage(
-              (msg) => {
-                let data = msg.payload ?? msg;
-                if (typeof data === 'string') {
-                  try { data = JSON.parse(data); } catch { }
-                }
-                cbs.forEach((cb) => cb(data, msg.topic || topic));
-              },
-              { type: 'mqtt/subscribe', topic }
-            ).catch((err) => console.warn(`[HAClient] MQTT sub error for ${topic}:`, err.message));
-          }
-        }
-
+        this._attachSubscriptions();
+        this._notifyAuthChange();
         return; // Connesso con successo
       } catch (err) {
         console.warn(`[HAClient] Tentativo su ${authUrl} fallito (${err.message}), provo endpoint successivo...`);
@@ -579,11 +908,90 @@ export class HAClient {
     this.initMockMode();
   }
 
+  async loginWithOAuth() {
+    const hassUrl = this.resolveOAuthHassUrl();
+    if (!hassUrl) {
+      const msg = 'URL Home Assistant pubblico non configurato (VITE_HA_PUBLIC_URL).';
+      this.authStatus = 'auth_required';
+      this.notifyStatus('auth_required', 'URL HA mancante');
+      this._notifyAuthChange({ error: msg });
+      return false;
+    }
+
+    this._saveTokens(null);
+    this.authStatus = 'connecting';
+    this.notifyStatus('connecting', 'Reindirizzamento HA...');
+    try {
+      await getAuth({
+        hassUrl,
+        saveTokens: (t) => this._saveTokens(t),
+        loadTokens: () => this._loadTokens(),
+      });
+      return true;
+    } catch (err) {
+      this.authStatus = 'auth_required';
+      this.notifyStatus('auth_required', 'Errore OAuth HA');
+      this._notifyAuthChange({ error: err?.message || 'Errore durante il login Home Assistant' });
+      return false;
+    }
+  }
+
+  async getAccessToken() {
+    if (!this.auth) return null;
+    const expiresAt = this.auth.data?.expires;
+    const nearExpiry = Boolean(expiresAt && Date.now() >= expiresAt - 30000);
+    if ((this.auth.expired || nearExpiry) && this.auth.data?.refresh_token) {
+      if (!this._refreshPromise) {
+        this._refreshPromise = this.auth.refreshAccessToken().finally(() => {
+          this._refreshPromise = null;
+        });
+      }
+      try {
+        await this._refreshPromise;
+      } catch (err) {
+        if (err === ERR_INVALID_AUTH || String(err?.message || '').toLowerCase().includes('refresh_token')) {
+          this._handleAuthInvalid('Sessione Home Assistant scaduta');
+        }
+        return null;
+      }
+    }
+    return this.auth.accessToken || null;
+  }
+
+  async logout() {
+    if (this.connection) {
+      try {
+        this.connection.close();
+      } catch {}
+      this.connection = null;
+    }
+    if (this.auth?.data?.refresh_token && typeof this.auth.revoke === 'function') {
+      try {
+        await this.auth.revoke();
+      } catch {}
+    }
+    this._saveTokens(null);
+    this.auth = null;
+    this.currentUser = null;
+    this.isAdmin = false;
+    this.isMockMode = false;
+    this.activeUrl = '';
+    this.isTailscale = false;
+    this.entities = {};
+    this.authStatus = 'auth_required';
+    this.notifyStatus('auth_required', 'Disconnesso');
+    this._notifyAuthChange({ reason: 'logout' });
+  }
+
   initMockMode() {
     this.isMockMode = true;
     this.activeUrl = '';
     this.isTailscale = false;
+    this.currentUser = null;
+    this.isAdmin = false;
+    this.authStatus = 'mock';
     this.notifyStatus('mock', 'Live HA (demo)');
+    this._notifyAuthChange();
     setTimeout(() => {
       this.notifyEntities(this.mockEntities);
     }, 100);
@@ -593,6 +1001,8 @@ export class HAClient {
     this.subscribers.add(callback);
     if (this.isMockMode) {
       callback(this.mockEntities);
+    } else if (Object.keys(this.entities).length > 0) {
+      callback(this.entities);
     }
     return () => this.subscribers.delete(callback);
   }
@@ -898,7 +1308,7 @@ export class HAClient {
   }
 
   getActiveUrl() {
-    return this.activeUrl || this.tailscaleUrl || this.localUrl || this.url || '';
+    return this.activeUrl || this.publicUrl || this.tailscaleUrl || this.localUrl || this.url || '';
   }
 
   resolveCameraEntityId(preferredId = 'camera.carraio_scorrevole') {

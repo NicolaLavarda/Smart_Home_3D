@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -23,7 +23,18 @@ from spatial_server.biometrics import (
     NoOpIdentityResolver,
     OpenVINOInsightFaceResolver,
 )
-from spatial_server.config import SpatialServerConfig
+from spatial_server.config import SpatialServerConfig, _normalize_ha_url
+from spatial_server.security import (
+    AuthError,
+    HAUserPrincipal,
+    HomeAssistantAuthVerifier,
+    authenticate_websocket,
+    clear_session_cookie,
+    extract_bearer_token,
+    require_admin_user,
+    require_authenticated_user,
+    set_session_cookie,
+)
 from spatial_server.domain.models import (
     CalibrationOverridePayload,
     DetectionEvent,
@@ -53,6 +64,10 @@ logger = logging.getLogger("spatial_server")
 
 class IngestionModeRequest(BaseModel):
     mode: Literal["synthetic", "openvino", "mqtt", "hybrid"]
+
+
+class AuthSessionRequest(BaseModel):
+    token: Optional[str] = None
 
 
 @dataclass
@@ -434,15 +449,79 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(service.config.allowed_origins),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.state.pipeline = service
+    app.state.config = service.config
+    app.state.auth_verifier = HomeAssistantAuthVerifier.from_config(service.config)
+
+    @app.post("/api/v1/auth/session")
+    async def create_auth_session(
+        request: Request,
+        response: Response,
+        payload: Optional[AuthSessionRequest] = Body(default=None),
+    ) -> dict[str, Any]:
+        token = extract_bearer_token(request.headers) or (
+            payload.token.strip() if payload and payload.token else ""
+        )
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail="Token Home Assistant mancante",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        verifier: HomeAssistantAuthVerifier = request.app.state.auth_verifier
+        try:
+            principal = await verifier.verify_token(token)
+        except AuthError as exc:
+            raise HTTPException(
+                status_code=401,
+                detail="Token Home Assistant non valido",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
+
+        cookie_value, session_expires_at = verifier.create_session_token(principal)
+        max_age_s = max(1, int(session_expires_at - time.time()))
+        set_session_cookie(response, request, cookie_value, max_age_s)
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "authenticated": True,
+            "user": principal.to_user_dict(),
+            "expires_at": session_expires_at,
+        }
+
+    @app.get("/api/v1/auth/verify")
+    async def verify_auth_session(
+        response: Response,
+        user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        safe_user_id = re.sub(r"[\r\n]+", "", user.user_id)
+        response.headers["X-SH3D-User"] = safe_user_id
+        response.headers["X-SH3D-Admin"] = "true" if user.is_privileged else "false"
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "authenticated": True,
+            "user": user.to_user_dict(),
+            "expires_at": user.expires_at,
+        }
+
+    @app.post("/api/v1/auth/logout")
+    async def logout_auth_session(
+        request: Request,
+        response: Response,
+    ) -> dict[str, Any]:
+        clear_session_cookie(response, request)
+        response.headers["Cache-Control"] = "no-store"
+        return {"authenticated": False, "logged_out": True}
 
     @app.get("/api/v1/status")
-    async def get_status() -> dict[str, Any]:
+    async def get_status(
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
         rc = service.raycaster
         repo = service.repository
         return {
@@ -473,6 +552,7 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         min_z: Optional[float] = Query(default=None),
         max_z: Optional[float] = Query(default=None),
         limit: int = Query(default=5000, ge=1, le=20000),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> dict[str, Any]:
         cls_list = [c.strip() for c in classes.split(",") if c.strip()] if classes else None
         zone_bbox = None
@@ -495,19 +575,26 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         t_start: float = Query(...),
         t_end: float = Query(...),
         buckets: int = Query(default=60, ge=5, le=360),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> dict[str, Any]:
         bins = service.repository.query_timeline_density(t_start, t_end, buckets=buckets)
         return {"status": "ok", "bins": bins}
 
     @app.get("/api/v1/calibration/{camera_id}")
-    async def get_camera_calibration(camera_id: str) -> dict[str, Any]:
+    async def get_camera_calibration(
+        camera_id: str,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
         model = service.optical_models.get(camera_id)
         if model is None:
             raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not registered")
         return {"status": "ok", "calibration": model.to_metadata_dict()}
 
     @app.post("/api/v1/calibration/solve-pnp")
-    async def solve_camera_pnp(req: SolvePnPRequest) -> dict[str, Any]:
+    async def solve_camera_pnp(
+        req: SolvePnPRequest,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
         model = service.optical_models.get(req.camera_id)
         if not isinstance(model, PinholeRadTanOpticalModel):
             raise HTTPException(status_code=400, detail=f"SolvePnPRansac requires pinhole camera; got {type(model).__name__}")
@@ -524,7 +611,11 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         }
 
     @app.post("/api/v1/calibration/{camera_id}")
-    async def update_camera_calibration(camera_id: str, payload: CalibrationOverridePayload) -> dict[str, Any]:
+    async def update_camera_calibration(
+        camera_id: str,
+        payload: CalibrationOverridePayload,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
         model = service.optical_models.get(camera_id)
         if model is None:
             raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not registered")
@@ -545,7 +636,10 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         return {"status": "ok", "calibration": meta}
 
     @app.post("/api/v1/ingestion/mode")
-    async def switch_ingestion_mode(req: IngestionModeRequest) -> dict[str, Any]:
+    async def switch_ingestion_mode(
+        req: IngestionModeRequest,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
         details = await service.set_ingestion_mode(req.mode)
         return {
             "status": "ok",
@@ -554,33 +648,64 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         }
 
     @app.post("/api/v1/detections")
-    async def ingest_http_detection(events: list[DetectionEvent] | DetectionEvent) -> dict[str, Any]:
+    async def ingest_http_detection(
+        events: list[DetectionEvent] | DetectionEvent,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
         batch = events if isinstance(events, list) else [events]
         tracks = await service.process_detection_batch(batch)
         return {"status": "ok", "active_tracks": [t.model_dump() for t in tracks]}
 
     @app.get("/api/v1/ha-camera/snapshot/{entity_id}")
     async def proxy_ha_camera_snapshot(
+        request: Request,
         entity_id: str,
         ha_url: Optional[str] = Query(default=None),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> Response:
-        if not re.fullmatch(r"[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+", entity_id):
+        if not re.fullmatch(r"camera\.[a-zA-Z0-9_]+", entity_id):
             raise HTTPException(status_code=400, detail="entity_id non valido")
 
-        token = service.config.ha_token
+        caller_token = extract_bearer_token(request.headers)
+        token = service.config.ha_token or caller_token
         if not token:
-            raise HTTPException(status_code=503, detail="VITE_HA_TOKEN non configurato")
+            raise HTTPException(status_code=503, detail="Token Home Assistant non disponibile")
 
-        raw_candidates = [
-            ha_url or "",
-            service.config.ha_tailscale_url,
+        configured_bases: list[str] = []
+        for raw in (
             service.config.ha_local_url,
-        ]
+            service.config.ha_tailscale_url,
+            service.config.ha_public_url,
+        ):
+            clean = _normalize_ha_url(raw)
+            if clean.lower().startswith(("http://", "https://")) and clean not in configured_bases:
+                configured_bases.append(clean)
+
+        allowed_origins = {
+            (parsed.scheme.lower(), parsed.netloc.lower())
+            for base in configured_bases
+            for parsed in (urllib.parse.urlsplit(base),)
+            if parsed.scheme and parsed.netloc
+        }
+
         candidates: list[str] = []
-        for raw in raw_candidates:
-            clean = raw.strip().rstrip("/")
-            if clean.lower().startswith(("http://", "https://")) and clean not in candidates:
-                candidates.append(clean)
+        if service.config.ha_local_url:
+            local_clean = _normalize_ha_url(service.config.ha_local_url)
+            if local_clean.lower().startswith(("http://", "https://")):
+                candidates.append(local_clean)
+
+        if ha_url and ha_url.strip():
+            requested = _normalize_ha_url(ha_url)
+            req_parsed = urllib.parse.urlsplit(requested)
+            req_origin = (req_parsed.scheme.lower(), req_parsed.netloc.lower())
+            if not requested.lower().startswith(("http://", "https://")) or req_origin not in allowed_origins:
+                raise HTTPException(status_code=400, detail="ha_url non consentito")
+            if requested not in candidates:
+                candidates.append(requested)
+
+        for base in configured_bases:
+            if base not in candidates:
+                candidates.append(base)
 
         if not candidates:
             raise HTTPException(status_code=503, detail="Nessun URL Home Assistant configurato")
@@ -616,6 +741,11 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
 
     @app.websocket("/ws/spatial")
     async def ws_spatial(websocket: WebSocket) -> None:
+        if service.config.auth_required:
+            principal = await authenticate_websocket(websocket)
+            if principal is None:
+                await websocket.close(code=4401, reason="Unauthorized")
+                return
         await websocket.accept()
         service.ws_clients.add(websocket)
         try:

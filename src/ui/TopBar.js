@@ -60,9 +60,20 @@ export class TopBar {
             ${icon('chevron-down', { size: 13, className: 'settings-chevron' })}
           </button>
           <div class="top-settings-dropdown glass" id="top-settings-dropdown">
-            <button class="settings-dropdown-item" id="btn-open-cam-calib" title="Apri calibrazione ottica POV su Cam_Carraio">
+            <div class="settings-user-card" id="top-user-profile">
+              <div class="settings-user-meta">
+                <span class="settings-user-name" id="top-user-name">Non connesso</span>
+                <span class="role-pill guest" id="top-user-role">Ospite</span>
+              </div>
+            </div>
+            <div class="settings-dropdown-divider" id="top-settings-divider"></div>
+            <button class="settings-dropdown-item" id="btn-open-cam-calib" title="Apri calibrazione ottica POV su Cam_Carraio" hidden disabled style="display: none;">
               ${icon('sliders-horizontal', { size: 15 })}
               <span>Calibra Cam</span>
+            </button>
+            <button class="settings-dropdown-item auth-login" id="btn-ha-auth-action" title="Accedi con Home Assistant">
+              ${icon('log-in', { size: 15 })}
+              <span>Accedi con Home Assistant</span>
             </button>
           </div>
         </div>
@@ -75,14 +86,89 @@ export class TopBar {
     this.frustumsBtn = this.container.querySelector('#btn-toggle-frustums');
     this.settingsBtn = this.container.querySelector('#btn-settings-menu');
     this.settingsDropdown = this.container.querySelector('#top-settings-dropdown');
+    this.userProfileEl = this.container.querySelector('#top-user-profile');
+    this.userNameEl = this.container.querySelector('#top-user-name');
+    this.userRoleEl = this.container.querySelector('#top-user-role');
     this.calibBtn = this.container.querySelector('#btn-open-cam-calib');
+    this.authActionBtn = this.container.querySelector('#btn-ha-auth-action');
     this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
+
+    this.updateAuthUI();
 
     // Ascolta lo stato di HA
     this.haClient.onStatusChange((status, details) => {
       this.haDot.className = `ha-dot ${status}`;
-      this.haText.textContent = details || status.toUpperCase();
+      if (status === 'auth_required') {
+        this.haText.textContent = details || 'Accesso richiesto';
+      } else {
+        this.haText.textContent = details || status.toUpperCase();
+      }
     });
+
+    this.haClient.onAuthChange?.((authState) => {
+      this.updateAuthUI(authState);
+    });
+  }
+
+  updateAuthUI(authState = null) {
+    const isAdmin = Boolean(authState?.isAdmin ?? this.haClient?.isAdmin);
+    const user = authState?.user ?? this.haClient?.currentUser ?? null;
+    const isMock = Boolean(authState?.isMockMode ?? this.haClient?.isMockMode);
+    const isAuthenticated = Boolean(
+      authState?.authenticated ??
+      ((this.haClient?.authStatus === 'authenticated' || this.haClient?.connection || this.haClient?.currentUser) && !isMock)
+    );
+
+    if (this.userNameEl) {
+      if (isAuthenticated) {
+        this.userNameEl.textContent = user?.name || 'Utente HA';
+      } else if (isMock) {
+        this.userNameEl.textContent = 'Demo Locale';
+      } else {
+        this.userNameEl.textContent = 'Non connesso';
+      }
+    }
+
+    if (this.userRoleEl) {
+      if (isAuthenticated && isAdmin) {
+        this.userRoleEl.textContent = 'Admin';
+        this.userRoleEl.className = 'role-pill admin';
+      } else if (isAuthenticated) {
+        this.userRoleEl.textContent = 'Residente';
+        this.userRoleEl.className = 'role-pill resident';
+      } else if (isMock) {
+        this.userRoleEl.textContent = 'Demo Locale';
+        this.userRoleEl.className = 'role-pill guest';
+      } else {
+        this.userRoleEl.textContent = 'Ospite';
+        this.userRoleEl.className = 'role-pill guest';
+      }
+    }
+
+    if (this.calibBtn) {
+      this.calibBtn.hidden = !isAdmin;
+      this.calibBtn.disabled = !isAdmin;
+      this.calibBtn.style.display = isAdmin ? '' : 'none';
+      if (!isAdmin) {
+        this.calibBtn.classList.remove('active');
+      }
+    }
+
+    if (!isAdmin && this.calibrationAssistant?.isOpen) {
+      this.calibrationAssistant.close();
+    }
+
+    if (this.authActionBtn) {
+      if (isAuthenticated) {
+        this.authActionBtn.className = 'settings-dropdown-item auth-logout';
+        this.authActionBtn.title = 'Disconnetti sessione Home Assistant';
+        this.authActionBtn.innerHTML = `${icon('log-out', { size: 15 })} <span>Esci</span>`;
+      } else {
+        this.authActionBtn.className = 'settings-dropdown-item auth-login';
+        this.authActionBtn.title = 'Accedi con Home Assistant';
+        this.authActionBtn.innerHTML = `${icon('log-in', { size: 15 })} <span>Accedi con Home Assistant</span>`;
+      }
+    }
   }
 
   closeSettingsDropdown() {
@@ -132,9 +218,10 @@ export class TopBar {
       }
     });
 
-    // Apertura Calibrazione Ottica POV Cam_Carraio
+    // Apertura Calibrazione Ottica POV Cam_Carraio (solo Admin)
     this.calibBtn?.addEventListener('click', () => {
       this.closeSettingsDropdown();
+      if (!this.haClient?.isAdmin) return;
       if (!this.calibrationAssistant) return;
       if (this.calibrationAssistant.isOpen) {
         this.calibrationAssistant.close();
@@ -153,6 +240,20 @@ export class TopBar {
         });
       } else {
         this.calibrationAssistant.open('Cam_Carraio');
+      }
+    });
+
+    // Azione Login / Logout Home Assistant
+    this.authActionBtn?.addEventListener('click', async () => {
+      this.closeSettingsDropdown();
+      const isMock = Boolean(this.haClient?.isMockMode);
+      const isAuthenticated = Boolean(
+        (this.haClient?.authStatus === 'authenticated' || this.haClient?.connection || this.haClient?.currentUser) && !isMock
+      );
+      if (isAuthenticated) {
+        await this.haClient?.logout?.();
+      } else {
+        await this.haClient?.loginWithOAuth?.();
       }
     });
 
@@ -192,7 +293,7 @@ export class TopBar {
         <button class="quicknav-btn" data-preset="topdown">${icon('compass', { size: 15 })}<span>Pianta Zenitale</span></button>
       </div>
     `;
-    document.querySelector('.ui-layer').appendChild(quicknav);
+    (document.querySelector('.ui-layer') || document.body)?.appendChild(quicknav);
 
     const headerToggle = quicknav.querySelector('#quicknav-header-toggle');
     const collapseIconEl = quicknav.querySelector('#quicknav-collapse-icon');

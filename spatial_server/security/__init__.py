@@ -1,0 +1,33 @@
+from .ha_auth import (
+    SH3D_SESSION_COOKIE_NAME,
+    AuthError,
+    HAUserPrincipal,
+    HomeAssistantAuthVerifier,
+    HomeAssistantUnavailableError,
+    InvalidAuthTokenError,
+    InvalidSessionCookieError,
+    authenticate_websocket,
+    clear_session_cookie,
+    extract_bearer_token,
+    is_https_request,
+    require_admin_user,
+    require_authenticated_user,
+    set_session_cookie,
+)
+
+__all__ = [
+    "SH3D_SESSION_COOKIE_NAME",
+    "AuthError",
+    "HAUserPrincipal",
+    "HomeAssistantAuthVerifier",
+    "HomeAssistantUnavailableError",
+    "InvalidAuthTokenError",
+    "InvalidSessionCookieError",
+    "authenticate_websocket",
+    "clear_session_cookie",
+    "extract_bearer_token",
+    "is_https_request",
+    "require_admin_user",
+    "require_authenticated_user",
+    "set_session_cookie",
+]

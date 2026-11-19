@@ -1,14 +1,31 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
 
 load_dotenv(REPO_ROOT / ".env")
+
+logger = logging.getLogger("spatial_server.config")
+
+DEFAULT_ALLOWED_ORIGINS: tuple[str, ...] = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:8765",
+    "http://127.0.0.1:8765",
+)
 
 
 def _normalize_ha_url(raw: str) -> str:
@@ -24,6 +41,67 @@ def _normalize_ha_url(raw: str) -> str:
     elif url.lower().endswith("/api/websocket/"):
         url = url[:-15]
     return url.rstrip("/")
+
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    norm = raw.strip().lower()
+    if norm in ("1", "true", "yes", "on"):
+        return True
+    if norm in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"Invalid boolean value for {name}: {raw!r}")
+
+
+def _extract_origin(raw: str) -> str:
+    cleaned = (raw or "").strip()
+    if not cleaned or cleaned == "*":
+        return ""
+    parsed = urlsplit(cleaned)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    return f"{scheme}://{parsed.netloc}"
+
+
+def _derive_ha_public_origins(ha_public_url: str) -> list[str]:
+    derived: list[str] = []
+    origin = _extract_origin(ha_public_url)
+    if not origin:
+        return derived
+    derived.append(origin)
+    parsed = urlsplit(origin)
+    hostname = (parsed.hostname or "").lower()
+    if hostname.endswith(".ts.net") and parsed.port is not None:
+        base_443 = f"{parsed.scheme}://{hostname}"
+        if base_443 not in derived:
+            derived.append(base_443)
+    return derived
+
+
+def _parse_allowed_origins(raw: str, ha_public_url: str = "") -> tuple[str, ...]:
+    origins: list[str] = []
+    cleaned_raw = (raw or "").strip()
+    if cleaned_raw:
+        for item in cleaned_raw.split(","):
+            if item.strip() == "*":
+                logger.warning("Ignoring wildcard '*' in SPATIAL_ALLOWED_ORIGINS")
+                continue
+            origin = _extract_origin(item)
+            if origin and origin not in origins:
+                origins.append(origin)
+        if origins:
+            return tuple(origins)
+
+    for origin in DEFAULT_ALLOWED_ORIGINS:
+        if origin not in origins:
+            origins.append(origin)
+    for origin in _derive_ha_public_origins(ha_public_url):
+        if origin not in origins:
+            origins.append(origin)
+    return tuple(origins)
 
 
 @dataclass(frozen=True)
@@ -54,6 +132,11 @@ class SpatialServerConfig:
     openvino_conf_threshold: float = 0.35
     persist_min_displacement_m: float = 0.15
     persist_heartbeat_s: float = 10.0
+    ha_public_url: str = ""
+    auth_required: bool = True
+    auth_cache_ttl_s: float = 120.0
+    session_secret_key: str = ""
+    allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -62,8 +145,20 @@ class SpatialServerConfig:
         data_dir.mkdir(parents=True, exist_ok=True)
         models_dir.mkdir(parents=True, exist_ok=True)
 
+        ha_public_url = _normalize_ha_url(
+            os.getenv("VITE_HA_PUBLIC_URL") or os.getenv("HA_PUBLIC_URL", "")
+        )
+        host = (os.getenv("SPATIAL_SERVER_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+        auth_required = _parse_bool_env("SPATIAL_AUTH_REQUIRED", True)
+        auth_cache_ttl_s = max(0.0, float(os.getenv("SPATIAL_AUTH_CACHE_TTL_S", "120.0")))
+        session_secret_key = os.getenv("SPATIAL_SESSION_SECRET", "").strip()
+        allowed_origins = _parse_allowed_origins(
+            os.getenv("SPATIAL_ALLOWED_ORIGINS", ""),
+            ha_public_url=ha_public_url,
+        )
+
         return cls(
-            host=os.getenv("SPATIAL_SERVER_HOST", "0.0.0.0"),
+            host=host,
             port=int(os.getenv("SPATIAL_SERVER_PORT", "8765")),
             manifest_path=REPO_ROOT / "public" / "models" / "scene_manifest.json",
             glb_path=REPO_ROOT / "public" / "models" / "house_optimized.glb",
@@ -89,5 +184,10 @@ class SpatialServerConfig:
             openvino_conf_threshold=float(os.getenv("OPENVINO_CONF_THRESHOLD", "0.35")),
             persist_min_displacement_m=float(os.getenv("SPATIAL_PERSIST_MIN_DISPLACEMENT_M", "0.15")),
             persist_heartbeat_s=float(os.getenv("SPATIAL_PERSIST_HEARTBEAT_S", "10.0")),
+            ha_public_url=ha_public_url,
+            auth_required=auth_required,
+            auth_cache_ttl_s=auth_cache_ttl_s,
+            session_secret_key=session_secret_key,
+            allowed_origins=allowed_origins,
         )
 

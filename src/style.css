@@ -24,6 +24,10 @@
   user-select: none;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body, html {
   width: 100%;
   height: 100%;
@@ -180,6 +184,7 @@ body, html {
 }
 .ha-dot.online { background-color: var(--accent-emerald); box-shadow: 0 0 8px var(--accent-emerald); }
 .ha-dot.connecting { background-color: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); }
+.ha-dot.auth_required { background-color: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); }
 .ha-dot.mock { background-color: var(--accent-cyan); box-shadow: 0 0 8px var(--accent-cyan); }
 .ha-dot.offline { background-color: var(--accent-rose); box-shadow: 0 0 8px var(--accent-rose); }
 
@@ -244,13 +249,70 @@ body, html {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  min-width: 185px;
-  padding: 6px;
+  min-width: 245px;
+  padding: 8px;
   border-radius: 12px;
   display: none;
   flex-direction: column;
   gap: 4px;
   z-index: 60;
+}
+
+.settings-user-card {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.settings-user-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-pill {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.role-pill.admin {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.38);
+}
+
+.role-pill.resident {
+  background: rgba(6, 182, 212, 0.16);
+  color: #38bdf8;
+  border-color: rgba(6, 182, 212, 0.38);
+}
+
+.role-pill.guest {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-muted);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.settings-dropdown-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-glass);
 }
 
 .top-settings-dropdown.open {
@@ -283,6 +345,19 @@ body, html {
   background: rgba(99, 102, 241, 0.22);
   border-color: rgba(99, 102, 241, 0.55);
   color: #fff;
+}
+
+.settings-dropdown-item.auth-login {
+  color: #38bdf8;
+}
+
+.settings-dropdown-item.auth-logout {
+  color: #fda4af;
+}
+
+.settings-dropdown-item.auth-logout:hover {
+  background: rgba(244, 63, 94, 0.15);
+  border-color: rgba(244, 63, 94, 0.35);
 }
 
 /* Side Quick View Selector (Rooms & Cameras) */
@@ -3988,6 +4063,178 @@ body, html {
     opacity: 0.9;
   }
 }
+
+/* ============================================================================
+   F11: Home Assistant OAuth2 Login Overlay & RBAC Toast
+   ============================================================================ */
+#ha-auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(6, 10, 18, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.ha-auth-card {
+  width: 100%;
+  max-width: 400px;
+  padding: 28px 24px;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.ha-auth-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-cyan);
+  background: rgba(6, 182, 212, 0.14);
+  border: 1px solid rgba(6, 182, 212, 0.32);
+}
+
+.ha-auth-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text-main);
+}
+
+.ha-auth-subtitle {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ha-auth-error {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #fecdd3;
+  background: rgba(244, 63, 94, 0.16);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.ha-auth-btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.ha-auth-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.rbac-toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  transform: translate(-50%, 14px);
+  z-index: 130;
+  pointer-events: none;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.42);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.rbac-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ============================================================================
+   F13: PWA Standalone Safe-Area & Update Prompt Toast
+   ============================================================================ */
+.ui-layer {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.pwa-update-toast {
+  position: fixed;
+  right: max(18px, env(safe-area-inset-right, 18px));
+  bottom: max(22px, env(safe-area-inset-bottom, 22px));
+  z-index: 140;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 14px 34px rgba(2, 6, 23, 0.65);
+  color: var(--text-main);
+}
+
+.pwa-update-toast[hidden] {
+  display: none !important;
+}
+
+.sw-update-label,
+.pwa-update-text {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #f1f5f9;
+}
+
+.sw-update-actions,
+.pwa-update-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-pwa-update {
+  padding: 7px 13px;
+  border-radius: 9px;
+  border: 1px solid rgba(56, 189, 248, 0.65);
+  background: linear-gradient(135deg, #0284c7, #06b6d4);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-pwa-dismiss {
+  padding: 7px 11px;
+  border-radius: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+
 
 
 

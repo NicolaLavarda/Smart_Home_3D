@@ -46,13 +46,15 @@ const TIER_COLORS = {
  *   i marker e i vettori di errore a schermo e applicando il risultato di SolvePnP.
  */
 export class CalibrationAssistantUI {
-  constructor({ sceneManager, cameraController, cameraProjector, videoStreamManager, spatialStreamClient, assetLoader }) {
+  constructor({ sceneManager, cameraController, cameraProjector, videoStreamManager, spatialStreamClient, assetLoader, haClient = null }) {
     this.sceneManager = sceneManager;
     this.cameraController = cameraController;
     this.cameraProjector = cameraProjector;
     this.videoStreamManager = videoStreamManager;
     this.spatialStreamClient = spatialStreamClient;
     this.assetLoader = assetLoader;
+    this.haClient = haClient;
+    this._rbacToastTimer = null;
 
     this.isOpen = false;
     this.activeCameraName = 'Cam_Carraio';
@@ -155,7 +157,35 @@ export class CalibrationAssistantUI {
     } catch { }
   }
 
+  _showRbacToast(message = 'Calibrazione riservata agli utenti Admin.') {
+    if (typeof document === 'undefined') return;
+    const host = document.querySelector('.ui-layer') || document.body;
+    if (!host) return;
+    let toast = host.querySelector('#rbac-admin-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'rbac-admin-toast';
+      toast.className = 'rbac-toast glass';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
+      host.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.classList.add('visible');
+    if (this._rbacToastTimer) {
+      clearTimeout(this._rbacToastTimer);
+    }
+    this._rbacToastTimer = setTimeout(() => {
+      toast.classList.remove('visible');
+    }, 3500);
+  }
+
   async open(cameraName = 'Cam_Carraio') {
+    if (!this.haClient?.isAdmin) {
+      this._showRbacToast('Calibrazione riservata agli utenti Admin.');
+      return false;
+    }
+
     this.activeCameraName = cameraName;
     this.state = this.loadSavedState(cameraName);
 
@@ -1146,6 +1176,10 @@ export class CalibrationAssistantUI {
   }
 
   async solvePnP() {
+    if (!this.haClient?.isAdmin) {
+      this._showRbacToast('Calibrazione riservata agli utenti Admin.');
+      return false;
+    }
     if (this.correspondences.length < 4 || this.isSolvingPnP) return;
     const basePose = this.cameraProjector.getBaseCameraPose(this.activeCameraName);
     const currentPose = this.cameraProjector.getCalibratedCameraPose(this.activeCameraName);
@@ -1221,6 +1255,10 @@ export class CalibrationAssistantUI {
   }
 
   async saveAndSubmitToBackend() {
+    if (!this.haClient?.isAdmin) {
+      this._showRbacToast('Calibrazione riservata agli utenti Admin.');
+      return false;
+    }
     this.saveStateToLocal(this.activeCameraName);
     const pose = this.cameraProjector.applyCameraCalibration(this.activeCameraName, this.state);
 

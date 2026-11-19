@@ -1,17 +1,48 @@
 import { IVideoStreamProvider } from './IVideoStreamProvider.js';
 
+function isProdSameOriginMode() {
+  let isProdBuild = false;
+  try { isProdBuild = Boolean(import.meta.env.PROD); } catch {}
+  const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+  return isProdBuild || isHttps;
+}
+
+function getMediaSourceConstructor() {
+  const win = typeof window !== 'undefined' ? window : {};
+  const g = typeof globalThis !== 'undefined' ? globalThis : {};
+  return (
+    win.ManagedMediaSource ||
+    g.ManagedMediaSource ||
+    win.MediaSource ||
+    g.MediaSource ||
+    (typeof ManagedMediaSource !== 'undefined' ? ManagedMediaSource : null) ||
+    (typeof MediaSource !== 'undefined' ? MediaSource : null)
+  );
+}
+
 /**
  * Go2RtcMSEStream
  *
  * Provider di streaming via Media Source Extensions (fMP4 su WebSocket go2rtc).
- * Utilizzato come fallback automatico ad alta compatibilità se WebRTC è bloccato.
+ * Supporta anche ManagedMediaSource su iOS 17+ Safari/PWA.
  */
 export class Go2RtcMSEStream extends IVideoStreamProvider {
   constructor(streamName, options = {}) {
     super(streamName, options);
     this.mode = 'mse';
-    this.baseUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || 'http://localhost:1984').replace(/\/+$/, '');
-    this.timeoutMs = options.timeoutMs || 4500;
+    const prodSameOrigin = isProdSameOriginMode();
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    let devGo2rtcUrl = '';
+    try {
+      if (!import.meta.env.PROD) {
+        devGo2rtcUrl = import.meta.env.VITE_GO2RTC_URL || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || '';
+      }
+    } catch {}
+    const fallbackUrl = prodSameOrigin
+      ? (origin ? `${origin}/go2rtc` : '/go2rtc')
+      : (devGo2rtcUrl || 'http://localhost:1984');
+    this.baseUrl = (options.go2rtcUrl || fallbackUrl).replace(/\/+$/, '');
+    this.timeoutMs = options.timeoutMs ?? 4500;
     this.ws = null;
     this.mediaSource = null;
     this.sourceBuffer = null;
@@ -22,7 +53,8 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
   }
 
   getSupportedCodecs() {
-    if (typeof MediaSource === 'undefined') return '';
+    const MS = getMediaSourceConstructor();
+    if (!MS || typeof MS.isTypeSupported !== 'function') return '';
     const candidates = [
       'avc1.640029', // H.264 High L4.1
       'avc1.64002A', // H.264 High L4.2
@@ -36,15 +68,16 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
         const mime = c.startsWith('mp4a') || c === 'opus'
           ? `audio/mp4; codecs="${c}"`
           : `video/mp4; codecs="${c}"`;
-        return MediaSource.isTypeSupported(mime);
+        return MS.isTypeSupported(mime);
       })
       .join(',');
   }
 
   async connect(videoElement) {
     if (!videoElement) throw new Error('HTMLVideoElement richiesto');
-    if (typeof MediaSource === 'undefined') {
-      this.lastError = 'MediaSource Extensions non supportate';
+    const MS = getMediaSourceConstructor();
+    if (!MS) {
+      this.lastError = 'MediaSource / ManagedMediaSource non supportate';
       return false;
     }
 
@@ -53,7 +86,14 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
     this.videoElement = videoElement;
     const t0 = performance.now();
 
-    const wsUrl = this.baseUrl.replace(/^http/i, 'ws') + `/api/ws?src=${encodeURIComponent(this.streamName)}`;
+    let wsBase = this.baseUrl;
+    if (wsBase.startsWith('/') && typeof window !== 'undefined' && window.location?.host) {
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsBase = `${wsProto}//${window.location.host}${wsBase}`;
+    } else {
+      wsBase = wsBase.replace(/^http/i, 'ws');
+    }
+    const wsUrl = `${wsBase}/api/ws?src=${encodeURIComponent(this.streamName)}`;
 
     try {
       await new Promise((resolve, reject) => {
@@ -61,10 +101,9 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
           reject(new Error(`Timeout MSE (${this.timeoutMs}ms) per '${this.streamName}'`));
         }, this.timeoutMs);
 
-        const ms = new MediaSource();
+        const ms = new MS();
         this.mediaSource = ms;
-        this.objectUrl = URL.createObjectURL(ms);
-        this.videoElement.src = this.objectUrl;
+        this.videoElement.disableRemotePlayback = true;
         this.videoElement.muted = true;
         this.videoElement.playsInline = true;
 
@@ -95,19 +134,27 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
           ws.onmessage = (ev) => {
             if (this._aborted) return;
             if (typeof ev.data === 'string') {
+              let msg;
               try {
-                const msg = JSON.parse(ev.data);
-                if (msg.type === 'mse' && msg.value) {
+                msg = JSON.parse(ev.data);
+              } catch {
+                console.warn('[Go2RtcMSEStream] Messaggio testuale non JSON:', ev.data);
+                return;
+              }
+              if (msg.type === 'mse' && msg.value) {
+                try {
                   this.sourceBuffer = ms.addSourceBuffer(msg.value);
                   this.sourceBuffer.mode = 'segments';
                   this.sourceBuffer.addEventListener('updateend', () => this.flushQueue());
-                } else if (msg.type === 'error') {
+                } catch (sbErr) {
                   clearTimeout(this._connectTimer);
                   this._connectTimer = null;
-                  reject(new Error(msg.value || 'Errore MSE go2rtc'));
+                  reject(sbErr);
                 }
-              } catch (e) {
-                console.warn('[Go2RtcMSEStream] Messaggio testuale non JSON:', ev.data);
+              } else if (msg.type === 'error') {
+                clearTimeout(this._connectTimer);
+                this._connectTimer = null;
+                reject(new Error(msg.value || 'Errore MSE go2rtc'));
               }
               return;
             }
@@ -128,6 +175,18 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
             }
           };
         });
+
+        if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+          try {
+            this.objectUrl = URL.createObjectURL(ms);
+            this.videoElement.src = this.objectUrl;
+          } catch {
+            this.objectUrl = null;
+            this.videoElement.srcObject = ms;
+          }
+        } else {
+          this.videoElement.srcObject = ms;
+        }
       });
       return true;
     } catch (err) {
@@ -184,6 +243,9 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
     }
     if (this.videoElement) {
       this.videoElement.removeAttribute('src');
+      if (this.videoElement.srcObject) {
+        this.videoElement.srcObject = null;
+      }
     }
     this.notifyStatus();
   }

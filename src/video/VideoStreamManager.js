@@ -3,6 +3,13 @@ import { Go2RtcWebRTCStream } from './Go2RtcWebRTCStream.js';
 import { Go2RtcMSEStream } from './Go2RtcMSEStream.js';
 import { HaSnapshotFallbackStream } from './HaSnapshotFallbackStream.js';
 
+function isProdSameOriginMode() {
+  let isProdBuild = false;
+  try { isProdBuild = Boolean(import.meta.env.PROD); } catch {}
+  const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+  return isProdBuild || isHttps;
+}
+
 /**
  * VideoStreamManager
  *
@@ -12,8 +19,45 @@ import { HaSnapshotFallbackStream } from './HaSnapshotFallbackStream.js';
  */
 export class VideoStreamManager {
   constructor(options = {}) {
-    this.go2rtcUrl = (options.go2rtcUrl || import.meta.env.VITE_GO2RTC_URL || 'http://localhost:1984').replace(/\/+$/, '');
-    this.go2rtcTailscaleUrl = (options.go2rtcTailscaleUrl || import.meta.env.VITE_GO2RTC_TAILSCALE_URL || '').replace(/\/+$/, '');
+    const prodSameOrigin = isProdSameOriginMode();
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    const defaultHost = typeof window !== 'undefined' && window.location?.hostname ? window.location.hostname : '127.0.0.1';
+
+    let envGo2rtcUrl = '';
+    let envGo2rtcTailscale = '';
+    let envSpatialUrl = '';
+    try {
+      if (!import.meta.env.PROD) {
+        envGo2rtcUrl = import.meta.env.VITE_GO2RTC_URL || '';
+        envGo2rtcTailscale = import.meta.env.VITE_GO2RTC_TAILSCALE_URL || '';
+        envSpatialUrl = import.meta.env.VITE_SPATIAL_SERVER_URL || '';
+      }
+    } catch {}
+
+    if (typeof options.go2rtcUrl === 'string' && options.go2rtcUrl.trim()) {
+      this.go2rtcUrl = options.go2rtcUrl.trim().replace(/\/+$/, '');
+    } else if (prodSameOrigin) {
+      this.go2rtcUrl = (origin ? `${origin}/go2rtc` : '/go2rtc').replace(/\/+$/, '');
+    } else {
+      this.go2rtcUrl = (envGo2rtcUrl || 'http://localhost:1984').replace(/\/+$/, '');
+    }
+
+    if (typeof options.go2rtcTailscaleUrl === 'string' && options.go2rtcTailscaleUrl.trim()) {
+      this.go2rtcTailscaleUrl = options.go2rtcTailscaleUrl.trim().replace(/\/+$/, '');
+    } else if (prodSameOrigin) {
+      this.go2rtcTailscaleUrl = '';
+    } else {
+      this.go2rtcTailscaleUrl = envGo2rtcTailscale.replace(/\/+$/, '');
+    }
+
+    if (typeof options.spatialServerUrl === 'string') {
+      this.spatialServerUrl = options.spatialServerUrl.replace(/\/+$/, '');
+    } else if (prodSameOrigin) {
+      this.spatialServerUrl = '';
+    } else {
+      this.spatialServerUrl = (envSpatialUrl || `http://${defaultHost}:8765`).replace(/\/+$/, '');
+    }
+
     this.haClient = options.haClient || null;
     this.activeElementProviders = new WeakMap();
     this.textureEntries = new Map(); // streamName -> { videoElement, texture, provider, refCount }
@@ -21,6 +65,12 @@ export class VideoStreamManager {
 
   setHAClient(haClient) {
     this.haClient = haClient;
+  }
+
+  setSpatialServerUrl(url) {
+    if (typeof url === 'string') {
+      this.spatialServerUrl = url.replace(/\/+$/, '');
+    }
   }
 
   /**
@@ -59,6 +109,7 @@ export class VideoStreamManager {
     const opts = {
       go2rtcUrl: activeGo2RtcUrl,
       haClient: this.haClient,
+      spatialServerUrl: this.spatialServerUrl,
       cameraEntityId: 'camera.carraio_scorrevole',
       ...(timeoutMs ? { timeoutMs } : {}),
     };
