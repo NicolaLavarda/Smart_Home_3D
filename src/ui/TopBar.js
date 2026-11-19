@@ -75,6 +75,8 @@ export class TopBar {
               ${icon('log-in', { size: 15 })}
               <span>Accedi con Home Assistant</span>
             </button>
+            <div class="settings-dropdown-divider"></div>
+            <div class="settings-perf-stats" id="top-perf-stats" style="padding: 4px 10px 6px; font-size: 10px; line-height: 1.35; color: #94a3b8; word-break: break-word;">v2-opt</div>
           </div>
         </div>
       </div>
@@ -92,6 +94,7 @@ export class TopBar {
     this.calibBtn = this.container.querySelector('#btn-open-cam-calib');
     this.authActionBtn = this.container.querySelector('#btn-ha-auth-action');
     this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
+    this.perfStatsEl = this.container.querySelector('#top-perf-stats');
 
     this.updateAuthUI();
 
@@ -203,6 +206,11 @@ export class TopBar {
       this.settingsBtn.setAttribute('aria-expanded', String(willOpen));
       if (willOpen && this.calibBtn) {
         this.calibBtn.classList.toggle('active', Boolean(this.calibrationAssistant?.isOpen));
+      }
+      if (willOpen && this.perfStatsEl && typeof this.sceneManager?.getPerfStats === 'function') {
+        const s = this.sceneManager.getPerfStats();
+        const gpuShort = String(s.gpu || 'unknown').replace(/^ANGLE \(([^,]+),\s*/i, '').replace(/\)$/, '').slice(0, 42);
+        this.perfStatsEl.textContent = `${s.build} • ${s.fps} FPS • ${s.calls} calls • dpr ${s.dpr} • ${gpuShort}`;
       }
     });
 

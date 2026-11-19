@@ -413,6 +413,10 @@ export class InteractionManager {
     const badge = this.deviceBadges.get(entityId);
     if (!badge || !badge.element) return;
 
+    const stateKey = `${isOn ? 1 : 0}|${friendlyState ?? ''}`;
+    if (badge._lastBadgeKey === stateKey) return;
+    badge._lastBadgeKey = stateKey;
+
     if (isOn) {
       badge.element.classList.remove('state-off');
       badge.element.classList.add('state-on');
@@ -443,12 +447,13 @@ export class InteractionManager {
   }
 
   updateSensorState(entityId, state, attributes = {}) {
-    // 1. Gestione Badge 3D Decal (Centrale Termica)
+    // 1. Gestione Badge 3D Decal (Centrale Termica) — ridisegna Canvas/GPU solo se il valore è cambiato!
     const thermal = this.thermal3DBadges.get(entityId);
     if (thermal) {
       const unit = attributes.unit_of_measurement || '°C';
       const num = parseFloat(state);
       const valStr = !isNaN(num) ? `${num.toFixed(1)}${unit}` : `${state}${unit}`;
+      if (thermal.currentVal === valStr) return;
       thermal.currentVal = valStr;
       this.renderThermalBadgeCanvas(thermal.ctx, valStr, thermal.sublabel, thermal.ringColor);
       thermal.texture.needsUpdate = true;
@@ -458,6 +463,11 @@ export class InteractionManager {
     // 2. Gestione Badge CSS2D Standard
     const badge = this.deviceBadges.get(entityId);
     if (!badge || !badge.valEl) return;
+
+    const unit = attributes.unit_of_measurement || '°C';
+    const sensorKey = `${state}|${unit}`;
+    if (badge._lastSensorKey === sensorKey) return;
+    badge._lastSensorKey = sensorKey;
 
     if (entityId === 'sensor.lavastoviglie_stato_di_funzionamento') {
       const s = String(state).toLowerCase();
@@ -477,7 +487,6 @@ export class InteractionManager {
       return;
     }
 
-    const unit = attributes.unit_of_measurement || '°C';
     const num = parseFloat(state);
     if (!isNaN(num)) {
       badge.valEl.textContent = `${num.toFixed(1)}${unit}`;

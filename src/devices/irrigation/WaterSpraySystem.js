@@ -79,6 +79,7 @@ export class WaterSpraySystem {
 
       const points = new THREE.Points(geometry, this.particleMaterial);
       points.frustumCulled = false;
+      points.visible = false;
       this.scene.add(points);
 
       // Struttura dati per le particelle attive
@@ -110,6 +111,7 @@ export class WaterSpraySystem {
         sweepSpeed: cfg.sweepSpeed || 0.75, // radianti al secondo
         emitTimer: 0,
         active: false,
+        hasActiveParticles: false,
         riserMesh: null,
         currentHeight: 0.0, // 0.0m retratto -> 0.25m esteso
         targetHeight: 0.0,
@@ -161,6 +163,12 @@ export class WaterSpraySystem {
         unit.currentHeight = unit.targetHeight;
       }
 
+      // Fast-path: se irrigatore spento e nessuna goccia attiva, salta completamente i 280 slot e nasconde Points
+      if (!unit.active && !unit.hasActiveParticles) {
+        if (unit.points.visible) unit.points.visible = false;
+        return;
+      }
+
       // 2. Oscillazione angolare del getto dentro il settore del prato
       if (unit.active && unit.currentHeight > 0.15) {
         unit.currentSweepAngle += unit.sweepDir * unit.sweepSpeed * dt;
@@ -188,6 +196,7 @@ export class WaterSpraySystem {
 
       // 4. Aggiornamento particelle in volo e impatti sul prato
       let needsUpdate = false;
+      let stillAlive = false;
       const count = unit.particlesData.length;
       const positions = unit.positions;
       const colors = unit.colors;
@@ -205,6 +214,8 @@ export class WaterSpraySystem {
           positions[i * 3 + 1] = -10.0;
           continue;
         }
+
+        stillAlive = true;
 
         // Fisica balistica parabolica
         p.vy -= gravity * dt;
@@ -235,6 +246,9 @@ export class WaterSpraySystem {
         colors[i * 3 + 2] = 1.0;                 // B
       }
 
+      unit.hasActiveParticles = stillAlive;
+      unit.points.visible = unit.active || stillAlive;
+
       if (needsUpdate) {
         unit.geometry.attributes.position.needsUpdate = true;
         unit.geometry.attributes.color.needsUpdate = true;
@@ -254,6 +268,8 @@ export class WaterSpraySystem {
     // Origine dall'ugello a 25cm
     const nozzleHeight = Math.max(unit.currentHeight, 0.05);
     p.active = true;
+    unit.hasActiveParticles = true;
+    unit.points.visible = true;
     p.x = unit.cfg.position.x;
     p.y = nozzleHeight + 0.02;
     p.z = unit.cfg.position.z;

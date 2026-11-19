@@ -143,10 +143,43 @@ export class DeviceRegistry {
 
   /**
    * Notifica gli aggiornamenti di stato provenienti da Home Assistant ai controller
+   * solo quando almeno una delle entità monitorate dal controller è effettivamente cambiata.
    */
   update3D(entities) {
     if (!entities) return;
+    if (!this._controllerSnapshots) {
+      this._controllerSnapshots = new Map();
+    }
+
     for (const controller of this.controllers.values()) {
+      const monitored = controller.getMonitoredEntityIds();
+      let prevSnap = this._controllerSnapshots.get(controller.id);
+      let changed = !prevSnap;
+
+      if (!changed) {
+        for (let i = 0; i < monitored.length; i++) {
+          const eid = monitored[i];
+          const curObj = entities[eid];
+          const prevObj = prevSnap.get(eid);
+          if (
+            curObj !== prevObj &&
+            !(curObj && prevObj && curObj.state === prevObj.state && curObj.last_updated && curObj.last_updated === prevObj.last_updated)
+          ) {
+            changed = true;
+            break;
+          }
+        }
+      }
+
+      if (!changed) continue;
+
+      const nextSnap = new Map();
+      for (let i = 0; i < monitored.length; i++) {
+        const eid = monitored[i];
+        nextSnap.set(eid, entities[eid]);
+      }
+      this._controllerSnapshots.set(controller.id, nextSnap);
+
       const primaryId = controller.primaryEntityId;
       const stateObj = entities[primaryId] || this.findStateInAssociated(controller, entities);
       if (stateObj) {

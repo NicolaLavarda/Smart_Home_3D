@@ -10,6 +10,7 @@ export class EntityBinder {
     this.haEntitiesMap = new Map();
     this.lights3D = new Map();      // entity_id -> Array<PointLight>
     this.animatedObjects = new Map(); // mesh -> { origPos, origRot, targetPos, targetRot, type }
+    this._lastEntitySnapshots = new Map(); // entity_id -> ultimo stateObj elaborato (evita redraw inutili)
     this.interactionManager = null;
     this.cameraController = null;
   }
@@ -325,16 +326,42 @@ export class EntityBinder {
   }
 
   handleEntitiesUpdate(entities) {
-    // 1. Aggiorna moduli dispositivi decentralizzati (Smart TV, ecc.)
+    if (!entities || typeof entities !== 'object') return;
+
+    // 1. Aggiorna moduli dispositivi decentralizzati (solo se le loro entità monitorate sono cambiate)
     deviceRegistry.update3D(entities);
 
-    // 2. Aggiorna illuminazione, cancelli e badge
-    Object.entries(entities).forEach(([entityId, stateObj]) => {
+    // 2. Aggiorna SOLO le entità effettivamente mappate nella scena 3D / badge (evita iterazione di 1000+ entità HA)
+    const relevantIds = new Set(this.haEntitiesMap.keys());
+    if (this.interactionManager) {
+      this.interactionManager.deviceBadges?.forEach((_, id) => relevantIds.add(id));
+      this.interactionManager.thermal3DBadges?.forEach((_, id) => relevantIds.add(id));
+    }
+    relevantIds.add('switch.switch_casa_interruttore_1');
+    relevantIds.add('switch.switch_casa_interruttore_3');
+
+    relevantIds.forEach((entityId) => {
+      const stateObj = entities[entityId];
+      if (!stateObj) return;
+
+      // Salta elaborazione e DOM/WebGL update se il riferimento o last_updated non sono cambiati
+      const prev = this._lastEntitySnapshots.get(entityId);
+      if (
+        prev === stateObj ||
+        (prev &&
+          prev.state === stateObj.state &&
+          prev.last_updated &&
+          prev.last_updated === stateObj.last_updated)
+      ) {
+        return;
+      }
+      this._lastEntitySnapshots.set(entityId, stateObj);
+
       const meshes = this.haEntitiesMap.get(entityId) || [];
       const domain = entityId.split('.')[0];
       const isOn = stateObj.state === 'on' || stateObj.state === 'open' || stateObj.state === 'playing';
 
-      // Aggiorna badge CSS2D
+      // Aggiorna badge CSS2D / decal 3D
       if (this.interactionManager) {
         if (domain === 'sensor') {
           this.interactionManager.updateSensorState(entityId, stateObj.state, stateObj.attributes);

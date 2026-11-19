@@ -18,8 +18,39 @@ export class AssetLoader {
     this.groundColliders = [];
     this.cameras = new Map();
     this.sharedMaterials = new Map();
+    this.isMobileProfile = this.detectMobileTouchProfile();
 
     this.pbrTextures = this.initProceduralPbrTextures();
+  }
+
+  detectMobileTouchProfile() {
+    const hasTouch = typeof navigator !== 'undefined' && Number(navigator.maxTouchPoints) > 0;
+    const isCoarse =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      Boolean(window.matchMedia('(pointer: coarse)')?.matches);
+    const isNarrow =
+      typeof window !== 'undefined' &&
+      Number(window.innerWidth) > 0 &&
+      Number(window.innerWidth) <= 900;
+    return Boolean(hasTouch || isCoarse || isNarrow);
+  }
+
+  createSurfaceMaterial(params) {
+    if (!this.isMobileProfile) {
+      return new THREE.MeshStandardMaterial(params);
+    }
+    const lambertParams = {
+      name: params.name,
+      color: params.color,
+    };
+    if (params.map) lambertParams.map = params.map;
+    if (params.transparent !== undefined) lambertParams.transparent = params.transparent;
+    if (params.opacity !== undefined) lambertParams.opacity = params.opacity;
+    if (params.emissive !== undefined) lambertParams.emissive = params.emissive;
+    if (params.emissiveIntensity !== undefined) lambertParams.emissiveIntensity = params.emissiveIntensity;
+    if (params.side !== undefined) lambertParams.side = params.side;
+    return new THREE.MeshLambertMaterial(lambertParams);
   }
 
   getSharedMaterial(key, factory) {
@@ -307,7 +338,7 @@ export class AssetLoader {
 
           // 1. Prato e Giardino esterno -> VERDE VIVO IDENTICO A BLENDER
           if (matName.includes('Prato') || objName.includes('Prato') || objName.includes('Giardino')) {
-            node.material = this.getSharedMaterial('Mat_Prato_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Prato_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Prato_Render',
               color: 0x6db64f,
               map: this.pbrTextures.grass,
@@ -317,7 +348,7 @@ export class AssetLoader {
           }
           // 2. Parquet Rovere interni -> LEGNO CALDO ROVERE BLENDER
           else if (matName.includes('Parquet') || objName.startsWith('Floor_Dining') || objName === 'Floor_Salotto') {
-            node.material = this.getSharedMaterial('Mat_Parquet_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Parquet_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Parquet_Render',
               color: 0xba8550,
               map: this.pbrTextures.parquet,
@@ -327,7 +358,7 @@ export class AssetLoader {
           }
           // 3. Lastricato Pietra (Portico, Terrazza, Camminamento) -> PIETRA CHIARA
           else if (matName.includes('Lastricato') || objName.includes('Portico_Pavement') || objName.includes('Walkway') || objName.includes('Terrazza')) {
-            node.material = this.getSharedMaterial('Mat_Lastricato_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Lastricato_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Lastricato_Render',
               color: 0xb4b8bc,
               map: this.pbrTextures.stone,
@@ -337,7 +368,7 @@ export class AssetLoader {
           }
           // 4. Ghiaia Vialetto Carrabile -> GHIAIA CHIARA
           else if (matName.includes('Ghiaia') || objName.includes('Gravel')) {
-            node.material = this.getSharedMaterial('Mat_Ghiaia_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Ghiaia_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Ghiaia_Render',
               color: 0x9fa3a7,
               map: this.pbrTextures.gravel,
@@ -347,7 +378,7 @@ export class AssetLoader {
           }
           // 5. Pavimento Cemento Garage -> CEMENTO LISCIO CHIARO
           else if (matName.includes('Cemento') || objName.startsWith('Floor_Garage')) {
-            node.material = this.getSharedMaterial('Mat_Cemento_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Cemento_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Cemento_Render',
               color: 0x8a8f94,
               roughness: 0.75,
@@ -356,7 +387,7 @@ export class AssetLoader {
           }
           // 6. Terreno di fondazione perimetrale
           else if (objName === 'Site_Foundation_Earth') {
-            node.material = this.getSharedMaterial('Mat_Earth_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Earth_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Earth_Render',
               color: 0x484038,
               roughness: 0.95,
@@ -374,7 +405,7 @@ export class AssetLoader {
             objName.startsWith('Beam_Portico_') ||
             objName.startsWith('Muro_Cinta_')
           ) {
-            node.material = this.getSharedMaterial('Mat_Muri_Esterni', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Muri_Esterni', () => this.createSurfaceMaterial({
               name: 'Mat_Muri_Esterni',
               color: 0x6e7b88, // Grigio ardesia elegante come su Blender
               roughness: 0.85,
@@ -389,7 +420,7 @@ export class AssetLoader {
             objName.startsWith('Wall_Pocket_') ||
             objName.startsWith('Wall_Stair_')
           ) {
-            node.material = this.getSharedMaterial('Mat_Muri_Interni', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Muri_Interni', () => this.createSurfaceMaterial({
               name: 'Mat_Muri_Interni',
               color: 0xeeeae2,
               roughness: 0.90,
@@ -398,7 +429,7 @@ export class AssetLoader {
           }
           // 9. Infissi e Finestre -> ANTRACITE SCURO
           else if (matName.includes('Infissi') || objName.includes('_Frame_') || objName.includes('_Mullion')) {
-            node.material = this.getSharedMaterial('Mat_Infissi_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Infissi_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Infissi_Render',
               color: 0x25272a,
               roughness: 0.45,
@@ -407,7 +438,7 @@ export class AssetLoader {
           }
           // 9b. Cordoli perimetrali e recinzione -> CORDOLO CHIARO
           else if (matName.includes('Cordolo') || objName.includes('_Curb')) {
-            node.material = this.getSharedMaterial('Mat_Cordolo_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Cordolo_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Cordolo_Render',
               color: 0xd8dade,
               roughness: 0.70,
@@ -422,7 +453,7 @@ export class AssetLoader {
              !objName.includes('Display') &&
              !objName.includes('Caffe'))
           ) {
-            node.material = this.getSharedMaterial('Mat_Vetro_Render', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Vetro_Render', () => this.createSurfaceMaterial({
               name: 'Mat_Vetro_Render',
               color: 0x99ccff,
               transparent: true,
@@ -441,7 +472,7 @@ export class AssetLoader {
           ) {
             const isCoffee = matName.includes('Macchina_Caffe') || objName.includes('Caffe');
             const matKey = isCoffee ? 'Mat_Macchina_Caffe_Opaque' : 'Mat_Vetro_Nero_Display_Opaque';
-            node.material = this.getSharedMaterial(matKey, () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial(matKey, () => this.createSurfaceMaterial({
               name: 'Mat_Vetro_Nero_Display_Opaque',
               color: isCoffee ? 0x222428 : 0x050508,
               roughness: 0.25,
@@ -452,7 +483,7 @@ export class AssetLoader {
           }
           // 11. Recinzione e Cancelli metallici -> METALLO SCURO
           else if (matName.includes('Ringhiera') || objName.startsWith('Gate_')) {
-            node.material = this.getSharedMaterial('Mat_Metallo_Cancello', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Metallo_Cancello', () => this.createSurfaceMaterial({
               name: 'Mat_Metallo_Cancello',
               color: 0x151618,
               roughness: 0.40,
@@ -461,7 +492,7 @@ export class AssetLoader {
           }
           // 11b. Vasca interna lavastoviglie -> INOX SATINATO
           else if (objName.includes('Lavastoviglie') && objName.includes('Scocca')) {
-            node.material = this.getSharedMaterial('Mat_Lavastoviglie_Vasca_Inox', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Lavastoviglie_Vasca_Inox', () => this.createSurfaceMaterial({
               name: 'Mat_Lavastoviglie_Vasca_Inox',
               color: 0x475569, // Inox satinato scuro per la vasca interna
               roughness: 0.25,
@@ -470,7 +501,7 @@ export class AssetLoader {
           }
           // 12. Porte e Arredi in Legno -> NOCE / ROVERE CALDO
           else if (matName.includes('Legno') || matName.includes('Porta') || objName.startsWith('Door_') || objName.includes('Tavolo') || objName.includes('Sedia')) {
-            node.material = this.getSharedMaterial('Mat_Legno_Arredi', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Legno_Arredi', () => this.createSurfaceMaterial({
               name: 'Mat_Legno_Arredi',
               color: 0x543219,
               roughness: 0.35,
@@ -484,7 +515,7 @@ export class AssetLoader {
             objName.includes('Termoarredo_') ||
             objName.includes('Radiator')
           ) {
-            node.material = this.getSharedMaterial('Mat_Laccato_Bianco_Soft', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Laccato_Bianco_Soft', () => this.createSurfaceMaterial({
               name: 'Mat_Laccato_Bianco_Soft',
               color: 0xc4c2bc, // Bianco caldo satinato opaco soft (non abbagliante)
               roughness: 0.70,
@@ -495,7 +526,7 @@ export class AssetLoader {
           }
           // 13b. Diffusori lampada sospensione Isola Bancone (separati da Kallax e termosifone)
           else if (matName.includes('Lampada_Isola') || objName.includes('Isola_Lampada_Cono')) {
-            node.material = this.getSharedMaterial('Mat_Diffusore_Isola', () => new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Diffusore_Isola', () => this.createSurfaceMaterial({
               name: 'Mat_Diffusore_Isola',
               color: 0xf2eee6,
               roughness: 0.35,
@@ -513,9 +544,24 @@ export class AssetLoader {
             node.castShadow = false;
             node.receiveShadow = false;
           }
-          // 15. Altri materiali
+          // 15. Altri materiali (su mobile converte MeshStandardMaterial in MeshLambertMaterial leggero condiviso)
           else {
-            node.material.roughness = Math.max(node.material.roughness ?? 0.5, 0.3);
+            if (this.isMobileProfile && node.material.isMeshStandardMaterial) {
+              const orig = node.material;
+              const origKey = `GLB_Lambert_${orig.uuid}`;
+              node.material = this.getSharedMaterial(origKey, () => new THREE.MeshLambertMaterial({
+                name: orig.name || origKey,
+                color: orig.color ? orig.color.clone() : 0xffffff,
+                map: orig.map || null,
+                transparent: Boolean(orig.transparent),
+                opacity: orig.opacity ?? 1.0,
+                emissive: orig.emissive ? orig.emissive.clone() : new THREE.Color(0x000000),
+                emissiveIntensity: orig.emissiveIntensity ?? 1.0,
+                side: orig.side,
+              }));
+            } else {
+              node.material.roughness = Math.max(node.material.roughness ?? 0.5, 0.3);
+            }
           }
         }
 

@@ -29,7 +29,7 @@ export class SceneManager {
     this.renderer.setPixelRatio(this.getEffectivePixelRatio());
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = this.isMobileProfile
-      ? THREE.PCFShadowMap
+      ? THREE.BasicShadowMap
       : THREE.PCFSoftShadowMap;
     this.renderer.shadowMap.autoUpdate = !this.isMobileProfile;
     this.renderer.shadowMap.needsUpdate = true;
@@ -57,6 +57,10 @@ export class SceneManager {
     this.isNightMode = false;
     this.clock = new THREE.Clock();
     this._rafId = null;
+    this._fpsFrames = 0;
+    this._fpsLastMark = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    this.currentFps = 0;
+    this.gpuRenderer = this._detectGpuRenderer();
 
     this.animate = this.animate.bind(this);
     this._onVisibilityChange = this.handleVisibilityChange.bind(this);
@@ -82,8 +86,37 @@ export class SceneManager {
 
   getEffectivePixelRatio() {
     const rawDpr = (typeof window !== 'undefined' && Number(window.devicePixelRatio)) || 1;
-    const cap = this.detectMobileTouchProfile() ? 1.25 : 2.0;
+    const cap = this.detectMobileTouchProfile() ? 1.0 : 2.0;
     return Math.min(rawDpr, cap);
+  }
+
+  _detectGpuRenderer() {
+    try {
+      const gl = this.renderer?.getContext?.();
+      if (!gl || typeof gl.getExtension !== 'function') return 'unknown';
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      if (dbg && typeof gl.getParameter === 'function') {
+        const raw = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
+        if (raw) return String(raw);
+      }
+      if (typeof gl.getParameter === 'function') {
+        return String(gl.getParameter(gl.RENDERER) || 'webgl');
+      }
+    } catch {}
+    return 'unknown';
+  }
+
+  getPerfStats() {
+    const info = this.renderer?.info?.render || {};
+    return {
+      build: 'v2-opt',
+      fps: this.currentFps,
+      calls: info.calls ?? 0,
+      triangles: info.triangles ?? 0,
+      dpr: this.renderer?.getPixelRatio?.() ?? 1,
+      mobile: this.isMobileProfile,
+      gpu: this.gpuRenderer || 'unknown',
+    };
   }
 
   requestShadowUpdate() {
@@ -103,7 +136,7 @@ export class SceneManager {
     this.scene.add(this.hemiLight);
 
     // 3. Sole Principale (Key Sun Light): luce solare chiara e calda con ombre morbide
-    const shadowSize = this.isMobileProfile ? 1024 : 2048;
+    const shadowSize = this.isMobileProfile ? 512 : 2048;
     this.sunLight = new THREE.DirectionalLight(0xfffdf5, 1.4);
     this.sunLight.position.set(25, 45, 20);
     this.sunLight.castShadow = true;
@@ -213,5 +246,14 @@ export class SceneManager {
 
     this.renderer.render(this.scene, this.camera);
     this.css2dRenderer.render(this.scene, this.camera);
+
+    this._fpsFrames++;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const dtMs = now - this._fpsLastMark;
+    if (dtMs >= 1000) {
+      this.currentFps = Math.round((this._fpsFrames * 1000) / dtMs);
+      this._fpsFrames = 0;
+      this._fpsLastMark = now;
+    }
   }
 }

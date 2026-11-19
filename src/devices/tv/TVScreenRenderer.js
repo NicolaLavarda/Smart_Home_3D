@@ -164,7 +164,11 @@ export class TVScreenRenderer {
   }
 
   updateState(stateObj) {
+    const attrs = stateObj?.attributes || {};
+    const sig = `${stateObj?.state ?? ''}|${attrs.source ?? ''}|${attrs.app_name ?? ''}|${attrs.media_title ?? ''}|${attrs.media_channel ?? ''}|${attrs.volume_level ?? ''}|${attrs.is_volume_muted ?? ''}`;
     this.currentState = stateObj;
+    if (this._lastStateSig === sig) return;
+    this._lastStateSig = sig;
     this.render();
   }
 
