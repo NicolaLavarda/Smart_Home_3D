@@ -109,7 +109,10 @@ async function bootstrap() {
   const haClient = new HAClient();
 
   // 5. Entity Binder (Mesh 3D <-> HA)
-  const entityBinder = new EntityBinder(sceneManager.scene, haClient);
+  const entityBinder = new EntityBinder(sceneManager.scene, haClient, {
+    isMobileProfile: sceneManager.isMobileProfile,
+    onSceneMoved: () => sceneManager.requestShadowUpdate(),
+  });
 
   // 6. Device Modals
   const deviceModals = new DeviceModals(modalContainer, haClient, cameraController, assetLoader);
@@ -274,6 +277,7 @@ async function bootstrap() {
     entityBinder.bindEntities(haEntitiesMap);
     interactionManager.registerEntities(haEntitiesMap);
     interactionManager.createDeviceBadges(manifest, haEntitiesMap);
+    sceneManager.requestShadowUpdate();
 
     console.log('[Main] Scena 3D configurata e pronta!');
   } catch (err) {

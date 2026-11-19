@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export class AssetLoader {
   constructor() {
@@ -16,8 +17,18 @@ export class AssetLoader {
     this.haEntitiesMap = new Map();
     this.groundColliders = [];
     this.cameras = new Map();
+    this.sharedMaterials = new Map();
 
     this.pbrTextures = this.initProceduralPbrTextures();
+  }
+
+  getSharedMaterial(key, factory) {
+    if (!this.sharedMaterials.has(key)) {
+      const mat = factory();
+      mat.needsUpdate = true;
+      this.sharedMaterials.set(key, mat);
+    }
+    return this.sharedMaterials.get(key);
   }
 
   computeManifestVersion(manifestObj) {
@@ -92,20 +103,20 @@ export class AssetLoader {
 
   createGrassTexture() {
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = 256;
+    canvas.height = 256;
     const ctx = canvas.getContext('2d');
 
     // Verde prato vivo e luminoso identico a Blender Viewport
     ctx.fillStyle = '#6cb74a';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, 256, 256);
 
     const tones = ['#5ea83c', '#6db74b', '#78be55', '#529933', '#85c960', '#64ae42'];
-    for (let i = 0; i < 45000; i++) {
-      const x = Math.random() * 512;
-      const y = Math.random() * 512;
+    for (let i = 0; i < 8000; i++) {
+      const x = Math.random() * 256;
+      const y = Math.random() * 256;
       ctx.fillStyle = tones[Math.floor(Math.random() * tones.length)];
-      ctx.fillRect(x, y, 2 + Math.random() * 2, 3 + Math.random() * 3);
+      ctx.fillRect(x, y, 1.5 + Math.random() * 1.5, 2 + Math.random() * 2);
     }
 
     const tex = new THREE.CanvasTexture(canvas);
@@ -153,18 +164,18 @@ export class AssetLoader {
 
   createGravelTexture() {
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = 256;
+    canvas.height = 256;
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = '#9aa0a6';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, 256, 256);
 
     const pebbles = ['#92989e', '#9fa5ab', '#8a9096', '#a7adb3', '#82888e'];
-    for (let i = 0; i < 40000; i++) {
-      const x = Math.random() * 512;
-      const y = Math.random() * 512;
-      const r = 1 + Math.random() * 3;
+    for (let i = 0; i < 6000; i++) {
+      const x = Math.random() * 256;
+      const y = Math.random() * 256;
+      const r = 0.8 + Math.random() * 1.8;
       ctx.fillStyle = pebbles[Math.floor(Math.random() * pebbles.length)];
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -289,74 +300,69 @@ export class AssetLoader {
         // Genera UV se mancanti (esclusi schermi verticali)
         this.ensurePlanarUVs(node.geometry, node.name);
 
-        // Clona e assegna materiale PBR distintivo
+        // Assegna materiale PBR condiviso dalla cache (evita centinaia di istanze duplicate)
         if (node.material) {
           const matName = node.material.name || '';
           const objName = node.name || '';
 
           // 1. Prato e Giardino esterno -> VERDE VIVO IDENTICO A BLENDER
           if (matName.includes('Prato') || objName.includes('Prato') || objName.includes('Giardino')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Prato_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Prato_Render',
               color: 0x6db64f,
               map: this.pbrTextures.grass,
               roughness: 0.80,
               metalness: 0.0,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 2. Parquet Rovere interni -> LEGNO CALDO ROVERE BLENDER
           else if (matName.includes('Parquet') || objName.startsWith('Floor_Dining') || objName === 'Floor_Salotto') {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Parquet_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Parquet_Render',
               color: 0xba8550,
               map: this.pbrTextures.parquet,
               roughness: 0.38,
               metalness: 0.04,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 3. Lastricato Pietra (Portico, Terrazza, Camminamento) -> PIETRA CHIARA
           else if (matName.includes('Lastricato') || objName.includes('Portico_Pavement') || objName.includes('Walkway') || objName.includes('Terrazza')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Lastricato_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Lastricato_Render',
               color: 0xb4b8bc,
               map: this.pbrTextures.stone,
               roughness: 0.65,
               metalness: 0.04,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 4. Ghiaia Vialetto Carrabile -> GHIAIA CHIARA
           else if (matName.includes('Ghiaia') || objName.includes('Gravel')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Ghiaia_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Ghiaia_Render',
               color: 0x9fa3a7,
               map: this.pbrTextures.gravel,
               roughness: 0.85,
               metalness: 0.04,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 5. Pavimento Cemento Garage -> CEMENTO LISCIO CHIARO
           else if (matName.includes('Cemento') || objName.startsWith('Floor_Garage')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Cemento_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Cemento_Render',
               color: 0x8a8f94,
               roughness: 0.75,
               metalness: 0.08,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 6. Terreno di fondazione perimetrale
           else if (objName === 'Site_Foundation_Earth') {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Earth_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Earth_Render',
               color: 0x484038,
               roughness: 0.95,
               metalness: 0.0,
-            });
-            node.material.needsUpdate = true;
+            }));
+            node.castShadow = false;
           }
           // 7. Muri Esterni -> INTONACO ARDESIA MODERNO (Identico a Blender!)
           else if (
@@ -368,13 +374,12 @@ export class AssetLoader {
             objName.startsWith('Beam_Portico_') ||
             objName.startsWith('Muro_Cinta_')
           ) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Muri_Esterni', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Muri_Esterni',
               color: 0x6e7b88, // Grigio ardesia elegante come su Blender
               roughness: 0.85,
               metalness: 0.02,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 8. Muri Interni -> INTONACO CHIARO ACCOGLIENTE
           else if (
@@ -384,33 +389,30 @@ export class AssetLoader {
             objName.startsWith('Wall_Pocket_') ||
             objName.startsWith('Wall_Stair_')
           ) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Muri_Interni', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Muri_Interni',
               color: 0xeeeae2,
               roughness: 0.90,
               metalness: 0.0,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 9. Infissi e Finestre -> ANTRACITE SCURO
           else if (matName.includes('Infissi') || objName.includes('_Frame_') || objName.includes('_Mullion')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Infissi_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Infissi_Render',
               color: 0x25272a,
               roughness: 0.45,
               metalness: 0.5,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 9b. Cordoli perimetrali e recinzione -> CORDOLO CHIARO
           else if (matName.includes('Cordolo') || objName.includes('_Curb')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Cordolo_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Cordolo_Render',
               color: 0xd8dade,
               roughness: 0.70,
               metalness: 0.02,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 10. Vetri -> TRASPARENTI E RIFLETTENTI (escludi Vetro_Nero / display / schermi / macchine da caffe)
           else if (
@@ -420,14 +422,15 @@ export class AssetLoader {
              !objName.includes('Display') &&
              !objName.includes('Caffe'))
           ) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Vetro_Render', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Vetro_Render',
               color: 0x99ccff,
               transparent: true,
               opacity: 0.35,
               roughness: 0.05,
               metalness: 0.2,
-            });
+            }));
+            node.castShadow = false;
           }
           // 10b. Schermi TV, Display digitali e Macchina del Caffè -> OPACHI NERI/ANTRACITE
           else if (
@@ -436,42 +439,43 @@ export class AssetLoader {
             objName.includes('Macchina_Caffe') ||
             matName.includes('Display')
           ) {
-            node.material = new THREE.MeshStandardMaterial({
+            const isCoffee = matName.includes('Macchina_Caffe') || objName.includes('Caffe');
+            const matKey = isCoffee ? 'Mat_Macchina_Caffe_Opaque' : 'Mat_Vetro_Nero_Display_Opaque';
+            node.material = this.getSharedMaterial(matKey, () => new THREE.MeshStandardMaterial({
               name: 'Mat_Vetro_Nero_Display_Opaque',
-              color: (matName.includes('Macchina_Caffe') || objName.includes('Caffe')) ? 0x222428 : 0x050508,
+              color: isCoffee ? 0x222428 : 0x050508,
               roughness: 0.25,
               metalness: 0.35,
               transparent: false,
               opacity: 1.0,
-            });
+            }));
           }
           // 11. Recinzione e Cancelli metallici -> METALLO SCURO
           else if (matName.includes('Ringhiera') || objName.startsWith('Gate_')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Metallo_Cancello', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Metallo_Cancello',
               color: 0x151618,
               roughness: 0.40,
               metalness: 0.8,
-            });
+            }));
           }
           // 11b. Vasca interna lavastoviglie -> INOX SATINATO
           else if (objName.includes('Lavastoviglie') && objName.includes('Scocca')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Lavastoviglie_Vasca_Inox', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Lavastoviglie_Vasca_Inox',
               color: 0x475569, // Inox satinato scuro per la vasca interna
               roughness: 0.25,
               metalness: 0.85,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 12. Porte e Arredi in Legno -> NOCE / ROVERE CALDO
           else if (matName.includes('Legno') || matName.includes('Porta') || objName.startsWith('Door_') || objName.includes('Tavolo') || objName.includes('Sedia')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Legno_Arredi', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Legno_Arredi',
               color: 0x543219,
               roughness: 0.35,
               metalness: 0.05,
-            });
+            }));
           }
           // 13. Mobili laccati bianchi, mensole Kallax e termosifoni / termoarredi (opachi e non-riflettenti, mai abbaglianti)
           else if (
@@ -480,33 +484,34 @@ export class AssetLoader {
             objName.includes('Termoarredo_') ||
             objName.includes('Radiator')
           ) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Laccato_Bianco_Soft', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Laccato_Bianco_Soft',
               color: 0xc4c2bc, // Bianco caldo satinato opaco soft (non abbagliante)
               roughness: 0.70,
               metalness: 0.0,
               emissive: new THREE.Color(0x000000),
               emissiveIntensity: 0.0,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 13b. Diffusori lampada sospensione Isola Bancone (separati da Kallax e termosifone)
           else if (matName.includes('Lampada_Isola') || objName.includes('Isola_Lampada_Cono')) {
-            node.material = new THREE.MeshStandardMaterial({
+            node.material = this.getSharedMaterial('Mat_Diffusore_Isola', () => new THREE.MeshStandardMaterial({
               name: 'Mat_Diffusore_Isola',
               color: 0xf2eee6,
               roughness: 0.35,
               metalness: 0.0,
               emissive: new THREE.Color(0x000000),
               emissiveIntensity: 0.0,
-            });
-            node.material.needsUpdate = true;
+            }));
           }
           // 14. Testi e Etichette Blueprint 3D sul pavimento -> TONALITÀ GRIGIO ARDESIA SOTTILE (non bianchi abbaglianti!)
           else if (objName.startsWith('Label_')) {
-            node.material = new THREE.MeshBasicMaterial({
+            node.material = this.getSharedMaterial('Mat_Label_Blueprint', () => new THREE.MeshBasicMaterial({
+              name: 'Mat_Label_Blueprint',
               color: 0x475569, // Slate 600 discreto
-            });
+            }));
+            node.castShadow = false;
+            node.receiveShadow = false;
           }
           // 15. Altri materiali
           else {
@@ -527,6 +532,7 @@ export class AssetLoader {
 
         if (isGroundCollider) {
           node.userData.collider_role = 'ground';
+          node.castShadow = false;
           this.groundColliders.push(node);
         }
       }
@@ -562,8 +568,194 @@ export class AssetLoader {
       }
     });
 
+    this.batchStaticMeshes();
+
     console.log(
       `[AssetLoader] Modello elaborato con successo: ${this.haEntitiesMap.size} entità HA, ${this.groundColliders.length} collider calpestabili.`
     );
+  }
+
+  /**
+   * Unisce (batching) le mesh architettoniche/decorative puramente statiche che condividono
+   * lo stesso materiale, riducendo drasticamente i WebGL draw call (da ~1350 a ~100).
+   * Preserva integralmente tutte le entità HA, i ground collider e le parti animate/interattive.
+   */
+  batchStaticMeshes() {
+    if (!this.model) return;
+    try {
+      this.model.updateMatrixWorld(true);
+      const invModelMatrix = this.model.matrixWorld.clone().invert();
+
+      const dynamicNameRe =
+        /^(Gate_|Switch_Gate|Garage_Door_Panel_|Lavastoviglie|TV_Salotto|Sprinkler_|Ecovacs_Deebot_|Security_Cam_|Bollard_Garden_|Wall_Garden_Light_|Puffer|Caldaia|Accumulo)|Screen/i;
+
+      const protectedMeshes = new Set(this.groundColliders);
+      this.haEntitiesMap.forEach((meshes) => {
+        meshes.forEach((m) => protectedMeshes.add(m));
+      });
+
+      const hasProtectedAncestor = (node) => {
+        let cur = node;
+        while (cur && cur !== this.model) {
+          if (cur.userData?.ha_entity || cur.userData?.ha_alt_entity) return true;
+          if (cur.name && dynamicNameRe.test(cur.name)) return true;
+          cur = cur.parent;
+        }
+        return false;
+      };
+
+      const buckets = new Map();
+      const protectedGeometries = new Set();
+      let totalMeshesBefore = 0;
+
+      this.model.traverse((node) => {
+        if (!node.isMesh) return;
+        totalMeshesBefore++;
+
+        const isProtected =
+          protectedMeshes.has(node) ||
+          hasProtectedAncestor(node) ||
+          node.isSkinnedMesh ||
+          Boolean(node.morphTargetInfluences) ||
+          !node.geometry ||
+          !node.geometry.attributes?.position ||
+          !node.material ||
+          Array.isArray(node.material) ||
+          node.matrixWorld.determinant() < 0;
+
+        if (isProtected) {
+          if (node.geometry) protectedGeometries.add(node.geometry);
+          return;
+        }
+
+        const key = `${node.material.uuid}|${node.castShadow ? 1 : 0}|${node.receiveShadow ? 1 : 0}`;
+        let bucket = buckets.get(key);
+        if (!bucket) {
+          bucket = {
+            material: node.material,
+            castShadow: node.castShadow,
+            receiveShadow: node.receiveShadow,
+            meshes: [],
+          };
+          buckets.set(key, bucket);
+        }
+        bucket.meshes.push(node);
+      });
+
+      const relMatrix = new THREE.Matrix4();
+      const meshesToRemove = [];
+      const newBatchMeshes = [];
+      let mergedSourceCount = 0;
+
+      buckets.forEach((bucket) => {
+        if (bucket.meshes.length < 2) return;
+
+        const needsUv =
+          Boolean(bucket.material.map) ||
+          bucket.meshes.every((m) => Boolean(m.geometry?.attributes?.uv));
+
+        const prepared = [];
+        let ok = true;
+
+        for (const mesh of bucket.meshes) {
+          const raw = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+          if (!raw.attributes.normal) {
+            raw.computeVertexNormals();
+          }
+
+          const posAttr = raw.attributes.position;
+          const normAttr = raw.attributes.normal;
+          if (!posAttr || !normAttr) {
+            raw.dispose();
+            ok = false;
+            break;
+          }
+
+          const clean = new THREE.BufferGeometry();
+          clean.setAttribute('position', posAttr.clone());
+          clean.setAttribute('normal', normAttr.clone());
+          if (needsUv) {
+            if (raw.attributes.uv) {
+              clean.setAttribute('uv', raw.attributes.uv.clone());
+            } else {
+              clean.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(posAttr.count * 2), 2));
+            }
+          }
+          raw.dispose();
+
+          relMatrix.multiplyMatrices(invModelMatrix, mesh.matrixWorld);
+          clean.applyMatrix4(relMatrix);
+          prepared.push(clean);
+        }
+
+        if (!ok || prepared.length < 2) {
+          prepared.forEach((g) => g.dispose());
+          return;
+        }
+
+        const merged = mergeGeometries(prepared, false);
+        prepared.forEach((g) => g.dispose());
+
+        if (!merged) return;
+
+        merged.computeBoundingBox();
+        merged.computeBoundingSphere();
+
+        const batchMesh = new THREE.Mesh(merged, bucket.material);
+        batchMesh.name = `StaticBatch_${bucket.material.name || bucket.material.uuid.slice(0, 8)}`;
+        batchMesh.castShadow = bucket.castShadow;
+        batchMesh.receiveShadow = bucket.receiveShadow;
+        batchMesh.matrixAutoUpdate = false;
+        batchMesh.updateMatrix();
+
+        newBatchMeshes.push(batchMesh);
+        for (const mesh of bucket.meshes) {
+          meshesToRemove.push(mesh);
+        }
+        mergedSourceCount += bucket.meshes.length;
+      });
+
+      if (newBatchMeshes.length === 0) return;
+
+      for (const mesh of meshesToRemove) {
+        if (mesh.parent) mesh.parent.remove(mesh);
+        if (mesh.geometry && !protectedGeometries.has(mesh.geometry)) {
+          mesh.geometry.dispose();
+        }
+      }
+
+      for (const batchMesh of newBatchMeshes) {
+        this.model.add(batchMesh);
+      }
+
+      // Rimuovi eventuali nodi contenitori rimasti vuoti per velocizzare traverse() e CSS2DRenderer
+      const pruneEmpty = (parent) => {
+        for (let i = parent.children.length - 1; i >= 0; i--) {
+          const child = parent.children[i];
+          if (child.children.length > 0) {
+            pruneEmpty(child);
+          }
+          if (
+            !child.isMesh &&
+            !child.isLight &&
+            !child.isCamera &&
+            child.children.length === 0 &&
+            !child.userData?.ha_entity &&
+            !child.userData?.ha_alt_entity &&
+            !(child.name && dynamicNameRe.test(child.name))
+          ) {
+            parent.remove(child);
+          }
+        }
+      };
+      pruneEmpty(this.model);
+
+      const totalMeshesAfter = totalMeshesBefore - mergedSourceCount + newBatchMeshes.length;
+      console.log(
+        `[AssetLoader] Static batching: ${mergedSourceCount} mesh statiche fuse in ${newBatchMeshes.length} batch (mesh totali: ${totalMeshesBefore} -> ${totalMeshesAfter}).`
+      );
+    } catch (err) {
+      console.warn('[AssetLoader] Static batching saltato (fallback sicuro):', err);
+    }
   }
 }

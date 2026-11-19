@@ -21,14 +21,18 @@ export class SceneManager {
 
     // WebGL Renderer calibrato con profilo mobile/desktop adattivo
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: !this.isMobileProfile,
       powerPreference: 'high-performance',
       alpha: false,
     });
     this.renderer.setSize(this.width, this.height);
     this.renderer.setPixelRatio(this.getEffectivePixelRatio());
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = this.isMobileProfile
+      ? THREE.PCFShadowMap
+      : THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = !this.isMobileProfile;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.localClippingEnabled = true;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -78,8 +82,14 @@ export class SceneManager {
 
   getEffectivePixelRatio() {
     const rawDpr = (typeof window !== 'undefined' && Number(window.devicePixelRatio)) || 1;
-    const cap = this.detectMobileTouchProfile() ? 1.5 : 2.0;
+    const cap = this.detectMobileTouchProfile() ? 1.25 : 2.0;
     return Math.min(rawDpr, cap);
+  }
+
+  requestShadowUpdate() {
+    if (this.renderer?.shadowMap) {
+      this.renderer.shadowMap.needsUpdate = true;
+    }
   }
 
   setupLighting() {
@@ -137,6 +147,7 @@ export class SceneManager {
       this.fillLight.intensity = 0.55;
       this.renderer.toneMappingExposure = 1.15;
     }
+    this.requestShadowUpdate();
   }
 
   onWindowResize() {

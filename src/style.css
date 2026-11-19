@@ -4234,6 +4234,23 @@ body, html {
   cursor: pointer;
 }
 
+/* Mobile Touch Performance: evita backdrop-filter blur sopra il canvas WebGL (readback GPU ad ogni frame su Android/Mali) */
+@media (pointer: coarse) {
+  .glass,
+  .device-badge-3d,
+  .thermal-temp-badge,
+  .deebot-dropdown-menu,
+  .ha-auth-overlay,
+  .pwa-update-toast {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .glass {
+    background: rgba(15, 23, 42, 0.92);
+  }
+}
+
 
 
 

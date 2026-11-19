@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import { deviceRegistry } from '../devices/DeviceRegistry.js';
 
 export class EntityBinder {
-  constructor(scene, haClient) {
+  constructor(scene, haClient, options = {}) {
     this.scene = scene;
     this.haClient = haClient;
+    this.isMobileProfile = Boolean(options.isMobileProfile);
+    this.onSceneMoved = typeof options.onSceneMoved === 'function' ? options.onSceneMoved : null;
     this.haEntitiesMap = new Map();
     this.lights3D = new Map();      // entity_id -> Array<PointLight>
     this.animatedObjects = new Map(); // mesh -> { origPos, origRot, targetPos, targetRot, type }
@@ -67,30 +69,63 @@ export class EntityBinder {
             !m.name.includes('_Pillar') &&
             !m.name.includes('_Cap')
         );
-        bollards.forEach((b) => {
-          const p = new THREE.Vector3();
-          b.getWorldPosition(p);
-          // Raggio 7 metri: distanza 16m con decadimento morbido 1.15 e intensità ben visibile sul prato
-          const pl = new THREE.PointLight(0xfff5dd, 0.0, 16.0, 1.15);
-          pl.position.set(p.x, p.y + 0.45, p.z);
-          pl.userData.baseIntensity = 12.0;
-          this.scene.add(pl);
-          lightList.push(pl);
-        });
-
         const wallLights = meshes.filter(
           (m) => m.name.startsWith('Wall_Garden_Light_') && !m.name.includes('_Body')
         );
-        wallLights.forEach((wl) => {
-          const p = new THREE.Vector3();
-          wl.getWorldPosition(p);
-          // Luci a muro a 60cm da terra lungo il muro Est: orientate verso ovest (-X)
-          const pl = new THREE.PointLight(0xfff3db, 0.0, 13.0, 1.15);
-          pl.position.set(p.x - 0.35, p.y + 0.1, p.z);
-          pl.userData.baseIntensity = 9.0;
-          this.scene.add(pl);
-          lightList.push(pl);
-        });
+
+        if (this.isMobileProfile) {
+          // Su mobile consolida in 2 PointLight (zona lampioncini + muro Est) per ridurre il costo fragment shader PBR
+          if (bollards.length > 0) {
+            const center = new THREE.Vector3();
+            bollards.forEach((b) => {
+              const p = new THREE.Vector3();
+              b.getWorldPosition(p);
+              center.add(p);
+            });
+            center.divideScalar(bollards.length);
+            const pl = new THREE.PointLight(0xfff5dd, 0.0, 22.0, 1.05);
+            pl.position.set(center.x, center.y + 1.1, center.z);
+            pl.userData.baseIntensity = 18.0;
+            this.scene.add(pl);
+            lightList.push(pl);
+          }
+          if (wallLights.length > 0) {
+            const center = new THREE.Vector3();
+            wallLights.forEach((wl) => {
+              const p = new THREE.Vector3();
+              wl.getWorldPosition(p);
+              center.add(p);
+            });
+            center.divideScalar(wallLights.length);
+            const pl = new THREE.PointLight(0xfff3db, 0.0, 18.0, 1.05);
+            pl.position.set(center.x - 0.5, center.y + 0.4, center.z);
+            pl.userData.baseIntensity = 14.0;
+            this.scene.add(pl);
+            lightList.push(pl);
+          }
+        } else {
+          bollards.forEach((b) => {
+            const p = new THREE.Vector3();
+            b.getWorldPosition(p);
+            // Raggio 7 metri: distanza 16m con decadimento morbido 1.15 e intensità ben visibile sul prato
+            const pl = new THREE.PointLight(0xfff5dd, 0.0, 16.0, 1.15);
+            pl.position.set(p.x, p.y + 0.45, p.z);
+            pl.userData.baseIntensity = 12.0;
+            this.scene.add(pl);
+            lightList.push(pl);
+          });
+
+          wallLights.forEach((wl) => {
+            const p = new THREE.Vector3();
+            wl.getWorldPosition(p);
+            // Luci a muro a 60cm da terra lungo il muro Est: orientate verso ovest (-X)
+            const pl = new THREE.PointLight(0xfff3db, 0.0, 13.0, 1.15);
+            pl.position.set(p.x - 0.35, p.y + 0.1, p.z);
+            pl.userData.baseIntensity = 9.0;
+            this.scene.add(pl);
+            lightList.push(pl);
+          });
+        }
       }
       // 2. Lampadario zona pranzo cucina (light.forno): potente e diffonde su tutta l'area cucina/pranzo
       else if (entityId === 'light.forno') {
@@ -113,17 +148,19 @@ export class EntityBinder {
         this.scene.add(pl);
         lightList.push(pl);
       }
-      // 3. Salotto - Faretti a soffitto (light.smart_plug_in_unit_switch_3): 3 punti luce ben distribuiti
+      // 3. Salotto - Faretti a soffitto (light.smart_plug_in_unit_switch_3)
       else if (entityId === 'light.smart_plug_in_unit_switch_3') {
-        const spots = [
-          new THREE.Vector3(1.8, 2.65, 3.5),
-          new THREE.Vector3(3.2, 2.65, 3.5),
-          new THREE.Vector3(4.6, 2.65, 3.5),
-        ];
+        const spots = this.isMobileProfile
+          ? [new THREE.Vector3(3.2, 2.65, 3.5)]
+          : [
+              new THREE.Vector3(1.8, 2.65, 3.5),
+              new THREE.Vector3(3.2, 2.65, 3.5),
+              new THREE.Vector3(4.6, 2.65, 3.5),
+            ];
         spots.forEach((pos) => {
-          const pl = new THREE.PointLight(0xfffaea, 0.0, 11.0, 1.2);
+          const pl = new THREE.PointLight(0xfffaea, 0.0, this.isMobileProfile ? 14.0 : 11.0, 1.15);
           pl.position.copy(pos);
-          pl.userData.baseIntensity = 7.0;
+          pl.userData.baseIntensity = this.isMobileProfile ? 10.5 : 7.0;
           this.scene.add(pl);
           lightList.push(pl);
         });
@@ -154,20 +191,49 @@ export class EntityBinder {
       }
       // 6. Bancone cucina (light.bancone)
       else if (entityId === 'light.bancone') {
-        meshes.forEach((m) => {
-          const p = new THREE.Vector3();
-          m.getWorldPosition(p);
-          const pl = new THREE.PointLight(0xfff3db, 0.0, 9.5, 1.25);
-          pl.position.set(p.x, p.y - 0.15, p.z);
-          pl.userData.baseIntensity = 6.5;
+        if (this.isMobileProfile && meshes.length > 0) {
+          const center = new THREE.Vector3();
+          meshes.forEach((m) => {
+            const p = new THREE.Vector3();
+            m.getWorldPosition(p);
+            center.add(p);
+          });
+          center.divideScalar(meshes.length);
+          const pl = new THREE.PointLight(0xfff3db, 0.0, 11.0, 1.2);
+          pl.position.set(center.x, center.y - 0.15, center.z);
+          pl.userData.baseIntensity = 8.5;
           this.scene.add(pl);
           lightList.push(pl);
-        });
+        } else {
+          meshes.forEach((m) => {
+            const p = new THREE.Vector3();
+            m.getWorldPosition(p);
+            const pl = new THREE.PointLight(0xfff3db, 0.0, 9.5, 1.25);
+            pl.position.set(p.x, p.y - 0.15, p.z);
+            pl.userData.baseIntensity = 6.5;
+            this.scene.add(pl);
+            lightList.push(pl);
+          });
+        }
       }
       // 7. Portico (light.portico)
       else if (entityId === 'light.portico') {
-        meshes.forEach((m) => {
-          if (!m.name.includes('_Lens') && !m.name.includes('_Plate')) {
+        const sources = meshes.filter((m) => !m.name.includes('_Lens') && !m.name.includes('_Plate'));
+        if (this.isMobileProfile && sources.length > 0) {
+          const center = new THREE.Vector3();
+          sources.forEach((m) => {
+            const p = new THREE.Vector3();
+            m.getWorldPosition(p);
+            center.add(p);
+          });
+          center.divideScalar(sources.length);
+          const pl = new THREE.PointLight(0xfff0db, 0.0, 12.0, 1.2);
+          pl.position.copy(center);
+          pl.userData.baseIntensity = 8.5;
+          this.scene.add(pl);
+          lightList.push(pl);
+        } else {
+          sources.forEach((m) => {
             const p = new THREE.Vector3();
             m.getWorldPosition(p);
             const pl = new THREE.PointLight(0xfff0db, 0.0, 10.0, 1.25);
@@ -175,8 +241,8 @@ export class EntityBinder {
             pl.userData.baseIntensity = 6.0;
             this.scene.add(pl);
             lightList.push(pl);
-          }
-        });
+          });
+        }
       }
       // 8. Altre luci generiche
       else {
@@ -367,14 +433,32 @@ export class EntityBinder {
     deviceRegistry.update(delta);
 
     // 2. Animazione fluida cancelli (rotazione a battente) e serrande (lerp traslazione)
+    let moved = false;
     this.animatedObjects.forEach((anim, mesh) => {
       if (anim && anim.targetPos) {
-        mesh.position.lerp(anim.targetPos, 0.08);
+        if (mesh.position.distanceToSquared(anim.targetPos) > 1e-6) {
+          mesh.position.lerp(anim.targetPos, 0.08);
+          moved = true;
+        } else if (!mesh.position.equals(anim.targetPos)) {
+          mesh.position.copy(anim.targetPos);
+          moved = true;
+        }
       }
       if (anim && anim.targetRotY !== undefined) {
-        mesh.rotation.y = THREE.MathUtils.lerp(mesh.rotation.y, anim.targetRotY, 0.08);
+        const diff = anim.targetRotY - mesh.rotation.y;
+        if (Math.abs(diff) > 0.0005) {
+          mesh.rotation.y = THREE.MathUtils.lerp(mesh.rotation.y, anim.targetRotY, 0.08);
+          moved = true;
+        } else if (mesh.rotation.y !== anim.targetRotY) {
+          mesh.rotation.y = anim.targetRotY;
+          moved = true;
+        }
       }
     });
+
+    if (moved && this.onSceneMoved) {
+      this.onSceneMoved();
+    }
   }
 
   toggleEntity(entityId) {

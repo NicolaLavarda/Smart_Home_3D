@@ -170,6 +170,10 @@ export class TVScreenRenderer {
 
   onTick(delta) {
     this.animationTimer += delta;
+    this._renderAccum = (this._renderAccum || 0) + delta;
+    if (this._renderAccum < 0.1) return; // Max 10 FPS per animazioni TV (evita upload GPU texture a 60Hz)
+    this._renderAccum = 0;
+
     // Aggiorna animazioni procedurali su schermo attivo (es. equalizer Spotify o badge live)
     if (this.currentState) {
       const state = this.currentState.state;
