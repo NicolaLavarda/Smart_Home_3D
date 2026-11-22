@@ -101,19 +101,27 @@ export class DeviceModals {
 
     this.currentEntityId = entityId;
 
-    // 1. Verifica se esiste un controller dedicato nel registro decentralizzato (es. Smart TV, Lavastoviglie, Irrigazione)
+    // 1. Verifica se esiste un controller dedicato nel registro decentralizzato (es. Smart TV, Lavastoviglie, Irrigazione, Telecamere)
     const customController = deviceRegistry.findControllerForEntity(entityId);
     if (customController) {
-      const entity = customController.getEntity ? customController.getEntity() : (this.haClient.getEntity(entityId) || {
-        entity_id: entityId,
-        state: 'unknown',
-        attributes: { friendly_name: customController.name || entityId },
-      });
+      const entity =
+        (customController.getEntity ? customController.getEntity(entityId) : null) ||
+        this.haClient.getEntity(entityId) || {
+          entity_id: entityId,
+          state: 'unknown',
+          attributes: { friendly_name: customController.name || entityId },
+        };
 
-      this.modalTitle.textContent = customController.name || entity.attributes?.friendly_name || 'Dispositivo';
-      this._setSubtitle(customController.subtitle || '');
+      const headerInfo =
+        typeof customController.getModalHeaderInfo === 'function'
+          ? customController.getModalHeaderInfo(entityId, entity)
+          : null;
+
+      this.modalTitle.textContent = headerInfo?.title || customController.name || entity.attributes?.friendly_name || 'Dispositivo';
+      this._setSubtitle(headerInfo?.subtitle ?? customController.subtitle ?? '');
 
       customController.renderModal(this.modalContent, entity, {
+        entityId,
         haClient: this.haClient,
         cameraController: this.cameraController,
         assetLoader: this.assetLoader,
@@ -355,9 +363,18 @@ export class DeviceModals {
   }
 
   findMatchingBlenderCameraName(cameraEntityId) {
-    if (!this.assetLoader.manifest || !this.assetLoader.manifest.cameras) return 'Cam_Carraio';
-    for (const [name, camData] of Object.entries(this.assetLoader.manifest.cameras)) {
-      if (camData.ha_camera_entity === cameraEntityId || (camData.ha_camera_entity && cameraEntityId.includes('carraio'))) {
+    if (!this.assetLoader?.manifest?.cameras) return 'Cam_Carraio';
+    const cameras = this.assetLoader.manifest.cameras;
+    for (const [name, camData] of Object.entries(cameras)) {
+      if (camData?.ha_camera_entity === cameraEntityId) {
+        return name;
+      }
+    }
+    const slug = String(cameraEntityId || '').toLowerCase().replace(/^camera\./, '').replace(/_(scorrevole|trasparente|fluente|main|sub)$/i, '');
+    for (const [name, camData] of Object.entries(cameras)) {
+      if (!camData?.ha_camera_entity && !camData?.is_real_security_camera) continue;
+      const camSlug = name.replace(/^Cam_/i, '').toLowerCase();
+      if (slug && (camSlug === slug || String(camData?.stream_id || '').toLowerCase().startsWith(slug))) {
         return name;
       }
     }

@@ -800,3 +800,478 @@ def test_f17_icons_registry_covers_all_new_m3_ui_icons():
     for name in sorted(discovered):
         svg = results.get(name, "")
         assert svg.startswith("<svg") and "</svg>" in svg, f"Icona mancante '{name}'"
+
+
+def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
+    import json
+
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo_root / "public" / "models" / "scene_manifest.json").read_text(encoding="utf-8"))
+    manifest_subset = {
+        "cameras": {
+            k: v
+            for k, v in manifest.get("cameras", {}).items()
+            if v.get("is_real_security_camera")
+        },
+        "ha_entities": {
+            k: v
+            for k, v in manifest.get("ha_entities", {}).items()
+            if k in ("camera.carraio_scorrevole", "camera.portico")
+        },
+    }
+    manifest_json = json.dumps(manifest_subset)
+
+    code = f"""
+      const manifest = {manifest_json};
+      const {{ CameraCatalog }} = await loadModule('/src/video/CameraCatalog.js');
+      const {{ HAClient }} = await loadModule('/src/ha/HAClient.js');
+      const {{ DeviceModals }} = await loadModule('/src/ha/DeviceModals.js');
+      const {{ deviceRegistry }} = await loadModule('/src/devices/DeviceRegistry.js');
+      const {{ SecurityFabHub }} = await loadModule('/src/ui/SecurityFabHub.js');
+
+      const catalog = new CameraCatalog();
+      catalog.syncFromManifest(manifest);
+
+      const ha = new HAClient();
+      ha.initMockMode();
+
+      const attachedStreams = [];
+      const mockVideoMgr = {{
+        attachToVideoElement: async (streamName, _videoEl, _haClient, _entityId, extra) => {{
+          attachedStreams.push({{ streamName, extra }});
+          return {{
+            mode: 'webrtc',
+            getStatus: () => ({{ mode: 'webrtc', connected: true, latencyMs: 35 }}),
+            onStatusChange: () => () => {{}},
+          }};
+        }},
+        detachFromVideoElement: () => {{}},
+      }};
+
+      const secCtrl = deviceRegistry.get('security_camera');
+      secCtrl.setServices({{
+        haClient: ha,
+        videoStreamManager: mockVideoMgr,
+        cameraCatalog: catalog,
+        assetLoader: {{ cameras: new Map(), manifest }},
+      }});
+      secCtrl.syncFromManifest(manifest);
+
+      const drawer = ctx.document.createElement('div');
+      ctx.document.body.appendChild(drawer);
+      const modals = new DeviceModals(
+        drawer,
+        ha,
+        {{ flyToPreset: () => {{}}, flyToCameraPOV: () => {{}}, startFollowing: () => {{}} }},
+        {{ cameras: new Map(), manifest }}
+      );
+
+      // 1. Apri modale Portico
+      modals.open('camera.portico');
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      const porticoTitle = drawer.querySelector('#modal-title')?.textContent?.trim();
+      const porticoSubtitle = drawer.querySelector('#modal-subtitle')?.textContent?.trim();
+      const porticoMainBtn = drawer.querySelector('[data-stream="portico_main"]')?.textContent?.trim();
+      const porticoSubBtn = drawer.querySelector('[data-stream="portico_sub"]')?.textContent?.trim();
+      const porticoHtml = drawer.innerHTML;
+      modals.close();
+
+      // 2. Apri modale Carraio (regressione zero)
+      modals.open('camera.carraio_scorrevole');
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      const carraioTitle = drawer.querySelector('#modal-title')?.textContent?.trim();
+      const carraioSubtitle = drawer.querySelector('#modal-subtitle')?.textContent?.trim();
+      const carraioHtml = drawer.innerHTML;
+      modals.close();
+
+      // 3. Verifica risoluzione entity HA multi-camera senza cross-fallback verso Carraio
+      const resolvedPorticoExact = ha.resolveCameraEntityId('camera.portico');
+      delete ha.entities['camera.portico'];
+      delete ha.mockEntities['camera.portico'];
+      ha.entities['camera.portico_scorrevole'] = {{ entity_id: 'camera.portico_scorrevole', state: 'streaming', attributes: {{}} }};
+      const resolvedPorticoVariant = ha.resolveCameraEntityId('camera.portico');
+      delete ha.entities['camera.portico_scorrevole'];
+      const resolvedPorticoMissing = ha.resolveCameraEntityId('camera.portico');
+
+      // 4. Verifica SecurityFabHub mostra entrambe le telecamere dal manifest reale
+      const hubRoot = ctx.document.createElement('div');
+      ctx.document.body.appendChild(hubRoot);
+      const hubAttached = [];
+      const hub = new SecurityFabHub(hubRoot, {{
+        cameraCatalog: catalog,
+        videoStreamManager: {{
+          attachToVideoElement: async (streamName) => {{
+            hubAttached.push(streamName);
+            return {{ mode: 'webrtc', getStatus: () => ({{ mode: 'webrtc', connected: true }}), onStatusChange: () => () => {{}} }};
+          }},
+          detachFromVideoElement: () => {{}},
+        }},
+        recordingManager: {{
+          registerSlot: () => {{}},
+          setPlaybackRate: () => {{}},
+          setPlaying: () => {{}},
+          seekAllToTimestamp: async () => {{}},
+          queryAllSegments: async () => new Map(),
+          detachAll: () => {{}},
+          getStorageSummary: async () => ({{ configured: false }}),
+        }},
+        trajectoryRenderer: {{
+          setLiveMode: () => {{}},
+          setEntitiesVisible: () => {{}},
+          loadDetections: () => {{}},
+          clearHistorical: () => {{}},
+          updateAtTime: () => {{}},
+          interpolateLive: () => {{}},
+        }},
+        spatialStreamClient: {{ connected: false, onStatusChange: () => () => {{}}, onFrame: () => () => {{}} }},
+        cameraController: {{ flyToPreset: () => {{}}, flyToCameraPOV: () => {{}} }},
+        assetLoader: {{ cameras: new Map(), manifest }},
+        deviceModals: {{ open: () => {{}} }},
+      }});
+      hubRoot.querySelector('#btn-security-fab').click();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const hubCamIds = hubRoot.querySelectorAll('.m3-cam-tile').map((t) => t.dataset.cameraId);
+      hub.dispose();
+
+      return {{
+        catalogIds: catalog.getCameras().map((c) => c.id),
+        porticoEntry: catalog.cameras.get('Cam_Portico'),
+        porticoTitle,
+        porticoSubtitle,
+        porticoMainBtn,
+        porticoSubBtn,
+        porticoHasIp: porticoHtml.includes('192.168.86.51'),
+        porticoHasFov: porticoHtml.includes('87°×44°'),
+        carraioTitle,
+        carraioSubtitle,
+        carraioHasIp: carraioHtml.includes('192.168.86.47'),
+        attachedStreamNames: attachedStreams.map((s) => s.streamName),
+        resolvedPorticoExact,
+        resolvedPorticoVariant,
+        resolvedPorticoMissing,
+        hubCamIds,
+        hubAttached,
+      }};
+    """
+    res = run_js_scenario({"code": code})
+    assert res["ok"] is True, res
+    d = res["data"]
+    assert set(d["catalogIds"]) == {"Cam_Carraio", "Cam_Portico"}
+    assert d["porticoEntry"]["entityId"] == "camera.portico"
+    assert d["porticoEntry"]["mainStream"] == "portico_main"
+    assert d["porticoEntry"]["subStream"] == "portico_sub"
+    assert d["porticoEntry"]["cameraIp"] == "192.168.86.51"
+    assert d["porticoEntry"]["fovH"] == 87
+    assert d["porticoEntry"]["fovV"] == 44
+    assert "Portico" in d["porticoTitle"]
+    assert "." not in d["porticoSubtitle"]
+    assert d["porticoMainBtn"] == "Main 4K"
+    assert d["porticoSubBtn"] == "Sub 640×360"
+    assert d["porticoHasIp"] is True
+    assert d["porticoHasFov"] is True
+    assert "." not in d["carraioSubtitle"]
+    assert d["carraioHasIp"] is True
+    assert d["attachedStreamNames"] == ["portico_main", "carraio_main"]
+    assert d["resolvedPorticoExact"] == "camera.portico"
+    assert d["resolvedPorticoVariant"] == "camera.portico_scorrevole"
+    assert d["resolvedPorticoMissing"] == "camera.portico"
+    assert set(d["hubCamIds"]) == {"Cam_Carraio", "Cam_Portico"}
+    assert set(d["hubAttached"]) == {"carraio_sub", "portico_sub"}
+
+
+def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
+    import json
+
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo_root / "public" / "models" / "scene_manifest.json").read_text(encoding="utf-8"))
+    manifest_subset = {
+        "cameras": {
+            k: v
+            for k, v in manifest.get("cameras", {}).items()
+            if v.get("is_real_security_camera")
+        }
+    }
+    manifest_json = json.dumps(manifest_subset)
+
+    code = f"""
+      const manifest = {manifest_json};
+      const {{ CameraCatalog }} = await loadModule('/src/video/CameraCatalog.js');
+      const {{ CameraPovOverlayController }} = await loadModule('/src/spatial/CameraPovOverlayController.js');
+      const {{ CalibrationAssistantUI }} = await loadModule('/src/spatial/calibration/CalibrationAssistantUI.js');
+      const {{ SecurityFabHub }} = await loadModule('/src/ui/SecurityFabHub.js');
+      const {{ TopBar }} = await loadModule('/src/ui/TopBar.js');
+      const {{ RecordingPlaybackStatus }} = await loadModule('/src/video/recordings/index.js');
+
+      const catalog = new CameraCatalog();
+      catalog.syncFromManifest(manifest);
+
+      // Mock CameraController che implementa la macchina a stati POV reale
+      const povListeners = new Set();
+      let povExitLocked = false;
+      const camCtrl = {{
+        activePovCameraName: null,
+        onPovChange(fn) {{
+          povListeners.add(fn);
+          return () => povListeners.delete(fn);
+        }},
+        setPovExitLocked(v) {{ povExitLocked = Boolean(v); }},
+        flyToPreset() {{ this.exitCameraPOV({{ reason: 'preset' }}); }},
+        setInstantCameraPose(_p, _q, _f, camName) {{
+          if (camName) this.activePovCameraName = camName;
+        }},
+        flyToCameraPOV(camNode, _dur, onComplete, opts = {{}}) {{
+          const camName = camNode?.name || opts.cameraName || null;
+          const prev = this.activePovCameraName;
+          if (prev && prev !== camName) {{
+            this.exitCameraPOV({{ reason: 'switch_pov' }});
+          }}
+          this.activePovCameraName = camName;
+          povListeners.forEach((fn) => fn({{ cameraName: camName, phase: 'entering', previousCameraName: prev !== camName ? prev : null, forCalibration: Boolean(opts.forCalibration) }}));
+          povListeners.forEach((fn) => fn({{ cameraName: camName, phase: 'active', previousCameraName: null, forCalibration: Boolean(opts.forCalibration) }}));
+          if (onComplete) onComplete();
+        }},
+        exitCameraPOV({{ reason = 'manual' }} = {{}}) {{
+          if (!this.activePovCameraName) return false;
+          const prev = this.activePovCameraName;
+          this.activePovCameraName = null;
+          povListeners.forEach((fn) => fn({{ cameraName: null, phase: 'exited', previousCameraName: prev, reason }}));
+          return true;
+        }},
+      }};
+
+      const projectorState = new Map();
+      const projectorMock = {{
+        frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}]]),
+        attachOverlayTexture(cam, tex) {{
+          const s = projectorState.get(cam) || {{}};
+          s.texture = tex;
+          projectorState.set(cam, s);
+        }},
+        detachOverlayTexture(cam) {{
+          const s = projectorState.get(cam) || {{}};
+          s.texture = null;
+          projectorState.set(cam, s);
+        }},
+        setOverlayPOVMode(cam, isPov, opacity) {{
+          const s = projectorState.get(cam) || {{}};
+          s.isPov = Boolean(isPov);
+          s.opacity = opacity;
+          projectorState.set(cam, s);
+        }},
+        setOverlayOpacity(cam, opacity) {{
+          const s = projectorState.get(cam) || {{}};
+          s.opacity = opacity;
+          projectorState.set(cam, s);
+        }},
+        applyCameraCalibration(cam) {{
+          return {{ position: {{ x: 0, y: 2, z: 0 }}, quaternion: {{ x: 0, y: 0, z: 0, w: 1 }}, matrixWorldElements: new Array(16).fill(0) }};
+        }},
+        getCalibratedCameraPose() {{ return null; }},
+      }};
+
+      const acquiredLive = [];
+      const releasedLive = [];
+      const vsmMock = {{
+        attachToVideoElement: async () => ({{ mode: 'webrtc', getStatus: () => ({{ mode: 'webrtc', connected: true }}), onStatusChange: () => () => {{}} }}),
+        detachFromVideoElement: () => {{}},
+        acquireVideoTexture: async (streamName, _mode, extra) => {{
+          acquiredLive.push({{ streamName, extra }});
+          return {{ streamName, texture: {{ isVideoTexture: true, streamName, dispose() {{}} }}, provider: {{ connected: true }} }};
+        }},
+        releaseVideoTexture: (streamName) => {{
+          releasedLive.push(streamName);
+        }},
+      }};
+
+      const registeredReplaySlots = new Map();
+      const recMgrMock = {{
+        registerSlot(slotKey, videoEl, onStateChange, opts = {{}}) {{
+          registeredReplaySlots.set(slotKey, {{ slotKey, cameraId: opts.cameraId || slotKey, videoEl, onStateChange }});
+        }},
+        unregisterSlot(slotKey) {{
+          registeredReplaySlots.delete(slotKey);
+        }},
+        async syncSlotToTimestamp(slotKey, ts) {{
+          const slot = registeredReplaySlots.get(slotKey);
+          slot?.onStateChange?.({{ status: RecordingPlaybackStatus.PLAYING, timestampUnix: ts }});
+        }},
+        async seekAllToTimestamp(ts) {{
+          for (const slot of registeredReplaySlots.values()) {{
+            slot.onStateChange?.({{ status: RecordingPlaybackStatus.NO_RECORDING, timestampUnix: ts }});
+          }}
+        }},
+        setPlaybackRate() {{}},
+        setPlaying() {{}},
+        queryAllSegments: async () => new Map(),
+        detachAll() {{}},
+        getStorageSummary: async () => ({{ configured: true, providers: [] }}),
+      }};
+
+      const secRoot = ctx.document.createElement('div');
+      ctx.document.body.appendChild(secRoot);
+      const secHub = new SecurityFabHub(secRoot, {{
+        cameraCatalog: catalog,
+        videoStreamManager: vsmMock,
+        recordingManager: recMgrMock,
+        trajectoryRenderer: {{ setLiveMode() {{}}, setEntitiesVisible() {{}}, loadDetections() {{}}, clearHistorical() {{}}, updateAtTime() {{}}, interpolateLive() {{}} }},
+        spatialStreamClient: {{ connected: false, onStatusChange: () => () => {{}}, onFrame: () => () => {{}} }},
+        cameraController: camCtrl,
+        assetLoader: {{ cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}]]), manifest }},
+        deviceModals: {{ open() {{}} }},
+      }});
+
+      const haAdmin = {{ isAdmin: true, isMockMode: false, authStatus: 'authenticated', currentUser: {{ name: 'Admin' }}, onStatusChange: () => () => {{}}, onAuthChange: () => () => {{}} }};
+      const fakeCanvas = ctx.document.createElement('canvas');
+      const sceneMgrMock = {{
+        renderer: {{ domElement: fakeCanvas }},
+        camera: {{ updateMatrixWorld() {{}} }},
+        scene: {{ children: [] }},
+        isNightMode: false,
+        setNightMode() {{}},
+        addUpdateCallback() {{}},
+        removeUpdateCallback() {{}},
+      }};
+
+      const assetLoaderMock = {{
+        manifest,
+        cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}]]),
+      }};
+
+      const calibUI = new CalibrationAssistantUI({{
+        sceneManager: sceneMgrMock,
+        cameraController: camCtrl,
+        cameraProjector: projectorMock,
+        videoStreamManager: vsmMock,
+        spatialStreamClient: null,
+        assetLoader: assetLoaderMock,
+        haClient: haAdmin,
+        cameraCatalog: catalog,
+      }});
+
+      const povOverlay = new CameraPovOverlayController({{
+        cameraController: camCtrl,
+        cameraProjector: projectorMock,
+        videoStreamManager: vsmMock,
+        recordingManager: recMgrMock,
+        cameraCatalog: catalog,
+        securityFabHub: secHub,
+        calibrationAssistant: calibUI,
+        haClient: haAdmin,
+        assetLoader: assetLoaderMock,
+        uiLayer: ctx.document.body,
+      }});
+
+      calibUI.setLifecycleHooks({{
+        onOpen: () => povOverlay.suspendForCalibration(),
+        onClose: () => povOverlay.resumeAfterCalibration(),
+      }});
+
+      const topBarEl = ctx.document.getElementById('top-bar');
+      new TopBar(topBarEl, {{
+        sceneManager: sceneMgrMock,
+        cameraController: camCtrl,
+        cameraProjector: {{ toggleFrustums: () => false }},
+        interactionManager: {{ toggleBadges: () => false }},
+        haClient: haAdmin,
+        calibrationAssistant: calibUI,
+        assetLoader: assetLoaderMock,
+        deviceModals: {{ close() {{}}, currentEntityId: null }},
+        cameraCatalog: catalog,
+      }});
+
+      // 1. Entra in POV Portico in modalità LIVE -> overlay live trasparente attivo su Cam_Portico
+      camCtrl.flyToCameraPOV({{ name: 'Cam_Portico' }}, 0);
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const livePorticoState = {{ ...(projectorState.get('Cam_Portico') || {{}}) }};
+      const liveHudVisible = Boolean(ctx.document.querySelector('#pov-overlay-hud')?.classList.contains('visible'));
+      const liveHudBadge = ctx.document.querySelector('#pov-hud-mode-pill')?.textContent?.trim();
+
+      // 2. Passa a modalità CRONOLOGIA (replay) mentre sei in POV -> hot-swap automatico a replay!
+      secHub.openExpanded();
+      await secHub.setMode('replay', {{ skipInitialLoad: true }});
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const replayNoRecState = {{ ...(projectorState.get('Cam_Portico') || {{}}) }};
+      const replayNoRecBadge = ctx.document.querySelector('#pov-hud-mode-pill')?.textContent?.trim();
+
+      // Simula registrazione trovata per Cam_Portico -> overlay replay appare!
+      const tileSlot = registeredReplaySlots.get('Cam_Portico');
+      tileSlot?.onStateChange?.({{ status: RecordingPlaybackStatus.PLAYING, timestampUnix: 1795092000 }});
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      const replayPlayingState = {{ ...(projectorState.get('Cam_Portico') || {{}}) }};
+      const replayPlayingBadge = ctx.document.querySelector('#pov-hud-mode-pill')?.textContent?.trim();
+
+      // 3. Clicca 'Calibra Cam' in TopBar mentre sei in POV Portico -> DEVE aprire Calibrazione su Cam_Portico (NON Carraio!)
+      topBarEl.querySelector('#btn-open-cam-calib').click();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      const calibActiveAfterTopBar = calibUI.activeCameraName;
+      const calibPills = Array.from(ctx.document.querySelectorAll('.calib-cam-pill')).map((b) => b.dataset.calibCam);
+      const hudHiddenDuringCalib = !ctx.document.querySelector('#pov-overlay-hud')?.classList.contains('visible');
+
+      // 4. Switch a Cam_Carraio tramite pill nella UI di calibrazione -> cambia a Cam_Carraio
+      ctx.document.querySelector('.calib-cam-pill[data-calib-cam="Cam_Carraio"]').click();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      const calibAfterSwitchToCarraio = calibUI.activeCameraName;
+
+      // 5. Chiudi calibrazione, rientra in POV Carraio (live), poi ESCI da POV -> overlay sparisce del tutto!
+      calibUI.close();
+      await secHub.setMode('live');
+      camCtrl.flyToCameraPOV({{ name: 'Cam_Carraio' }}, 0);
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const carraioPovActive = Boolean(projectorState.get('Cam_Carraio')?.isPov);
+
+      camCtrl.exitCameraPOV({{ reason: 'drag' }});
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      const carraioAfterExit = {{ ...(projectorState.get('Cam_Carraio') || {{}}) }};
+      const hudHiddenAfterExit = !ctx.document.querySelector('#pov-overlay-hud')?.classList.contains('visible');
+
+      povOverlay.dispose();
+      secHub.dispose();
+
+      return {{
+        livePorticoIsPov: Boolean(livePorticoState.isPov),
+        livePorticoOpacity: livePorticoState.opacity,
+        livePorticoStream: livePorticoState.texture?.streamName,
+        liveHudVisible,
+        liveHudBadge,
+        replayNoRecIsPov: Boolean(replayNoRecState.isPov),
+        replayNoRecBadge,
+        replayPlayingIsPov: Boolean(replayPlayingState.isPov),
+        replayPlayingOpacity: replayPlayingState.opacity,
+        replayPlayingBadge,
+        calibActiveAfterTopBar,
+        calibPills,
+        hudHiddenDuringCalib,
+        calibAfterSwitchToCarraio,
+        carraioPovActive,
+        carraioAfterExitIsPov: Boolean(carraioAfterExit.isPov),
+        carraioAfterExitHasTex: Boolean(carraioAfterExit.texture),
+        hudHiddenAfterExit,
+        acquiredStreams: acquiredLive.map((a) => a.streamName),
+        releasedLive,
+      }};
+    """
+    res = run_js_scenario({"code": code})
+    assert res["ok"] is True, res
+    d = res["data"]
+    assert d["livePorticoIsPov"] is True
+    assert 0.3 <= d["livePorticoOpacity"] <= 0.65
+    assert d["livePorticoStream"] == "portico_main"
+    assert d["liveHudVisible"] is True
+    assert d["liveHudBadge"] == "LIVE"
+    assert d["replayNoRecIsPov"] is False
+    assert d["replayNoRecBadge"] == "NO REGISTRAZIONE"
+    assert d["replayPlayingIsPov"] is True
+    assert 0.3 <= d["replayPlayingOpacity"] <= 0.65
+    assert d["replayPlayingBadge"] == "REPLAY"
+    assert d["calibActiveAfterTopBar"] == "Cam_Portico"
+    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico"}
+    assert d["hudHiddenDuringCalib"] is True
+    assert d["calibAfterSwitchToCarraio"] == "Cam_Carraio"
+    assert d["carraioPovActive"] is True
+    assert d["carraioAfterExitIsPov"] is False
+    assert d["carraioAfterExitHasTex"] is False
+    assert d["hudHiddenAfterExit"] is True
+    assert "portico_main" in d["acquiredStreams"]
+    assert "carraio_main" in d["acquiredStreams"]
+    assert "portico_main" in d["releasedLive"]
+    assert "carraio_main" in d["releasedLive"]

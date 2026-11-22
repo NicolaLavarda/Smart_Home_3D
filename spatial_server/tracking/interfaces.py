@@ -15,6 +15,7 @@ class TrackObservation3D:
     confidence: float = 0.9
     identity: Optional[str] = None
     identity_confidence: float = 0.0
+    range_m: Optional[float] = None
 
 
 class IMultiTargetTracker3D(ABC):

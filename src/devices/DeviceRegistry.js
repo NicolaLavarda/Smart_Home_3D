@@ -105,6 +105,16 @@ export class DeviceRegistry {
         }
       });
 
+      if (controller.id === 'security_camera') {
+        haEntitiesMap.forEach((meshes, entId) => {
+          if (entId.startsWith('camera.')) {
+            meshes.forEach((m) => {
+              if (!allMeshes.includes(m)) allMeshes.push(m);
+            });
+          }
+        });
+      }
+
       // Se non trovate direttamente tramite entità esatta (es. alias o nome Blender)
       if (allMeshes.length === 0 && controller.id === 'tv') {
         scene.traverse((node) => {
@@ -132,7 +142,7 @@ export class DeviceRegistry {
         });
       } else if (allMeshes.length === 0 && controller.id === 'security_camera') {
         scene.traverse((node) => {
-          if (node.isMesh && (node.name === 'Security_Cam_Body' || node.name === 'Security_Cam_Pole_Pillar')) {
+          if (node.isMesh && node.name.startsWith('Security_Cam_')) {
             if (!allMeshes.includes(node)) allMeshes.push(node);
           }
         });

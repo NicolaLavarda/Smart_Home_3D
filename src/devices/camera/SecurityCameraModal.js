@@ -3,9 +3,9 @@ import { icon } from '../../ui/icons.js';
 /**
  * SecurityCameraModal
  *
- * Pannello modale OOP per la telecamera di sicurezza Reolink RLC-540A (Cam_Carraio):
+ * Pannello modale OOP multi-camera per le telecamere di sicurezza Reolink (SSoT da scene_manifest.json):
  * - Player live WebRTC / MSE a bassissima latenza via VideoStreamManager (go2rtc)
- * - Selettore flusso Main (5MP) / Sub (640x360) e riconnessione rapida
+ * - Selettore flusso Main / Sub dinamico per la telecamera selezionata e riconnessione rapida
  * - Ingresso nella vista POV 3D esatta della telecamera
  * - Avvio dell'assistente di calibrazione ottica POV con overlay trasparente
  * - Toggle diretto della modalità CV sul microservizio spaziale (Simulatore / OpenVINO Live)
@@ -25,22 +25,44 @@ export class SecurityCameraModal {
     this._unsubscribeAuth = null;
     this._camIp = '192.168.86.47';
     this._camName = 'Cam_Carraio';
+    this._entityId = 'camera.carraio_scorrevole';
+    this._camLabel = 'Reolink RLC-540A';
   }
 
-  async render(container, context = {}) {
+  async render(container, context = {}, entity = null) {
     if (this._unsubscribeAuth) {
       this._unsubscribeAuth();
       this._unsubscribeAuth = null;
     }
     this.container = container;
-    const camName = this.controller.findMatchingBlenderCameraName();
-    const manifestCam = context.assetLoader?.manifest?.cameras?.[camName];
+    const assetLoader = context.assetLoader || this.controller.assetLoader;
+    const entityId = entity?.entity_id || context.entityId || this.controller.activeEntityId || this.controller.primaryEntityId || 'camera.carraio_scorrevole';
+    const camName = this.controller.findMatchingBlenderCameraName(entityId);
+    const manifestCam = assetLoader?.manifest?.cameras?.[camName];
+    const slugFallback = camName.replace(/^Cam_/i, '').toLowerCase() || 'carraio';
+
+    const mainStream = manifestCam?.stream_id || (camName === 'Cam_Carraio' ? 'carraio_main' : `${slugFallback}_main`);
+    const subStream = manifestCam?.sub_stream_id || (camName === 'Cam_Carraio' ? 'carraio_sub' : `${slugFallback}_sub`);
+    const mainLabel = manifestCam?.main_stream_label || (camName === 'Cam_Carraio' ? 'Main 5MP' : 'Main HD');
+    const subLabel = manifestCam?.sub_stream_label || 'Sub 640×360';
+
+    const labelModelMatch = typeof manifestCam?.ha_label === 'string' ? manifestCam.ha_label.match(/\(([^)]+)\)/) : null;
+    const cameraModel =
+      manifestCam?.camera_model ||
+      (labelModelMatch ? labelModelMatch[1] : null) ||
+      (camName === 'Cam_Carraio' ? 'RLC-540A' : 'Telecamera IP');
+
     const fovH = manifestCam?.fov_h_deg ?? 80;
     const fovV = manifestCam?.fov_v_deg ?? 42;
     const lensMm = manifestCam?.lens_mm ?? 4.0;
-    const camIp = manifestCam?.camera_ip || '192.168.86.47';
+    const camIp = manifestCam?.camera_ip || (camName === 'Cam_Carraio' ? '192.168.86.47' : 'LAN');
+
     this._camIp = camIp;
     this._camName = camName;
+    this._entityId = manifestCam?.ha_camera_entity || entityId;
+    this._camLabel = manifestCam?.ha_label || cameraModel;
+    this.activeStreamName = mainStream;
+
     const haClient = this.controller.haClient || context.haClient;
     const isTailscale = Boolean(haClient?.isTailscale);
     const endpointLabel = isTailscale
@@ -67,11 +89,11 @@ export class SecurityCameraModal {
 
       <div class="control-row" style="gap: 8px;">
         <div style="display:flex;gap:6px;flex:1;">
-          <button class="btn-icon-text stream-quality-btn active" data-stream="carraio_main" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
-            Main 5MP
+          <button class="btn-icon-text stream-quality-btn active" data-stream="${mainStream}" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
+            ${mainLabel}
           </button>
-          <button class="btn-icon-text stream-quality-btn" data-stream="carraio_sub" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
-            Sub 640×360
+          <button class="btn-icon-text stream-quality-btn" data-stream="${subStream}" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
+            ${subLabel}
           </button>
         </div>
         <button class="btn-icon-text" id="btn-cam-reconnect" title="Riconnetti stream" style="padding:6px 10px;font-size:11px;">
@@ -82,7 +104,7 @@ export class SecurityCameraModal {
       <div class="control-row">
         <label>Modello & Ottica SSoT</label>
         <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-cyan);">
-          RLC-540A • ${lensMm}mm (${fovH}°×${fovV}°)
+          ${cameraModel} • ${lensMm}mm (${fovH}°×${fovV}°)
         </span>
       </div>
 
@@ -137,13 +159,18 @@ export class SecurityCameraModal {
 
     // Vista POV 3D
     const povBtn = container.querySelector('#btn-camera-pov');
-    const camNode = context.assetLoader?.cameras?.get(camName);
+    const camNode = assetLoader?.cameras?.get(camName);
     const camCtrl = this.controller.cameraController || context.cameraController;
     if (camNode && camCtrl) {
       povBtn.addEventListener('click', () => {
-        camCtrl.flyToCameraPOV(camNode, 1.4, () => {
-          context.modal?.close();
-        });
+        camCtrl.flyToCameraPOV(
+          camNode,
+          1.4,
+          () => {
+            context.modal?.close();
+          },
+          { cameraName: camName }
+        );
       });
     } else {
       povBtn.disabled = true;
@@ -178,12 +205,17 @@ export class SecurityCameraModal {
       if (!haClient?.isAdmin) return;
       const calibUI = this.controller.calibrationAssistant;
       if (camNode && camCtrl) {
-        camCtrl.flyToCameraPOV(camNode, 1.3, () => {
-          if (calibUI) {
-            calibUI.open(camName);
-          }
-          context.modal?.close();
-        });
+        camCtrl.flyToCameraPOV(
+          camNode,
+          1.3,
+          () => {
+            if (calibUI) {
+              calibUI.open(camName);
+            }
+            context.modal?.close();
+          },
+          { forCalibration: true, cameraName: camName }
+        );
       } else if (calibUI) {
         calibUI.open(camName);
         context.modal?.close();
@@ -280,7 +312,12 @@ export class SecurityCameraModal {
     this.badgeEl.style.background = 'rgba(245, 158, 11, 0.9)';
 
     try {
-      const provider = await vsm.attachToVideoElement(streamName, this.videoEl, 'auto');
+      const provider = await vsm.attachToVideoElement(streamName, this.videoEl, 'auto', {
+        cameraEntityId: this._entityId,
+        cameraName: this._camName,
+        cameraLabel: this._camLabel,
+        cameraIp: this._camIp,
+      });
       this.updateStreamStatusUI(provider.getStatus());
 
       if (typeof provider.onStatusChange === 'function') {

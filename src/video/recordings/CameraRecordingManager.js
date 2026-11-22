@@ -36,10 +36,14 @@ export class CameraRecordingManager {
 
   /**
    * Registra un riquadro video nel gestore storico.
+   * Supporta sia `registerSlot(cameraId, videoEl, cb)` sia slot ausiliari con chiave dedicata
+   * (`registerSlot('pov_overlay:Cam_Portico', videoEl, cb, { cameraId: 'Cam_Portico' })`).
    */
-  registerSlot(cameraId, videoElement, onStateChange = null) {
-    this.unregisterSlot(cameraId);
+  registerSlot(slotKey, videoElement, onStateChange = null, options = {}) {
+    this.unregisterSlot(slotKey);
+    const cameraId = options?.cameraId || slotKey;
     const slot = {
+      slotKey,
       cameraId,
       videoElement,
       onStateChange: typeof onStateChange === 'function' ? onStateChange : null,
@@ -47,17 +51,24 @@ export class CameraRecordingManager {
       activeSegment: null,
       status: RecordingPlaybackStatus.IDLE,
     };
-    this.slots.set(cameraId, slot);
+    this.slots.set(slotKey, slot);
     return slot;
   }
 
-  unregisterSlot(cameraId) {
-    const existing = this.slots.get(cameraId);
+  unregisterSlot(slotKey) {
+    const existing = this.slots.get(slotKey);
     if (!existing) return;
     if (existing.activeProvider && existing.videoElement) {
       existing.activeProvider.detach(existing.videoElement);
     }
-    this.slots.delete(cameraId);
+    this.slots.delete(slotKey);
+  }
+
+  async syncSlotToTimestamp(slotKey, timestampUnix) {
+    const slot = this.slots.get(slotKey);
+    if (!slot) return;
+    this.currentTimestampUnix = Number(timestampUnix);
+    await this._syncSlotToTimestamp(slot, this.currentTimestampUnix, this._seekVersion);
   }
 
   detachAll() {

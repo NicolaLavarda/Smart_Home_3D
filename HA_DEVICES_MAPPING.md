@@ -32,7 +32,11 @@
   - **Azione:** `GIA_MAPPATO`
 
 * **`camera.carraio_scorrevole`** — *Carraio Scorrevole* (Stato live: `idle`)
-  - **Oggetto 3D / Ruolo:** Cam_Carraio (Telecamera reale montata su palo pilastrino a Z=2.10m)
+  - **Oggetto 3D / Ruolo:** Cam_Carraio (Telecamera reale montata su palo pilastrino a Z=1.68m, Reolink RLC-540A)
+  - **Azione:** `GIA_MAPPATO`
+
+* **`camera.portico`** — *Portico* (Stato live: `idle`)
+  - **Oggetto 3D / Ruolo:** Cam_Portico, Security_Cam_Portico_Body, Security_Cam_Portico_Mount (Telecamera reale Reolink RLC-810A su muro sud sala da pranzo a X=13.24m, Y=-8.22m, Z=2.15m, FOV 87°×44°)
   - **Azione:** `GIA_MAPPATO`
 
 * **`vacuum.deebot`** — *Ecovacs Deebot* (Stato live: `docked`)
@@ -751,6 +755,13 @@
 - **Azione:** `ignora` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
 - **Posizione 3D:** 
 - **Funzionamento / Note:** 
+
+### `camera.portico` `[COLLEGATO]`
+- **Nome HA:** Portico
+- **Stato Live:** `idle`
+- **Azione:** `GIA_MAPPATO` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
+- **Posizione 3D:** Cam_Portico (Reolink RLC-810A montata su muro sud sala da pranzo a Z=2.15m, 66cm a ovest dalla parete est sala da pranzo, sporgenza 17cm a sud; guarda verso il portico dal muro sud sala da pranzo fino al garage)
+- **Funzionamento / Note:** Streaming go2rtc (`portico_main` / `portico_sub` H.264), frustum 3D SSoT (87°×44°), tracking AI multi-camera OpenVINO con fusione 3D Kalman.
 
 ---
 

@@ -520,6 +520,14 @@ export class HAClient {
           brand: 'Security AI 4K',
         },
       },
+      'camera.portico': {
+        entity_id: 'camera.portico',
+        state: 'idle',
+        attributes: {
+          friendly_name: 'Portico',
+          brand: 'Reolink RLC-810A 4K',
+        },
+      },
       'button.wake_on_lan_58_fd_b1_ae_99_79': {
         entity_id: 'button.wake_on_lan_58_fd_b1_ae_99_79',
         state: '2026-11-11T12:00:00Z',
@@ -1470,6 +1478,29 @@ export class HAClient {
     const cameraIds = Object.keys(entities).filter((id) => id.startsWith('camera.'));
     if (cameraIds.length === 0) {
       return preferredId;
+    }
+
+    const prefLower = String(preferredId || '').toLowerCase();
+    const rawSlug = prefLower.replace(/^camera\./, '');
+    const baseSlug = rawSlug.replace(/_(scorrevole|trasparente|fluente|main|sub)$/i, '');
+
+    if (baseSlug) {
+      const slugMatches = cameraIds.filter((id) => {
+        const lowerId = id.toLowerCase();
+        const friendly = String(entities[id]?.attributes?.friendly_name || '').toLowerCase();
+        return lowerId.includes(baseSlug) || friendly.includes(baseSlug);
+      });
+      if (slugMatches.length > 0) {
+        const preferredStream = slugMatches.find(
+          (id) => !/(istantane|analisi|annotat)/i.test(id)
+        );
+        return preferredStream || slugMatches[0];
+      }
+      // Se è stata chiesta una camera specifica diversa da Carraio non ancora presente in HA,
+      // mantieni l'entityId richiesto per evitare di mostrare lo snapshot di un'altra camera.
+      if (baseSlug !== 'carraio') {
+        return preferredId;
+      }
     }
 
     const keywords = ['carraio', 'cancello', 'reolink', 'rlc', 'ingresso', 'estern'];

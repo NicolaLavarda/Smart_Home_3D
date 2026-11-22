@@ -375,32 +375,51 @@ ENTITY_MAPPINGS = {
 }
 
 
-def setup_real_security_camera():
+SECURITY_CAMERA_NAMES = {"Cam_Carraio", "Cam_Portico"}
+
+
+def _get_or_create_camera_material(name, color=(0.92, 0.93, 0.95, 1.0), roughness=0.35, metallic=0.05):
+    mat = bpy.data.materials.get(name)
+    if mat is None:
+        mat = bpy.data.materials.new(name=name)
+        mat.use_nodes = True
+    if mat.node_tree:
+        bsdf = next((n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if bsdf:
+            if "Base Color" in bsdf.inputs:
+                bsdf.inputs["Base Color"].default_value = color
+            if "Roughness" in bsdf.inputs:
+                bsdf.inputs["Roughness"].default_value = roughness
+            if "Metallic" in bsdf.inputs:
+                bsdf.inputs["Metallic"].default_value = metallic
+    mat.diffuse_color = color
+    return mat
+
+
+def _link_object_exclusively(obj, target_collection):
+    for c in list(obj.users_collection):
+        c.objects.unlink(obj)
+    target_collection.objects.link(obj)
+
+
+def _remove_object_if_exists(name):
+    obj = bpy.data.objects.get(name)
+    if obj is not None:
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def _setup_cam_carraio(col_cameras):
     """
-    Crea o aggiorna l'UNICA vera telecamera di sicurezza sul palo del muretto basso
-    tra il cancello carrabile e il cancelletto pedonale.
+    Crea o aggiorna la telecamera di sicurezza Cam_Carraio (Reolink RLC-540A)
+    sul palo del muretto basso tra cancello carrabile e cancelletto pedonale.
     Muretto centrale: Gate_Central_Low_Wall (centro: x = -11.28, y = -6.28, top z = 1.30)
-    Palo: a 218cm dallo spigolo (x = -11.29, y = -6.28), parte da z = 1.30 e sale di 38cm
-    Telecamera: quota z = 1.68 (38cm sopra il muretto basso), orientata perpendicolarmente verso fuori (+Y)
+    Palo: x = -11.29, y = -6.28, parte da z = 1.30 e sale di 38cm -> quota z = 1.68m
     """
-    col_cameras = bpy.data.collections.get("08_Luci_e_Camere")
-    if not col_cameras:
-        col_cameras = bpy.context.scene.collection
-
-    # 1. Rimuovi le vecchie telecamere di test dalle entità HA
-    for obj in bpy.data.objects:
-        if obj.type == "CAMERA" and obj.name != "Cam_Carraio":
-            if "ha_camera_entity" in obj:
-                del obj["ha_camera_entity"]
-            if "ha_label" in obj:
-                del obj["ha_label"]
-
     px, py = -11.29, -6.28
     pz_top = 1.30
     pole_h = 0.38
     cam_z = pz_top + pole_h  # 1.68m
 
-    # 2. Crea/Aggiorna Mesh del Palo e Corpo Telecamera
     pole_name = "Security_Cam_Pole_Pillar"
     pole_obj = bpy.data.objects.get(pole_name)
     if not pole_obj:
@@ -414,9 +433,7 @@ def setup_real_security_camera():
         mat_metal = bpy.data.materials.get("Mat_Ringhiera_Metallo")
         if mat_metal:
             pole_obj.data.materials.append(mat_metal)
-        for c in pole_obj.users_collection:
-            c.objects.unlink(pole_obj)
-        col_cameras.objects.link(pole_obj)
+        _link_object_exclusively(pole_obj, col_cameras)
     else:
         pole_obj.location = (px, py, pz_top + pole_h * 0.5)
 
@@ -431,7 +448,7 @@ def setup_real_security_camera():
         bpy.ops.mesh.primitive_cube_add(
             size=1.0,
             location=(px, py + 0.05, cam_z),
-            scale=(0.08, 0.16, 0.08)
+            scale=(0.08, 0.16, 0.08),
         )
         body_obj = bpy.context.active_object
         body_obj.name = body_name
@@ -439,9 +456,7 @@ def setup_real_security_camera():
         mat_dark = bpy.data.materials.get("Mat_Infissi_Antracite")
         if mat_dark:
             body_obj.data.materials.append(mat_dark)
-        for c in body_obj.users_collection:
-            c.objects.unlink(body_obj)
-        col_cameras.objects.link(body_obj)
+        _link_object_exclusively(body_obj, col_cameras)
     else:
         body_obj.location = (px, py + 0.05, cam_z)
 
@@ -450,7 +465,6 @@ def setup_real_security_camera():
     body_obj["ha_ui_type"] = "camera"
     body_obj["ha_name"] = "Telecamera Carraio (Reolink RLC-540A)"
 
-    # 3. Crea o Aggiorna la Camera Blender "Cam_Carraio"
     cam_name = "Cam_Carraio"
     cam_obj = bpy.data.objects.get(cam_name)
     if not cam_obj:
@@ -460,7 +474,8 @@ def setup_real_security_camera():
 
     cam_obj.location = (px, py, cam_z)
     # Guarda verso fuori (+Y perpendicolare al cancello) e leggermente inclinato verso il basso (pitch ~78°)
-    pitch_rad = math.radians(78.0) # 78° da Z guarda in avanti (+Y) e verso il basso (strada)
+    pitch_rad = math.radians(78.0)
+    cam_obj.rotation_mode = "XYZ"
     cam_obj.rotation_euler = (pitch_rad, 0.0, 0.0)
 
     # Parametri ottici reali Reolink RLC-540A (4.0mm @ FOV_H=80°, FOV_V=42°)
@@ -475,14 +490,197 @@ def setup_real_security_camera():
     cam_obj["ha_camera_entity"] = "camera.carraio_scorrevole"
     cam_obj["ha_entity"] = "camera.carraio_scorrevole"
     cam_obj["ha_label"] = "Telecamera Carraio (Reolink RLC-540A)"
+    cam_obj["camera_model"] = "Reolink RLC-540A"
     cam_obj["coverage_zone"] = "outdoor_gates_street"
     cam_obj["optical_model"] = "pinhole_radtan"
     cam_obj["distortion_coeffs"] = [-0.18, 0.04, 0.0, 0.0, 0.0]
     cam_obj["stream_id"] = "carraio_main"
     cam_obj["sub_stream_id"] = "carraio_sub"
+    cam_obj["main_stream_label"] = "Main 5MP"
+    cam_obj["sub_stream_label"] = "Sub 640×360"
     cam_obj["camera_ip"] = "192.168.86.47"
 
     print(f"  [OK] Telecamera reale configurata: {cam_name} a loc=({px}, {py}, {cam_z}) rot=(78°, 0°, 0°)")
+
+
+def _setup_cam_portico(col_cameras):
+    """
+    Crea o aggiorna la telecamera di sicurezza Cam_Portico (Reolink RLC-810A, 4.0mm 1x).
+    Misure fisiche fornite dall'utente rispetto alla casa:
+    - Quota obiettivo da terra: Z = 2.15 m (215 cm)
+    - 66 cm più a ovest dalla parete più a est della sala da pranzo (X = 13.90 -> X = 13.24 m)
+    - Sporge 17 cm verso sud dal muro sud della sala da pranzo (Y = -8.05 -> Y = -8.22 m)
+    - Inquadratura (FOV 87° H x 44° V, 1x): guarda verso il portico prendendo in orizzontale
+      dal muro sud della sala da pranzo (bordo destro ~179°) fino a buona parte del garage (bordo sinistro ~266°).
+    """
+    import bmesh
+
+    cam_pos = mathutils.Vector((13.24, -8.22, 2.15))
+    azimuth_deg = 222.5     # Centro tra muro sud sala da pranzo (179°) e garage (266°), span HFOV=87°
+    pitch_down_deg = 16.0   # Inclinazione verso il basso: +6° headroom sopra, -38° suolo da 2.75m
+
+    az_rad = math.radians(azimuth_deg)
+    pd_rad = math.radians(pitch_down_deg)
+    direction = mathutils.Vector((
+        math.cos(pd_rad) * math.cos(az_rad),
+        math.cos(pd_rad) * math.sin(az_rad),
+        -math.sin(pd_rad),
+    )).normalized()
+    rot_quat = direction.to_track_quat("-Z", "Y")
+    rot_euler = rot_quat.to_euler("XYZ")
+
+    mat_white = _get_or_create_camera_material(
+        "Mat_Security_Cam_White",
+        color=(0.92, 0.93, 0.95, 1.0),
+        roughness=0.35,
+        metallic=0.05,
+    )
+    mat_dark = bpy.data.materials.get("Mat_Infissi_Antracite") or _get_or_create_camera_material(
+        "Mat_Infissi_Antracite",
+        color=(0.14, 0.14, 0.16, 1.0),
+        roughness=0.45,
+        metallic=0.3,
+    )
+
+    # 1. Mesh corpo bullet Reolink RLC-810A (Ø 66 mm, corpo 115 mm arretrato dietro l'obiettivo -> zero occlusione POV)
+    body_name = "Security_Cam_Portico_Body"
+    _remove_object_if_exists(body_name)
+    body_len = 0.115
+    body_radius = 0.033
+    body_center = cam_pos - direction * (0.015 + body_len * 0.5)
+
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=24,
+        radius=body_radius,
+        depth=body_len,
+        location=body_center,
+        rotation=rot_euler,
+    )
+    body_obj = bpy.context.active_object
+    body_obj.name = body_name
+    body_obj.data.materials.append(mat_white)
+    _link_object_exclusively(body_obj, col_cameras)
+
+    body_obj["ha_entity"] = "camera.portico"
+    body_obj["ha_action"] = "modal"
+    body_obj["ha_ui_type"] = "camera"
+    body_obj["ha_name"] = "Portico"
+
+    # 2. Mesh staffa e basetta a muro (collega il retro del corpo bullet al piano facciata Y = -8.05)
+    mount_name = "Security_Cam_Portico_Mount"
+    _remove_object_if_exists(mount_name)
+    rear_pt = cam_pos - direction * (0.015 + body_len)
+    wall_pt = mathutils.Vector((rear_pt.x + 0.02, -8.055, rear_pt.z + 0.01))
+    arm_vec = wall_pt - rear_pt
+    arm_len = max(arm_vec.length, 0.04)
+    arm_mid = (rear_pt + wall_pt) * 0.5
+    arm_quat = arm_vec.normalized().to_track_quat("Z", "Y")
+
+    mount_mesh = bpy.data.meshes.new(mount_name)
+    bm = bmesh.new()
+    # Stelo cilindrico staffa
+    bmesh.ops.create_cone(
+        bm,
+        cap_ends=True,
+        cap_tris=False,
+        segments=16,
+        radius1=0.012,
+        radius2=0.012,
+        depth=arm_len,
+        matrix=mathutils.Matrix.Translation(arm_mid) @ arm_quat.to_matrix().to_4x4(),
+    )
+    # Flangia circolare a parete (normale -Y)
+    flange_quat = mathutils.Vector((0.0, -1.0, 0.0)).to_track_quat("Z", "Y")
+    bmesh.ops.create_cone(
+        bm,
+        cap_ends=True,
+        cap_tris=False,
+        segments=20,
+        radius1=0.035,
+        radius2=0.032,
+        depth=0.014,
+        matrix=mathutils.Matrix.Translation(wall_pt) @ flange_quat.to_matrix().to_4x4(),
+    )
+    bm.to_mesh(mount_mesh)
+    bm.free()
+
+    mount_obj = bpy.data.objects.new(mount_name, mount_mesh)
+    mount_obj.data.materials.append(mat_dark)
+    col_cameras.objects.link(mount_obj)
+
+    mount_obj["ha_entity"] = "camera.portico"
+    mount_obj["ha_action"] = "modal"
+    mount_obj["ha_ui_type"] = "camera"
+    mount_obj["ha_name"] = "Portico"
+
+    # 3. Oggetto Camera ottica SSoT "Cam_Portico"
+    cam_name = "Cam_Portico"
+    cam_obj = bpy.data.objects.get(cam_name)
+    if not cam_obj:
+        cam_data = bpy.data.cameras.new(cam_name)
+        cam_obj = bpy.data.objects.new(cam_name, cam_data)
+        col_cameras.objects.link(cam_obj)
+
+    cam_obj.location = cam_pos
+    cam_obj.rotation_mode = "XYZ"
+    cam_obj.rotation_euler = rot_euler
+
+    # Parametri ottici ufficiali Reolink RLC-810A (4.0mm fisso 1x: FOV_H=87°, FOV_V=44°, 16:9 4K)
+    cam_obj.data.sensor_fit = "HORIZONTAL"
+    cam_obj.data.lens = 4.0
+    cam_obj.data.sensor_width = round(2.0 * 4.0 * math.tan(math.radians(87.0 / 2.0)), 4)
+    cam_obj.data.sensor_height = round(2.0 * 4.0 * math.tan(math.radians(44.0 / 2.0)), 4)
+    cam_obj.data.clip_start = 0.1
+    cam_obj.data.clip_end = 250.0
+
+    # Custom Properties SSoT
+    cam_obj["ha_camera_entity"] = "camera.portico"
+    cam_obj["ha_entity"] = "camera.portico"
+    cam_obj["ha_name"] = "Portico"
+    cam_obj["ha_action"] = "modal"
+    cam_obj["ha_ui_type"] = "camera"
+    cam_obj["ha_label"] = "Portico (Reolink RLC-810A)"
+    cam_obj["camera_model"] = "Reolink RLC-810A"
+    cam_obj["coverage_zone"] = "Portico"
+    cam_obj["optical_model"] = "pinhole_radtan"
+    cam_obj["distortion_coeffs"] = [0.0, 0.0, 0.0, 0.0, 0.0]
+    cam_obj["stream_id"] = "portico_main"
+    cam_obj["sub_stream_id"] = "portico_sub"
+    cam_obj["main_stream_label"] = "Main 4K"
+    cam_obj["sub_stream_label"] = "Sub 640×360"
+    cam_obj["aspect_ratio"] = round(16.0 / 9.0, 4)
+    cam_obj["camera_ip"] = "192.168.86.51"
+
+    euler_deg = [round(math.degrees(a), 2) for a in rot_euler]
+    print(f"  [OK] Telecamera reale configurata: {cam_name} a loc={tuple(round(c, 3) for c in cam_pos)} rot={euler_deg}")
+
+
+def setup_real_security_cameras():
+    """
+    Configura in modo idempotente tutte le telecamere di sicurezza reali censite
+    (Cam_Carraio, Cam_Portico) preservando tutte le proprietà SSoT.
+    """
+    col_cameras = bpy.data.collections.get("08_Luci_e_Camere")
+    if not col_cameras:
+        col_cameras = bpy.context.scene.collection
+
+    # 1. Rimuovi solo eventuali vecchie telecamere di test/preview non censite dalle entità HA
+    for obj in bpy.data.objects:
+        if obj.type == "CAMERA" and obj.name not in SECURITY_CAMERA_NAMES:
+            if "ha_camera_entity" in obj:
+                del obj["ha_camera_entity"]
+            if "ha_label" in obj:
+                del obj["ha_label"]
+
+    # 2. Setup idempotente di ogni telecamera reale
+    _setup_cam_carraio(col_cameras)
+    _setup_cam_portico(col_cameras)
+    bpy.context.view_layer.update()
+
+
+def setup_real_security_camera():
+    """Alias retrocompatibile per setup_real_security_cameras()."""
+    setup_real_security_cameras()
 
 
 def apply_all():

@@ -279,6 +279,71 @@
         6.28
       ]
     },
+    "camera.portico": {
+      "entity_id": "camera.portico",
+      "domain": "camera",
+      "name": "Portico",
+      "action": "modal",
+      "ui_type": "camera",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Cam_Portico",
+          "type": "CAMERA",
+          "centroid": [
+            13.24,
+            -8.22,
+            2.15
+          ],
+          "dimensions": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Security_Cam_Portico_Body",
+          "type": "MESH",
+          "centroid": [
+            13.2914,
+            -8.1729,
+            2.17
+          ],
+          "dimensions": [
+            0.066,
+            0.066,
+            0.115
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Security_Cam_Portico_Mount",
+          "type": "MESH",
+          "centroid": [
+            13.3521,
+            -8.0934,
+            2.1958
+          ],
+          "dimensions": [
+            0.07,
+            0.091,
+            0.07
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        13.24,
+        -8.22,
+        2.15
+      ],
+      "centroid_gltf": [
+        13.24,
+        2.15,
+        8.22
+      ]
+    },
     "vacuum.deebot": {
       "entity_id": "vacuum.deebot",
       "domain": "vacuum",
@@ -1789,7 +1854,10 @@
           0.0,
           1.0
         ]
-      }
+      },
+      "camera_model": "Reolink RLC-540A",
+      "main_stream_label": "Main 5MP",
+      "sub_stream_label": "Sub 640×360"
     },
     "Cam_Cooktop_Hood_Detail": {
       "name": "Cam_Cooktop_Hood_Detail",
@@ -2525,6 +2593,114 @@
           1.0
         ]
       }
+    },
+    "Cam_Portico": {
+      "name": "Cam_Portico",
+      "ha_camera_entity": "camera.portico",
+      "ha_label": "Portico (Reolink RLC-810A)",
+      "coverage_zone": "Portico",
+      "is_real_security_camera": true,
+      "optical_model": "pinhole_radtan",
+      "distortion_coeffs": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "stream_id": "portico_main",
+      "sub_stream_id": "portico_sub",
+      "camera_ip": "192.168.86.51",
+      "lens_mm": 4.0,
+      "sensor_width_mm": 7.5917,
+      "sensor_height_mm": 3.2322,
+      "fov_v_deg": 44.0,
+      "fov_h_deg": 87.0,
+      "aspect_ratio": 1.7778,
+      "clip_near": 0.1,
+      "clip_far": 250.0,
+      "blender_transform": {
+        "position": [
+          13.24,
+          -8.22,
+          2.15
+        ],
+        "quaternion": [
+          0.24238,
+          0.55085,
+          0.731,
+          0.32165
+        ],
+        "rotation_euler_deg": [
+          74.0,
+          -0.0,
+          132.5
+        ],
+        "matrix_world": [
+          -0.67559,
+          -0.203221,
+          0.708717,
+          13.24,
+          0.737277,
+          -0.186218,
+          0.649419,
+          -8.22,
+          0.0,
+          0.961262,
+          0.275637,
+          2.15,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          13.24,
+          2.15,
+          8.22
+        ],
+        "matrix_world_gl": [
+          -0.67559,
+          -0.203221,
+          0.708717,
+          13.24,
+          0.0,
+          0.961262,
+          0.275637,
+          2.15,
+          -0.737277,
+          0.186218,
+          -0.649419,
+          8.22,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "extrinsic_cv_to_world": [
+          -0.67559,
+          0.203221,
+          -0.708717,
+          13.24,
+          0.0,
+          -0.961262,
+          -0.275637,
+          2.15,
+          -0.737277,
+          -0.186218,
+          0.649419,
+          8.22,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "camera_model": "Reolink RLC-810A",
+      "main_stream_label": "Main 4K",
+      "sub_stream_label": "Sub 640×360"
     },
     "Cam_Preview_Dishwasher": {
       "name": "Cam_Preview_Dishwasher",

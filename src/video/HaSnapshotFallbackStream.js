@@ -26,6 +26,9 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     this.haClient = options.haClient || null;
     this.cameraEntityId = options.cameraEntityId || 'camera.carraio_scorrevole';
     this.resolvedEntityId = this.cameraEntityId;
+    this.cameraName = String(options.cameraName || 'Cam_Carraio');
+    this.cameraLabel = String(options.cameraLabel || 'REOLINK RLC-540A');
+    this.cameraIp = String(options.cameraIp || '192.168.86.47');
     const prodSameOrigin = isProdSameOriginMode();
     const defaultHost = typeof window !== 'undefined' && window.location?.hostname ? window.location.hostname : '127.0.0.1';
 
@@ -293,8 +296,9 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
       ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'center';
 
+      const headerTitle = this.cameraLabel.toUpperCase();
       if (this.haClient?.isTailscale) {
-        ctx.fillText('REOLINK RLC-540A • MODALITÀ TAILSCALE REMOTA', w / 2, h / 2 - 62);
+        ctx.fillText(`${headerTitle} • MODALITÀ TAILSCALE REMOTA`, w / 2, h / 2 - 62);
         ctx.fillStyle = '#94a3b8';
         ctx.font = '12px monospace';
         ctx.fillText(`Stream: ${this.streamName} • Entità HA: ${this.resolvedEntityId}`, w / 2, h / 2 + 58);
@@ -304,10 +308,10 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
           ctx.fillText(`Dettaglio: ${this.lastHaError.slice(0, 68)}`, w / 2, h / 2 + 102);
         }
       } else {
-        ctx.fillText('REOLINK RLC-540A • STREAM DIAGNOSTICO / STANDBY', w / 2, h / 2 - 58);
+        ctx.fillText(`${headerTitle} • STREAM DIAGNOSTICO / STANDBY`, w / 2, h / 2 - 58);
         ctx.fillStyle = '#94a3b8';
         ctx.font = '13px monospace';
-        ctx.fillText(`Stream: ${this.streamName} • IP 192.168.86.47`, w / 2, h / 2 + 64);
+        ctx.fillText(`Stream: ${this.streamName} • IP ${this.cameraIp}`, w / 2, h / 2 + 64);
         ctx.fillText('Abilita RTSP/FLV su Reolink & inserisci password in .env per video live', w / 2, h / 2 + 86);
       }
     }
@@ -322,7 +326,7 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     ctx.fillStyle = this.hasLiveHaFrames ? '#34d399' : '#38bdf8';
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`CAM_CARRAIO • ${modeTag} • ${nowStr}`, 22, 31);
+    ctx.fillText(`${this.cameraName.toUpperCase()} • ${modeTag} • ${nowStr}`, 22, 31);
   }
 
   disconnect() {

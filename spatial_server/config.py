@@ -105,6 +105,20 @@ def _parse_allowed_origins(raw: str, ha_public_url: str = "") -> tuple[str, ...]
     return tuple(origins)
 
 
+def _parse_camera_streams(raw: str) -> tuple[tuple[str, str], ...]:
+    pairs: list[tuple[str, str]] = []
+    for item in (raw or "").split(","):
+        cleaned = item.strip()
+        if not cleaned or "=" not in cleaned:
+            continue
+        cam_id, rtsp_url = cleaned.split("=", 1)
+        cam_id = cam_id.strip()
+        rtsp_url = rtsp_url.strip()
+        if cam_id and rtsp_url:
+            pairs.append((cam_id, rtsp_url))
+    return tuple(pairs)
+
+
 @dataclass(frozen=True)
 class SpatialServerConfig:
     host: str
@@ -139,6 +153,8 @@ class SpatialServerConfig:
     session_secret_key: str = ""
     allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS
     nvr_storage_dir: Optional[Path] = None
+    go2rtc_rtsp_base_url: str = "rtsp://127.0.0.1:8554"
+    openvino_camera_streams: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -160,6 +176,15 @@ class SpatialServerConfig:
         )
         raw_nvr_dir = (os.getenv("SPATIAL_NVR_STORAGE_DIR") or "").strip()
         nvr_storage_dir = Path(raw_nvr_dir) if raw_nvr_dir else None
+        go2rtc_rtsp_url = os.getenv("GO2RTC_RTSP_CARRAIO_SUB", "rtsp://127.0.0.1:8554/carraio_sub")
+        go2rtc_rtsp_base_url = (os.getenv("GO2RTC_RTSP_BASE_URL") or "").strip()
+        if not go2rtc_rtsp_base_url:
+            parsed_rtsp = urlsplit(go2rtc_rtsp_url)
+            if parsed_rtsp.scheme and parsed_rtsp.netloc:
+                go2rtc_rtsp_base_url = f"{parsed_rtsp.scheme}://{parsed_rtsp.netloc}"
+            else:
+                go2rtc_rtsp_base_url = "rtsp://127.0.0.1:8554"
+        openvino_camera_streams = _parse_camera_streams(os.getenv("OPENVINO_CAMERA_STREAMS", ""))
 
         return cls(
             host=host,
@@ -171,7 +196,7 @@ class SpatialServerConfig:
             data_dir=data_dir,
             models_dir=models_dir,
             default_ingestion_mode=(os.getenv("CV_INGESTION_MODE") or os.getenv("SPATIAL_INGESTION_MODE") or "synthetic").lower(),
-            go2rtc_rtsp_url=os.getenv("GO2RTC_RTSP_CARRAIO_SUB", "rtsp://127.0.0.1:8554/carraio_sub"),
+            go2rtc_rtsp_url=go2rtc_rtsp_url,
             mqtt_host=os.getenv("MQTT_BROKER_HOST") or os.getenv("MQTT_HOST", "192.168.86.24"),
             mqtt_port=int(os.getenv("MQTT_BROKER_PORT") or os.getenv("MQTT_PORT", "1883")),
             mqtt_user=os.getenv("MQTT_USER", ""),
@@ -194,5 +219,7 @@ class SpatialServerConfig:
             session_secret_key=session_secret_key,
             allowed_origins=allowed_origins,
             nvr_storage_dir=nvr_storage_dir,
+            go2rtc_rtsp_base_url=go2rtc_rtsp_base_url,
+            openvino_camera_streams=openvino_camera_streams,
         )
 

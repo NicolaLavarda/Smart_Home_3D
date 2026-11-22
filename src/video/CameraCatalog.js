@@ -16,11 +16,17 @@ export class CameraDescriptor {
     this.cameraIp = String(config.cameraIp || config.camera_ip || '');
     this.coverageZone = String(config.coverageZone || config.coverage_zone || 'outdoor');
     this.opticalModel = String(config.opticalModel || config.optical_model || 'pinhole_radtan');
+    this.cameraModel = String(config.cameraModel || config.camera_model || '');
+    this.lensMm = Number(config.lensMm ?? config.lens_mm ?? 4.0);
+    this.mainStreamLabel = String(config.mainStreamLabel || config.main_stream_label || '');
+    this.subStreamLabel = String(config.subStreamLabel || config.sub_stream_label || '');
     this.fovH = Number(config.fovH ?? config.fov_h_deg ?? 80);
     this.fovV = Number(config.fovV ?? config.fov_v_deg ?? 42);
     this.isPanoramic180 = Boolean(
       config.isPanoramic180 ??
-      (this.opticalModel.toLowerCase().includes('panoramic') || this.fovH >= 150)
+      (this.opticalModel.toLowerCase().includes('panoramic') ||
+        this.opticalModel.toLowerCase().includes('equirectangular') ||
+        this.fovH >= 150)
     );
     const fallbackAspect = this.isPanoramic180 ? 32 / 9 : 16 / 9;
     const rawAspect = Number(config.aspectRatio ?? config.aspect_ratio);
@@ -132,6 +138,10 @@ export class CameraCatalog {
         cameraIp: camData.camera_ip || '',
         coverageZone: camData.coverage_zone || 'outdoor',
         opticalModel: camData.optical_model || 'pinhole_radtan',
+        cameraModel: camData.camera_model || '',
+        lensMm: camData.lens_mm,
+        mainStreamLabel: camData.main_stream_label || '',
+        subStreamLabel: camData.sub_stream_label || '',
         fovH: camData.fov_h_deg,
         fovV: camData.fov_v_deg,
         aspectRatio: camData.aspect_ratio,

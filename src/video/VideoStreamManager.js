@@ -122,6 +122,9 @@ export class VideoStreamManager {
       haClient: this.haClient,
       spatialServerUrl: this.spatialServerUrl,
       cameraEntityId: resolvedCameraEntityId,
+      cameraName: extraOptions.cameraName || catalogEntry?.id || 'Cam_Carraio',
+      cameraLabel: extraOptions.cameraLabel || catalogEntry?.cameraModel || catalogEntry?.name || 'REOLINK RLC-540A',
+      cameraIp: extraOptions.cameraIp || catalogEntry?.cameraIp || '192.168.86.47',
       ...(timeoutMs ? { timeoutMs } : {}),
     };
 
@@ -154,7 +157,7 @@ export class VideoStreamManager {
   /**
    * Acquisisce (o riusa) una THREE.VideoTexture per la proiezione 3D sul frustum POV.
    */
-  async acquireVideoTexture(streamName = 'carraio_main', preferredMode = 'auto') {
+  async acquireVideoTexture(streamName = 'carraio_main', preferredMode = 'auto', extraOptions = {}) {
     const existing = this.textureEntries.get(streamName);
     if (existing && existing.provider?.connected) {
       existing.refCount += 1;
@@ -167,7 +170,7 @@ export class VideoStreamManager {
     videoElement.playsInline = true;
     videoElement.crossOrigin = 'anonymous';
 
-    const provider = await this.attachToVideoElement(streamName, videoElement, preferredMode);
+    const provider = await this.attachToVideoElement(streamName, videoElement, preferredMode, extraOptions);
     const texture = new THREE.VideoTexture(videoElement);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.minFilter = THREE.LinearFilter;

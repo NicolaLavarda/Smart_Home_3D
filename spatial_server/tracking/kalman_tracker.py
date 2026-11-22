@@ -31,7 +31,7 @@ class _KalmanTrack:
     def predict(self, now_ts: float, process_noise: float = 0.45) -> None:
         dt = max(0.0, min(now_ts - self.last_ts, 2.0))
         if dt <= 1e-5:
-            self.last_ts = now_ts
+            self.last_ts = max(self.last_ts, now_ts)
             return
 
         F = np.eye(6, dtype=np.float64)
@@ -56,8 +56,12 @@ class _KalmanTrack:
         H[1, 1] = 1.0
         H[2, 2] = 1.0
 
-        # Multi-camera uncertainty scaling: higher confidence -> lower measurement variance
-        r_var = 0.18 / max(obs.confidence, 0.25)
+        # Multi-camera uncertainty scaling: higher confidence & closer camera -> lower measurement variance
+        base_var = 0.18
+        if obs.range_m is not None:
+            r_dist = max(0.0, float(obs.range_m))
+            base_var = 0.18 + 0.0012 * (r_dist ** 2)
+        r_var = base_var / max(obs.confidence, 0.25)
         R = np.diag([r_var, r_var * 0.35, r_var])
 
         y_res = z_meas - (H @ self.x)
@@ -70,7 +74,7 @@ class _KalmanTrack:
         self.confidence = float(0.7 * self.confidence + 0.3 * obs.confidence)
         self.last_ts = max(self.last_ts, obs.timestamp)
         self.hits += 1
-        self.camera_sources[obs.camera_id] = obs.timestamp
+        self.camera_sources[obs.camera_id] = max(self.camera_sources.get(obs.camera_id, 0.0), obs.timestamp)
 
         if obs.identity and obs.identity_confidence >= self.identity_confidence:
             self.identity = obs.identity
@@ -118,14 +122,18 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         self._last_now = 0.0
 
     def update(self, observations: list[TrackObservation3D], now_ts: float) -> list[TrackedEntity3D]:
-        self._last_now = now_ts
+        effective_now = max(self._last_now, now_ts)
+        self._last_now = effective_now
 
         # 1. Predict all existing tracks to current timestamp
         for tr in self._tracks.values():
-            tr.predict(now_ts)
+            tr.predict(effective_now)
 
         # Prune expired tracks
-        expired = [tid for tid, tr in self._tracks.items() if now_ts - max(tr.camera_sources.values(), default=tr.last_ts) > self.track_ttl_s]
+        expired = [
+            tid for tid, tr in self._tracks.items()
+            if effective_now - max(tr.camera_sources.values(), default=tr.last_ts) > self.track_ttl_s
+        ]
         for tid in expired:
             del self._tracks[tid]
 
@@ -135,7 +143,7 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
             obs_by_cam.setdefault(obs.camera_id, []).append(obs)
 
         for _cam_id, cam_obs in obs_by_cam.items():
-            self._associate_and_fuse_camera_batch(cam_obs, now_ts)
+            self._associate_and_fuse_camera_batch(cam_obs, effective_now)
 
         return self.get_active_tracks()
 
@@ -174,7 +182,10 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
             tid = self._next_track_id
             self._next_track_id += 1
             x0 = np.array([obs.position[0], obs.position[1], obs.position[2], 0.0, 0.0, 0.0], dtype=np.float64)
-            P0 = np.diag([0.35, 0.1, 0.35, 1.5, 0.5, 1.5])
+            p0_xz = 0.35
+            if obs.range_m is not None:
+                p0_xz = 0.35 + 0.002 * (max(0.0, float(obs.range_m)) ** 2)
+            P0 = np.diag([p0_xz, 0.1, p0_xz, 1.5, 0.5, 1.5])
             self._tracks[tid] = _KalmanTrack(
                 track_id=tid,
                 class_label=obs.class_label,

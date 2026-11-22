@@ -41,12 +41,32 @@ class MqttFrigateDetectionSource(IDetectionSource):
         self.default_camera_id = default_camera_id
         self.camera_alias_map = camera_alias_map or {
             "carraio": "Cam_Carraio",
+            "camera.carraio": "Cam_Carraio",
+            "camera.carraio_scorrevole": "Cam_Carraio",
             "carraio_scorrevole": "Cam_Carraio",
+            "carraio_main": "Cam_Carraio",
+            "carraio_sub": "Cam_Carraio",
             "Cam_Carraio": "Cam_Carraio",
+            "portico": "Cam_Portico",
+            "camera.portico": "Cam_Portico",
+            "camera.portico_scorrevole": "Cam_Portico",
+            "portico_scorrevole": "Cam_Portico",
+            "portico_main": "Cam_Portico",
+            "portico_sub": "Cam_Portico",
+            "Cam_Portico": "Cam_Portico",
         }
+        self._alias_map_lower = {k.lower(): v for k, v in self.camera_alias_map.items()}
         self._running = False
         self._task: Optional[asyncio.Task[None]] = None
         self._last_status = "idle"
+
+    def _resolve_camera_id(self, raw_camera: str) -> str:
+        key = str(raw_camera or "").strip()
+        if not key:
+            return self.default_camera_id
+        if key in self.camera_alias_map:
+            return self.camera_alias_map[key]
+        return self._alias_map_lower.get(key.lower(), self.default_camera_id)
 
     def status_details(self) -> str:
         return f"mqtt ({self._last_status})"
@@ -114,7 +134,7 @@ class MqttFrigateDetectionSource(IDetectionSource):
             if len(box) != 4:
                 return None
             cam_raw = str(after.get("camera", self.default_camera_id))
-            cam_id = self.camera_alias_map.get(cam_raw, self.default_camera_id)
+            cam_id = self._resolve_camera_id(cam_raw)
             x1, y1, x2, y2 = [float(v) for v in box]
             if max(x1, y1, x2, y2) > 1.5:
                 # Frigate relative vs pixel fallback
@@ -147,8 +167,10 @@ class MqttFrigateDetectionSource(IDetectionSource):
         box = data.get("bbox")
         if label in VALID_LABELS and isinstance(box, list) and len(box) == 4:
             x1, y1, x2, y2 = [min(max(float(v), 0.0), 1.0) for v in box]
+            raw_cam = str(data.get("camera_id", self.default_camera_id))
+            resolved_cam = self._resolve_camera_id(raw_cam) if raw_cam.lower() in self._alias_map_lower else raw_cam
             return DetectionEvent(
-                camera_id=str(data.get("camera_id", self.default_camera_id)),
+                camera_id=resolved_cam,
                 timestamp=float(data.get("timestamp") or time.time()),
                 class_label=label,  # type: ignore[arg-type]
                 confidence=float(data.get("confidence", 0.85)),

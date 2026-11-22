@@ -30,8 +30,20 @@ export class CameraController {
     this.followTargetFn = null;
     this.followOffset = new THREE.Vector3(-2.1, 1.65, 2.1);
 
+    // Stato vista POV telecamera (per overlay video live/replay automatico)
+    this.activePovCameraName = null;
+    this._povPhase = 'idle'; // 'idle' | 'entering' | 'active'
+    this._povLockedPos = null;
+    this._povLockedDir = null;
+    this._povLockedFov = null;
+    this._povDockedPerfMs = 0;
+    this._povExitLocked = false;
+    this._povListeners = new Set();
+    this._povPointerDownPos = null;
+    this._tmpPovDir = new THREE.Vector3();
+
     // Sgancio automatico quando l'utente interagisce manualmente con la camera
-    this._onUserInteract = () => {
+    this._onUserInteract = (event) => {
       if (this.followTargetFn) {
         this.stopFollowing();
         if (this.isTransitioning) {
@@ -40,8 +52,43 @@ export class CameraController {
           this.onTransitionComplete = null;
         }
       }
+
+      if (this.activePovCameraName && !this._povExitLocked) {
+        if (event?.type === 'wheel' || (event?.type === 'touchstart' && (event.touches?.length || 0) >= 2)) {
+          if (this.isTransitioning) {
+            this.isTransitioning = false;
+            this.controls.enabled = true;
+            this.onTransitionComplete = null;
+          }
+          this.exitCameraPOV({ reason: event.type });
+          return;
+        }
+        if (event?.type === 'pointerdown') {
+          this._povPointerDownPos = { x: event.clientX, y: event.clientY };
+        }
+      }
+    };
+    this._onPovPointerMove = (event) => {
+      if (!this._povPointerDownPos || !this.activePovCameraName || this._povExitLocked) return;
+      const dx = event.clientX - this._povPointerDownPos.x;
+      const dy = event.clientY - this._povPointerDownPos.y;
+      if (Math.hypot(dx, dy) > 5) {
+        this._povPointerDownPos = null;
+        if (this.isTransitioning) {
+          this.isTransitioning = false;
+          this.controls.enabled = true;
+          this.onTransitionComplete = null;
+        }
+        this.exitCameraPOV({ reason: 'drag' });
+      }
+    };
+    this._onPovPointerUp = () => {
+      this._povPointerDownPos = null;
     };
     this.domElement.addEventListener('pointerdown', this._onUserInteract, { passive: true });
+    this.domElement.addEventListener('pointermove', this._onPovPointerMove, { passive: true });
+    this.domElement.addEventListener('pointerup', this._onPovPointerUp, { passive: true });
+    this.domElement.addEventListener('pointercancel', this._onPovPointerUp, { passive: true });
     this.domElement.addEventListener('wheel', this._onUserInteract, { passive: true });
     this.domElement.addEventListener('touchstart', this._onUserInteract, { passive: true });
 
@@ -242,6 +289,7 @@ export class CameraController {
   applyPresetImmediate(presetKey) {
     const preset = this.getPresetForViewport(presetKey);
     if (!preset) return false;
+    this.exitCameraPOV({ reason: 'preset' });
     this.stopFollowing();
     this.isTransitioning = false;
     this.controls.enabled = true;
@@ -274,6 +322,44 @@ export class CameraController {
 
   stopFollowing() {
     this.followTargetFn = null;
+  }
+
+  onPovChange(listener) {
+    if (typeof listener !== 'function') return () => {};
+    this._povListeners.add(listener);
+    return () => this._povListeners.delete(listener);
+  }
+
+  _emitPovChange(payload) {
+    this._povListeners.forEach((fn) => {
+      try {
+        fn(payload);
+      } catch (err) {
+        console.warn('[CameraController] Errore listener POV:', err);
+      }
+    });
+  }
+
+  setPovExitLocked(locked) {
+    this._povExitLocked = Boolean(locked);
+  }
+
+  exitCameraPOV({ reason = 'manual' } = {}) {
+    if (!this.activePovCameraName && this._povPhase === 'idle') return false;
+    const previousCameraName = this.activePovCameraName;
+    this.activePovCameraName = null;
+    this._povPhase = 'idle';
+    this._povLockedPos = null;
+    this._povLockedDir = null;
+    this._povLockedFov = null;
+    this._povPointerDownPos = null;
+    this._emitPovChange({
+      cameraName: null,
+      phase: 'exited',
+      previousCameraName,
+      reason,
+    });
+    return true;
   }
 
   update(delta) {
@@ -319,9 +405,27 @@ export class CameraController {
     }
 
     this.controls.update();
+
+    if (
+      !this.isTransitioning &&
+      this._povPhase === 'active' &&
+      this.activePovCameraName &&
+      !this._povExitLocked &&
+      this._povLockedPos &&
+      this._povLockedDir &&
+      performance.now() - this._povDockedPerfMs > 180
+    ) {
+      this.camera.getWorldDirection(this._tmpPovDir);
+      const posMoved = this.camera.position.distanceTo(this._povLockedPos) > 0.04;
+      const dirMoved = this._tmpPovDir.angleTo(this._povLockedDir) > 0.02;
+      const fovMoved = this._povLockedFov !== null && Math.abs(this.camera.fov - this._povLockedFov) > 0.5;
+      if (posMoved || dirMoved || fovMoved) {
+        this.exitCameraPOV({ reason: 'moved' });
+      }
+    }
   }
 
-    flyTo(eyePosition, targetPosition, duration = 1.2, onComplete = null, targetFov = 45, keepFollowing = false) {
+    flyTo(eyePosition, targetPosition, duration = 1.2, onComplete = null, targetFov = 45, keepFollowing = false, keepPov = false) {
       if (eyePosition && !eyePosition.isVector3 && eyePosition.position && eyePosition.target) {
         const opts = eyePosition;
         return this.flyTo(
@@ -330,8 +434,13 @@ export class CameraController {
           opts.duration ?? 1.2,
           opts.onComplete ?? null,
           opts.fov ?? 45,
-          Boolean(opts.keepFollowing)
+          Boolean(opts.keepFollowing),
+          Boolean(opts.keepPov)
         );
+      }
+
+      if (!keepPov) {
+        this.exitCameraPOV({ reason: 'navigate' });
       }
 
       if (!keepFollowing) {
@@ -377,14 +486,14 @@ export class CameraController {
     /**
      * Applica istantaneamente una posa camera (usata dai cursori live della calibrazione POV).
      */
-    setInstantCameraPose(position, quaternion, fov = null) {
+    setInstantCameraPose(position, quaternion, fov = null, cameraName = null) {
       this.stopFollowing();
       this.isTransitioning = false;
-      this.onCompleteCallback = null;
+      this.onTransitionComplete = null;
       this.camera.position.copy(position);
 
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
-      const lookTarget = position.clone().add(forward.multiplyScalar(12));
+      const lookTarget = position.clone().add(forward.clone().multiplyScalar(12));
       this.controls.target.copy(lookTarget);
       this.camera.lookAt(lookTarget);
 
@@ -393,24 +502,88 @@ export class CameraController {
         this.camera.updateProjectionMatrix();
       }
       this.controls.update();
+
+      if (cameraName) {
+        this.activePovCameraName = cameraName;
+        this._povPhase = 'active';
+      }
+      if (this.activePovCameraName) {
+        this._povLockedPos = position.clone();
+        this._povLockedDir = forward.clone().normalize();
+        this._povLockedFov = this.camera.fov;
+      }
     }
 
     /**
      * Sposta la camera nella posizione POV esatta della telecamera (con eventuale calibrazione salvata).
      */
-    flyToCameraPOV(camNode, duration = 1.5, onComplete = null) {
+    flyToCameraPOV(camNode, duration = 1.5, onComplete = null, options = {}) {
+      if (!camNode) return;
+      camNode.updateMatrixWorld?.(true);
       const worldPos = new THREE.Vector3();
       const worldDir = new THREE.Vector3();
       camNode.getWorldPosition(worldPos);
       camNode.getWorldDirection(worldDir);
+      worldDir.normalize();
 
+      const camName = camNode.name || options.cameraName || null;
+      const forCalibration = Boolean(options?.forCalibration);
       const fov = camNode.isPerspectiveCamera && camNode.fov ? camNode.fov : 42;
-      // Sposta leggermente avanti (25cm) lungo la direzione visiva per non clippare la scocca della camera
-      const eyePos = worldPos.clone().add(worldDir.clone().multiplyScalar(0.25));
+      // Posizione ottica esatta della lente (0m offset) così l'overlay video 3D coincide pixel-per-pixel col modello
+      const eyePos = worldPos.clone();
       const lookTarget = eyePos.clone().add(worldDir.clone().multiplyScalar(12));
 
-      this.flyTo(eyePos, lookTarget, duration, () => {
+      const previousCameraName = this.activePovCameraName;
+      if (previousCameraName && previousCameraName !== camName) {
+        this.exitCameraPOV({ reason: 'switch_pov' });
+      }
+
+      this.activePovCameraName = camName;
+      this._povPhase = 'entering';
+      this._povLockedPos = null;
+      this._povLockedDir = null;
+      this._povLockedFov = null;
+
+      this._emitPovChange({
+        cameraName: camName,
+        phase: 'entering',
+        previousCameraName: previousCameraName !== camName ? previousCameraName : null,
+        forCalibration,
+      });
+
+      const finishDock = () => {
+        if (this.activePovCameraName === camName) {
+          this.controls.update();
+          this._povPhase = 'active';
+          this._povDockedPerfMs = performance.now();
+          this._povLockedPos = this.camera.position.clone();
+          this._povLockedDir = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
+          this._povLockedFov = this.camera.fov;
+          this._emitPovChange({
+            cameraName: camName,
+            phase: 'active',
+            previousCameraName: null,
+            forCalibration,
+          });
+        }
         if (onComplete) onComplete();
-      }, fov);
+      };
+
+      if (duration <= 0) {
+        this.stopFollowing();
+        this.isTransitioning = false;
+        this.controls.enabled = true;
+        this.onTransitionComplete = null;
+        this.camera.position.copy(eyePos);
+        this.controls.target.copy(lookTarget);
+        this.camera.fov = fov;
+        this.camera.updateProjectionMatrix();
+        this.camera.lookAt(lookTarget);
+        this.controls.update();
+        finishDock();
+        return;
+      }
+
+      this.flyTo(eyePos, lookTarget, duration, finishDock, fov, false, true);
     }
   }

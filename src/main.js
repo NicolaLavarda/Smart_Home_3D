@@ -6,6 +6,7 @@ import { HAClient } from './ha/HAClient.js';
 import { EntityBinder } from './ha/EntityBinder.js';
 import { DeviceModals } from './ha/DeviceModals.js';
 import { CameraProjector } from './spatial/CameraProjector.js';
+import { CameraPovOverlayController } from './spatial/CameraPovOverlayController.js';
 import { TrajectoryRenderer } from './spatial/TrajectoryRenderer.js';
 import { SpatialStreamClient } from './spatial/network/SpatialStreamClient.js';
 import { CalibrationAssistantUI } from './spatial/calibration/CalibrationAssistantUI.js';
@@ -173,6 +174,7 @@ async function bootstrap() {
     spatialStreamClient,
     assetLoader,
     haClient,
+    cameraCatalog,
   });
 
   const secCamCtrl = deviceRegistry.get('security_camera');
@@ -185,6 +187,7 @@ async function bootstrap() {
       spatialStreamClient,
       cameraController,
       assetLoader,
+      cameraCatalog,
     });
   }
 
@@ -198,10 +201,12 @@ async function bootstrap() {
     calibrationAssistant,
     assetLoader,
     deviceModals,
+    cameraCatalog,
   });
 
   let navFabHub = null;
   let securityFabHub = null;
+  let povOverlayController = null;
 
   const syncUiLayerState = () => {
     const anyDrawerOpen = modalContainer.classList.contains('open') || Boolean(calibrationAssistant?.isOpen);
@@ -245,8 +250,22 @@ async function bootstrap() {
           if (calibrationAssistant?.isOpen) calibrationAssistant.close();
         }
       }
+      povOverlayController?.handleSecurityPanelStateChange?.();
       syncUiLayerState();
     },
+  });
+
+  povOverlayController = new CameraPovOverlayController({
+    cameraController,
+    cameraProjector,
+    videoStreamManager,
+    recordingManager,
+    cameraCatalog,
+    securityFabHub,
+    calibrationAssistant,
+    haClient,
+    assetLoader,
+    uiLayer,
   });
 
   deviceModals.setLifecycleHooks({
@@ -265,6 +284,7 @@ async function bootstrap() {
 
   calibrationAssistant.setLifecycleHooks({
     onOpen: () => {
+      povOverlayController?.suspendForCalibration?.();
       if (modalContainer.classList.contains('open')) {
         deviceModals.close();
       }
@@ -274,7 +294,10 @@ async function bootstrap() {
       }
       syncUiLayerState();
     },
-    onClose: syncUiLayerState,
+    onClose: () => {
+      povOverlayController?.resumeAfterCalibration?.();
+      syncUiLayerState();
+    },
   });
 
   // 9b. Overlay Auth OAuth2 Home Assistant, PWA Update Prompt & Sincronizzazione Spatial Session
@@ -340,8 +363,9 @@ async function bootstrap() {
     const { model, manifest, haEntitiesMap, groundColliders } = await assetLoader.loadHouseModel('/models/house_optimized.glb');
     sceneManager.scene.add(model);
 
-    // Sincronizza il catalogo telecamere con Blender SSoT
+    // Sincronizza il catalogo telecamere e il controller multi-camera con Blender SSoT
     cameraCatalog.syncFromManifest(manifest);
+    secCamCtrl?.syncFromManifest?.(manifest);
 
     // Registra ground colliders per il raycasting spaziale
     cameraProjector.setGroundColliders(groundColliders);

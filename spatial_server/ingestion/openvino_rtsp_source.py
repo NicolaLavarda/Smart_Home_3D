@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -46,6 +47,9 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         model_path: str = "",
         target_fps: float = 7.0,
         conf_threshold: float = 0.35,
+        shared_compiled_ov=None,
+        shared_backend_name: Optional[str] = None,
+        infer_lock: Optional[threading.Lock] = None,
     ) -> None:
         self.rtsp_url = rtsp_url
         self.camera_id = camera_id
@@ -53,10 +57,11 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self.model_path = Path(model_path) if model_path else None
         self.frame_interval_s = 1.0 / max(target_fps, 1.0)
         self.conf_threshold = max(0.05, min(float(conf_threshold), 0.95))
+        self._infer_lock = infer_lock
 
         self._running = False
         self._task: Optional[asyncio.Task[None]] = None
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rtsp-cv")
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"rtsp-cv-{camera_id}")
         self._backend_name = "initializing"
         self._compiled_ov = None
         self._yolo_model = None
@@ -69,7 +74,12 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self._raw_detections_total = 0
         self._last_frame_ts = 0.0
         self._last_error: Optional[str] = None
-        self._init_detector()
+        if shared_compiled_ov is not None:
+            self._compiled_ov = shared_compiled_ov
+            self._backend_name = shared_backend_name or "openvino_ir(shared)"
+            logger.info("Reusing shared OpenVINO compiled model for %s (%s)", self.camera_id, self._backend_name)
+        else:
+            self._init_detector()
 
     @staticmethod
     def _extract_ov_output(compiled_ov, result) -> np.ndarray:
@@ -193,7 +203,9 @@ class OpenVINORtspDetectionSource(IDetectionSource):
 
     def status_details(self) -> str:
         rtsp_state = "rtsp=ok" if self._rtsp_connected else "rtsp=waiting"
-        base = f"openvino [{self._backend_name}] ({rtsp_state}, frames={self._frames_inferred}, raw_det={self._raw_detections_total})"
+        cam_id = getattr(self, "camera_id", None)
+        prefix = f"openvino:{cam_id}" if cam_id else "openvino"
+        base = f"{prefix} [{self._backend_name}] ({rtsp_state}, frames={self._frames_inferred}, raw_det={self._raw_detections_total})"
         if self._last_error:
             base += f" err={self._last_error[:80]}"
         return base
@@ -408,7 +420,13 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         blob, pad_left, pad_top, new_w, new_h = self._letterbox_bgr(frame, 640)
         img = cv2.cvtColor(blob, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         inp = np.ascontiguousarray(np.transpose(img, (2, 0, 1))[None, ...], dtype=np.float32)
-        output = self._extract_ov_output(self._compiled_ov, self._compiled_ov([inp]))  # Expected shape (1, 84, 8400) for YOLOv8/11
+        lock = getattr(self, "_infer_lock", None)
+        if lock is not None:
+            with lock:
+                raw_result = self._compiled_ov([inp])
+        else:
+            raw_result = self._compiled_ov([inp])
+        output = self._extract_ov_output(self._compiled_ov, raw_result)  # Expected shape (1, 84, 8400) for YOLOv8/11
         if output.ndim == 3:
             raw = output[0]
             preds = raw.T if raw.shape[0] < raw.shape[1] else raw

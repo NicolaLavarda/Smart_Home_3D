@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -94,6 +96,7 @@ class SpatialPipelineService:
         tracker: IMultiTargetTracker3D,
         repository: ITrackRepository,
         calibration_solver: CameraCalibrationSolver,
+        camera_manifest_meta: Optional[dict[str, dict[str, Any]]] = None,
     ) -> None:
         self.config = config
         self.optical_models = optical_models
@@ -102,6 +105,7 @@ class SpatialPipelineService:
         self.tracker = tracker
         self.repository = repository
         self.calibration_solver = calibration_solver
+        self.camera_manifest_meta: dict[str, dict[str, Any]] = dict(camera_manifest_meta or {})
 
         self.ingestion_mode: str = config.default_ingestion_mode
         self.active_sources: list[IDetectionSource] = []
@@ -144,7 +148,73 @@ class SpatialPipelineService:
                 logger.warning("Error stopping source %s: %s", src.mode_name, exc)
         self.active_sources.clear()
 
+    def _resolve_openvino_camera_targets(self) -> list[tuple[str, str]]:
+        if self.config.openvino_camera_streams:
+            configured = [
+                (cam_id, url)
+                for cam_id, url in self.config.openvino_camera_streams
+                if not self.optical_models or cam_id in self.optical_models
+            ]
+            if configured:
+                return configured
+
+        base_rtsp = (self.config.go2rtc_rtsp_base_url or "rtsp://127.0.0.1:8554").rstrip("/")
+        cam_ids = list(self.optical_models.keys()) or ["Cam_Carraio"]
+        targets: list[tuple[str, str]] = []
+        for cam_id in cam_ids:
+            if cam_id == "Cam_Carraio":
+                rtsp_url = self.config.go2rtc_rtsp_url or f"{base_rtsp}/carraio_sub"
+                targets.append((cam_id, rtsp_url))
+                continue
+
+            meta = self.camera_manifest_meta.get(cam_id) or {}
+            slug = re.sub(r"^cam_", "", cam_id, flags=re.IGNORECASE).lower()
+            env_override = os.getenv(f"GO2RTC_RTSP_{slug.upper()}_SUB", "").strip()
+            if env_override:
+                rtsp_url = env_override
+            else:
+                sub_stream_id = (
+                    str(meta.get("sub_stream_id") or "").strip()
+                    or str(meta.get("stream_id") or "").strip()
+                    or f"{slug}_sub"
+                )
+                rtsp_url = f"{base_rtsp}/{sub_stream_id}"
+            targets.append((cam_id, rtsp_url))
+        return targets
+
+    def _build_openvino_sources(self) -> list[OpenVINORtspDetectionSource]:
+        targets = self._resolve_openvino_camera_targets()
+        if not targets:
+            return []
+
+        per_cam_fps = max(1.5, float(self.config.openvino_target_fps) / max(len(targets), 1))
+        shared_lock = threading.Lock() if len(targets) > 1 else None
+        sources: list[OpenVINORtspDetectionSource] = []
+        shared_ov = None
+        shared_backend: Optional[str] = None
+
+        for idx, (cam_id, rtsp_url) in enumerate(targets):
+            src = OpenVINORtspDetectionSource(
+                rtsp_url=rtsp_url,
+                camera_id=cam_id,
+                openvino_device=self.config.openvino_device,
+                model_path=self.config.openvino_model_path,
+                target_fps=per_cam_fps,
+                conf_threshold=self.config.openvino_conf_threshold,
+                shared_compiled_ov=shared_ov if idx > 0 else None,
+                shared_backend_name=shared_backend if idx > 0 else None,
+                infer_lock=shared_lock,
+            )
+            if idx == 0 and src._compiled_ov is not None:
+                shared_ov = src._compiled_ov
+                shared_backend = src._backend_name
+            sources.append(src)
+        return sources
+
     def _build_openvino_source(self) -> OpenVINORtspDetectionSource:
+        sources = self._build_openvino_sources()
+        if sources:
+            return sources[0]
         return OpenVINORtspDetectionSource(
             rtsp_url=self.config.go2rtc_rtsp_url,
             camera_id="Cam_Carraio",
@@ -152,6 +222,48 @@ class SpatialPipelineService:
             model_path=self.config.openvino_model_path,
             target_fps=self.config.openvino_target_fps,
             conf_threshold=self.config.openvino_conf_threshold,
+        )
+
+    def _build_mqtt_camera_alias_map(self) -> dict[str, str]:
+        aliases: dict[str, str] = {
+            "carraio": "Cam_Carraio",
+            "camera.carraio": "Cam_Carraio",
+            "camera.carraio_scorrevole": "Cam_Carraio",
+            "carraio_scorrevole": "Cam_Carraio",
+            "carraio_main": "Cam_Carraio",
+            "carraio_sub": "Cam_Carraio",
+            "Cam_Carraio": "Cam_Carraio",
+            "portico": "Cam_Portico",
+            "camera.portico": "Cam_Portico",
+            "camera.portico_scorrevole": "Cam_Portico",
+            "portico_scorrevole": "Cam_Portico",
+            "portico_main": "Cam_Portico",
+            "portico_sub": "Cam_Portico",
+            "Cam_Portico": "Cam_Portico",
+        }
+        for cam_id in self.optical_models:
+            aliases[cam_id] = cam_id
+            slug = re.sub(r"^cam_", "", cam_id, flags=re.IGNORECASE).lower()
+            if slug:
+                aliases[slug] = cam_id
+                aliases[f"camera.{slug}"] = cam_id
+            meta = self.camera_manifest_meta.get(cam_id) or {}
+            for key in ("ha_camera_entity", "stream_id", "sub_stream_id"):
+                val = str(meta.get(key) or "").strip()
+                if val:
+                    aliases[val] = cam_id
+                    if val.startswith("camera."):
+                        aliases[val[len("camera."):]] = cam_id
+        return aliases
+
+    def _build_mqtt_source(self) -> MqttFrigateDetectionSource:
+        return MqttFrigateDetectionSource(
+            host=self.config.mqtt_host,
+            port=self.config.mqtt_port,
+            username=self.config.mqtt_user,
+            password=self.config.mqtt_password,
+            topic=self.config.mqtt_topic_prefix,
+            camera_alias_map=self._build_mqtt_camera_alias_map(),
         )
 
     async def set_ingestion_mode(self, mode: str) -> list[str]:
@@ -167,27 +279,13 @@ class SpatialPipelineService:
                 )
             ]
         elif mode == "openvino":
-            next_sources = [self._build_openvino_source()]
+            next_sources = list(self._build_openvino_sources())
         elif mode == "mqtt":
-            next_sources = [
-                MqttFrigateDetectionSource(
-                    host=self.config.mqtt_host,
-                    port=self.config.mqtt_port,
-                    username=self.config.mqtt_user,
-                    password=self.config.mqtt_password,
-                    topic=self.config.mqtt_topic_prefix,
-                )
-            ]
+            next_sources = [self._build_mqtt_source()]
         elif mode == "hybrid":
             next_sources = [
-                self._build_openvino_source(),
-                MqttFrigateDetectionSource(
-                    host=self.config.mqtt_host,
-                    port=self.config.mqtt_port,
-                    username=self.config.mqtt_user,
-                    password=self.config.mqtt_password,
-                    topic=self.config.mqtt_topic_prefix,
-                ),
+                *self._build_openvino_sources(),
+                self._build_mqtt_source(),
             ]
         else:
             raise ValueError(f"Unsupported ingestion mode: {mode}")
@@ -308,6 +406,7 @@ class SpatialPipelineService:
                 "timestamp": evt.timestamp,
             }
             identity, id_conf = await self.identity_resolver.resolve_identity(evt)
+            obs_range_m = float(math.dist(ray.origin, hit_pt))
             observations.append(
                 TrackObservation3D(
                     camera_id=evt.camera_id,
@@ -317,6 +416,7 @@ class SpatialPipelineService:
                     confidence=evt.confidence,
                     identity=identity,
                     identity_confidence=id_conf,
+                    range_m=obs_range_m,
                 )
             )
 
@@ -396,6 +496,7 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
     saved_overrides = calib_solver.load_all_overrides()
 
     optical_models: dict[str, ICameraOpticalModel] = {}
+    camera_manifest_meta: dict[str, dict[str, Any]] = {}
     for cam_id, cam_data in manifest.get("cameras", {}).items():
         if cam_data.get("is_real_security_camera") or cam_data.get("ha_camera_entity") or cam_id == "Cam_Carraio":
             model = create_optical_model_from_manifest(cam_id, cam_data)
@@ -408,6 +509,7 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
                     distortion_coeffs=ov.get("distortion_coeffs"),
                 )
             optical_models[cam_id] = model
+            camera_manifest_meta[cam_id] = cam_data
 
     raycaster = TrimeshGroundRaycaster(cfg.glb_path, cfg.manifest_path)
 
@@ -429,6 +531,7 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
         tracker=tracker,
         repository=repository,
         calibration_solver=calib_solver,
+        camera_manifest_meta=camera_manifest_meta,
     )
 
 

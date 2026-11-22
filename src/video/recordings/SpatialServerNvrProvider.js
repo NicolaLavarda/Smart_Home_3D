@@ -155,6 +155,7 @@ export class SpatialServerNvrProvider extends IRecordingProvider {
 
     videoElement.muted = true;
     videoElement.playsInline = true;
+    videoElement.crossOrigin = 'use-credentials';
 
     if (!sameSegment) {
       if (videoElement.srcObject) {

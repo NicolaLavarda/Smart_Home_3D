@@ -4,7 +4,7 @@ import { SecurityCameraModal } from './SecurityCameraModal.js';
 /**
  * SecurityCameraController
  *
- * Controller decentralizzato per le telecamere di sicurezza Reolink (Cam_Carraio).
+ * Controller decentralizzato multi-camera per le telecamere di sicurezza Reolink (SSoT da scene_manifest.json).
  * Integra il flusso video go2rtc (WebRTC/MSE), la vista POV 3D,
  * l'assistente di calibrazione ottica e il collegamento con il backend spaziale.
  */
@@ -17,6 +17,10 @@ export class SecurityCameraController extends BaseDeviceController {
       associatedEntityIds: [
         'camera.carraio_scorrevole',
         'camera.carraio_trasparente',
+        'camera.portico',
+        'camera.portico_scorrevole',
+        'camera.portico_trasparente',
+        'camera.portico_fluente',
         ...(options.associatedEntityIds || []),
       ],
       haClient: options.haClient,
@@ -29,7 +33,9 @@ export class SecurityCameraController extends BaseDeviceController {
     this.spatialStreamClient = options.spatialStreamClient || null;
     this.cameraController = options.cameraController || null;
     this.assetLoader = options.assetLoader || null;
+    this.cameraCatalog = options.cameraCatalog || null;
     this.cameraMeshes = [];
+    this.activeEntityId = this.primaryEntityId;
     this.isModalOpen = false;
   }
 
@@ -41,13 +47,45 @@ export class SecurityCameraController extends BaseDeviceController {
     if (services.spatialStreamClient) this.spatialStreamClient = services.spatialStreamClient;
     if (services.cameraController) this.cameraController = services.cameraController;
     if (services.assetLoader) this.assetLoader = services.assetLoader;
+    if (services.cameraCatalog) this.cameraCatalog = services.cameraCatalog;
+  }
+
+  /**
+   * Registra dinamicamente tutte le entità camera presenti nel manifesto Blender SSoT.
+   */
+  syncFromManifest(manifest) {
+    const cameras = manifest?.cameras;
+    if (!cameras) return;
+    for (const [camName, camData] of Object.entries(cameras)) {
+      const isSecurityCam =
+        camName === 'Cam_Carraio' ||
+        camData?.is_real_security_camera === true ||
+        Boolean(camData?.ha_camera_entity);
+      if (!isSecurityCam) continue;
+      if (camData?.ha_camera_entity) {
+        this.associatedEntityIds.add(camData.ha_camera_entity);
+      }
+    }
+  }
+
+  matchesEntity(entityId) {
+    if (!entityId) return false;
+    if (super.matchesEntity(entityId)) return true;
+    if (this.cameraCatalog?.findByEntityId?.(entityId)) return true;
+    const cameras = this.assetLoader?.manifest?.cameras;
+    if (cameras) {
+      for (const camData of Object.values(cameras)) {
+        if (camData?.ha_camera_entity === entityId) return true;
+      }
+    }
+    return false;
   }
 
   bind3D(meshes, scene, context) {
     super.bind3D(meshes, scene, context);
     this.cameraMeshes = meshes || [];
 
-    // Assicura che i mesh fisici della telecamera sul pilastrino siano cliccabili
+    // Assicura che i mesh fisici di ogni telecamera siano cliccabili mantenendo il proprio ha_entity SSoT
     this.cameraMeshes.forEach((mesh) => {
       if (!mesh.userData) mesh.userData = {};
       if (!mesh.userData.ha_entity) {
@@ -57,23 +95,77 @@ export class SecurityCameraController extends BaseDeviceController {
     });
   }
 
-  findMatchingBlenderCameraName(entityId = this.primaryEntityId) {
+  findMatchingBlenderCameraName(entityId = this.activeEntityId || this.primaryEntityId) {
     const cameras = this.assetLoader?.manifest?.cameras;
-    if (!cameras) return 'Cam_Carraio';
-    for (const [name, camData] of Object.entries(cameras)) {
-      if (camData.ha_camera_entity === entityId || (camData.ha_camera_entity && entityId?.includes('carraio'))) {
-        return name;
+    const targetId = String(entityId || this.primaryEntityId || '').trim();
+    const targetLower = targetId.toLowerCase();
+
+    if (cameras) {
+      // 1. Match esatto su ha_camera_entity
+      for (const [name, camData] of Object.entries(cameras)) {
+        if (camData?.ha_camera_entity && camData.ha_camera_entity === targetId) {
+          return name;
+        }
+      }
+
+      // 2. Match su slug / alias (es. camera.carraio_trasparente -> Cam_Carraio, camera.portico_scorrevole -> Cam_Portico)
+      const entitySlug = targetLower.replace(/^camera\./, '');
+      const baseSlug = entitySlug.replace(/_(scorrevole|trasparente|fluente|main|sub)$/i, '');
+      for (const [name, camData] of Object.entries(cameras)) {
+        const isSecurityCam =
+          name === 'Cam_Carraio' ||
+          camData?.is_real_security_camera === true ||
+          Boolean(camData?.ha_camera_entity);
+        if (!isSecurityCam) continue;
+
+        const camSlug = name.replace(/^Cam_/i, '').toLowerCase();
+        const streamBase = String(camData?.stream_id || '').replace(/_main$/i, '').toLowerCase();
+        if (
+          (baseSlug && (camSlug === baseSlug || streamBase === baseSlug || entitySlug.startsWith(`${camSlug}_`))) ||
+          (camData?.ha_camera_entity && baseSlug && camData.ha_camera_entity.toLowerCase().includes(baseSlug))
+        ) {
+          return name;
+        }
       }
     }
+
+    if (targetLower.includes('portico')) return 'Cam_Portico';
     return 'Cam_Carraio';
+  }
+
+  getModalHeaderInfo(entityId = this.activeEntityId || this.primaryEntityId, entity = null) {
+    const camName = this.findMatchingBlenderCameraName(entityId);
+    const manifestCam = this.assetLoader?.manifest?.cameras?.[camName];
+    const catalogCam = this.cameraCatalog?.getCameraById?.(camName) || this.cameraCatalog?.findByEntityId?.(entityId);
+
+    const title =
+      manifestCam?.ha_label ||
+      catalogCam?.name ||
+      (camName === 'Cam_Portico' ? 'Portico (Reolink RLC-810A)' : null) ||
+      entity?.attributes?.friendly_name ||
+      this.name;
+
+    const rawZone = manifestCam?.coverage_zone || catalogCam?.coverageZone || '';
+    const zoneLabel =
+      camName === 'Cam_Carraio' || rawZone === 'outdoor_gates_street'
+        ? 'Esterno Carraio'
+        : rawZone && rawZone !== 'general' && rawZone !== 'outdoor'
+          ? String(rawZone).replace(/\./g, ' ').trim()
+          : (catalogCam?.shortName || camName.replace(/^Cam_/i, '').replace(/_/g, ' '));
+
+    return {
+      title,
+      subtitle: `${zoneLabel} • Live & Calibrazione`,
+    };
   }
 
   renderModal(container, entity, context = {}) {
     this.isModalOpen = true;
+    this.activeEntityId = entity?.entity_id || context.entityId || this.primaryEntityId;
     if (context.haClient) this.haClient = context.haClient;
     if (context.cameraController) this.cameraController = context.cameraController;
     if (context.assetLoader) this.assetLoader = context.assetLoader;
-    this.modalView.render(container, context);
+    this.modalView.render(container, context, entity);
   }
 
   onModalClose() {

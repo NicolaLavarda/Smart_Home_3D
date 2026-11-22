@@ -452,6 +452,13 @@ export class CameraProjector {
     this.syncGroupVisibility(camName);
   }
 
+  detachOverlayTexture(camName) {
+    const overlay = this.frustumOverlays.get(camName);
+    if (!overlay) return;
+    overlay.attachVideoTexture(null);
+    this.syncGroupVisibility(camName);
+  }
+
   setOverlayPOVMode(camName, isPOV, opacity = 0.52) {
     const overlay = this.frustumOverlays.get(camName);
     if (!overlay) return;

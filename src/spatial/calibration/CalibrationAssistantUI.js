@@ -46,7 +46,7 @@ const TIER_COLORS = {
  *   i marker e i vettori di errore a schermo e applicando il risultato di SolvePnP.
  */
 export class CalibrationAssistantUI {
-  constructor({ sceneManager, cameraController, cameraProjector, videoStreamManager, spatialStreamClient, assetLoader, haClient = null }) {
+  constructor({ sceneManager, cameraController, cameraProjector, videoStreamManager, spatialStreamClient, assetLoader, haClient = null, cameraCatalog = null }) {
     this.sceneManager = sceneManager;
     this.cameraController = cameraController;
     this.cameraProjector = cameraProjector;
@@ -54,7 +54,10 @@ export class CalibrationAssistantUI {
     this.spatialStreamClient = spatialStreamClient;
     this.assetLoader = assetLoader;
     this.haClient = haClient;
+    this.cameraCatalog = cameraCatalog;
     this._rbacToastTimer = null;
+    this._listenersAttached = false;
+    this._openSeq = 0;
 
     this.isOpen = false;
     this.activeCameraName = 'Cam_Carraio';
@@ -180,17 +183,41 @@ export class CalibrationAssistantUI {
     }, 3500);
   }
 
-  async open(cameraName = 'Cam_Carraio') {
+  async open(cameraName = null) {
     if (!this.haClient?.isAdmin) {
       this._showRbacToast('Calibrazione riservata agli utenti Admin.');
       return false;
     }
 
-    this.activeCameraName = cameraName;
-    this.state = this.loadSavedState(cameraName);
+    const available = this._getAvailableSecurityCameras();
+    const resolvedCamName =
+      cameraName ||
+      this.cameraController?.activePovCameraName ||
+      this.activeCameraName ||
+      available[0]?.id ||
+      'Cam_Carraio';
+    const seq = ++this._openSeq;
 
-    const manifestCam = this.getManifestCamera(cameraName);
-    this.streamName = manifestCam?.stream_id || 'carraio_main';
+    // Se già aperto su un'altra telecamera, rilascia la vecchia VideoTexture e pulisci le coppie PnP
+    if (this.isOpen && this.activeCameraName !== resolvedCamName) {
+      this.setPnpMode(false);
+      this.correspondences = [];
+      this.pendingPoint3D = null;
+      this.cameraProjector?.setOverlayPOVMode?.(this.activeCameraName, false, 0);
+      this.cameraProjector?.detachOverlayTexture?.(this.activeCameraName);
+      if (this.videoTextureEntry) {
+        this.videoStreamManager.releaseVideoTexture(this.streamName);
+        this.videoTextureEntry = null;
+      }
+    }
+
+    this.activeCameraName = resolvedCamName;
+    this.state = this.loadSavedState(resolvedCamName);
+
+    const manifestCam = this.getManifestCamera(resolvedCamName);
+    const catalogCam = this.cameraCatalog?.getCameraById?.(resolvedCamName) || null;
+    const slug = resolvedCamName.replace(/^Cam_/i, '').toLowerCase() || 'carraio';
+    this.streamName = manifestCam?.stream_id || catalogCam?.mainStream || `${slug}_main`;
 
     if (!this.panelEl) {
       this.createDOM();
@@ -198,43 +225,61 @@ export class CalibrationAssistantUI {
     this.ensureOverlayDOM();
 
     this.isOpen = true;
+    this.cameraController?.setPovExitLocked?.(true);
     this.setCollapsed(false);
     this.panelEl.classList.add('open');
 
     const subtitleEl = this.panelEl.querySelector('#calib-cam-name');
     if (subtitleEl) {
-      subtitleEl.textContent = `${cameraName} • ${manifestCam?.ha_label || 'Reolink RLC-540A'}`;
+      subtitleEl.textContent = `${resolvedCamName} • ${manifestCam?.ha_label || catalogCam?.name || resolvedCamName}`;
     }
+    this._syncCameraSelector();
 
     this.syncInputsFromState();
     this.syncOpacityUI(Math.round(this.overlayOpacity * 100));
     this.renderPnpPairsList();
     this.updatePnpControlsUI();
-    this.onOpenCallback?.(cameraName);
-    window.addEventListener('keydown', this._onKeyDown);
-
-    // Collega VideoTexture live sul frustum 3D
-    try {
-      this.videoTextureEntry = await this.videoStreamManager.acquireVideoTexture(this.streamName);
-      this.cameraProjector.attachOverlayTexture(cameraName, this.videoTextureEntry.texture);
-      this.cameraProjector.setOverlayPOVMode(cameraName, true, this.overlayOpacity);
-    } catch (err) {
-      console.warn('[CalibrationAssistantUI] Impossibile collegare VideoTexture:', err);
-    }
+    this.onOpenCallback?.(resolvedCamName);
 
     // Applica immediatamente la calibrazione corrente alla scena + vista POV
     this.applyLiveCalibration(true);
 
-    const canvas = this.sceneManager.renderer.domElement;
-    canvas.addEventListener('pointerdown', this._onPointerDown);
-    canvas.addEventListener('pointermove', this._onPointerMove);
-    canvas.addEventListener('pointerup', this._onPointerUp);
-    canvas.addEventListener('contextmenu', this._onContextMenu);
-    this.sceneManager.addUpdateCallback(this._onFrameUpdate);
+    if (!this._listenersAttached) {
+      this._listenersAttached = true;
+      window.addEventListener('keydown', this._onKeyDown);
+      const canvas = this.sceneManager.renderer.domElement;
+      canvas.addEventListener('pointerdown', this._onPointerDown);
+      canvas.addEventListener('pointermove', this._onPointerMove);
+      canvas.addEventListener('pointerup', this._onPointerUp);
+      canvas.addEventListener('contextmenu', this._onContextMenu);
+      this.sceneManager.addUpdateCallback(this._onFrameUpdate);
+    }
+
+    // Collega VideoTexture live sul frustum 3D della telecamera scelta
+    const acquiredStream = this.streamName;
+    try {
+      const entry = await this.videoStreamManager.acquireVideoTexture(acquiredStream, 'auto', {
+        cameraEntityId: manifestCam?.ha_camera_entity || catalogCam?.entityId || `camera.${slug}`,
+        cameraName: resolvedCamName,
+        cameraLabel: manifestCam?.ha_label || catalogCam?.name || resolvedCamName,
+        cameraIp: manifestCam?.camera_ip || catalogCam?.cameraIp || '',
+      });
+      if (!this.isOpen || seq !== this._openSeq || this.activeCameraName !== resolvedCamName) {
+        this.videoStreamManager.releaseVideoTexture(acquiredStream);
+        return true;
+      }
+      this.videoTextureEntry = entry;
+      this.cameraProjector.attachOverlayTexture(resolvedCamName, entry.texture);
+      this.cameraProjector.setOverlayPOVMode(resolvedCamName, true, this.overlayOpacity);
+    } catch (err) {
+      console.warn('[CalibrationAssistantUI] Impossibile collegare VideoTexture:', err);
+    }
+    return true;
   }
 
   close() {
     if (!this.isOpen) return;
+    this._openSeq += 1;
     this.isOpen = false;
     this.setPnpMode(false);
     this.pendingPoint3D = null;
@@ -251,20 +296,27 @@ export class CalibrationAssistantUI {
       this.vectorSvgEl.innerHTML = '';
     }
 
-    this.cameraProjector.setOverlayPOVMode(this.activeCameraName, false, 0);
+    this.cameraProjector?.setOverlayPOVMode?.(this.activeCameraName, false, 0);
+    this.cameraProjector?.detachOverlayTexture?.(this.activeCameraName);
     if (this.videoTextureEntry) {
       this.videoStreamManager.releaseVideoTexture(this.streamName);
       this.videoTextureEntry = null;
     }
 
-    const canvas = this.sceneManager.renderer.domElement;
-    canvas.style.cursor = '';
-    canvas.removeEventListener('pointerdown', this._onPointerDown);
-    canvas.removeEventListener('pointermove', this._onPointerMove);
-    canvas.removeEventListener('pointerup', this._onPointerUp);
-    canvas.removeEventListener('contextmenu', this._onContextMenu);
-    this.sceneManager.removeUpdateCallback(this._onFrameUpdate);
-    window.removeEventListener('keydown', this._onKeyDown);
+    if (this._listenersAttached) {
+      this._listenersAttached = false;
+      const canvas = this.sceneManager.renderer.domElement;
+      canvas.style.cursor = '';
+      canvas.removeEventListener('pointerdown', this._onPointerDown);
+      canvas.removeEventListener('pointermove', this._onPointerMove);
+      canvas.removeEventListener('pointerup', this._onPointerUp);
+      canvas.removeEventListener('contextmenu', this._onContextMenu);
+      this.sceneManager.removeUpdateCallback(this._onFrameUpdate);
+      window.removeEventListener('keydown', this._onKeyDown);
+    }
+
+    this.cameraController?.setPovExitLocked?.(false);
+    this.cameraController?.exitCameraPOV?.({ reason: 'calibration_closed' });
     this.onCloseCallback?.();
   }
 
@@ -320,6 +372,14 @@ export class CalibrationAssistantUI {
       </div>
 
       <div class="calib-body" id="calib-content">
+        <div class="calib-section" id="calib-cam-selector-row" style="display:none;">
+          <div class="calib-row-label">
+            <span>Telecamera da calibrare</span>
+          </div>
+          <div class="calib-cam-pills" id="calib-cam-pills" role="tablist" aria-label="Selezione telecamera"></div>
+          <select id="calib-cam-select" aria-label="Seleziona telecamera da calibrare" style="display:none;"></select>
+        </div>
+
         <div class="calib-section">
           <div class="calib-row-label">
             <span>Opacità Video Live</span>
@@ -371,7 +431,7 @@ export class CalibrationAssistantUI {
 
         <div class="calib-actions-row">
           <button type="button" class="btn-icon-text" id="calib-flip-180" style="flex:1;justify-content:center;font-size:11px;">
-            ${icon('refresh-cw', { size: 14 })} <span>Inverti Direzione 180° (Vialetto ↔ Strada)</span>
+            ${icon('refresh-cw', { size: 14 })} <span>Inverti Direzione 180°</span>
           </button>
         </div>
 
@@ -506,7 +566,116 @@ export class CalibrationAssistantUI {
     this.updatePnpControlsUI();
   }
 
+  _getAvailableSecurityCameras() {
+    const byId = new Map();
+
+    const catalogCams = this.cameraCatalog?.getCameras?.() || [];
+    for (const cam of catalogCams) {
+      if (!cam?.id) continue;
+      byId.set(cam.id, {
+        id: cam.id,
+        shortName: cam.shortName || cam.id.replace(/^Cam_/i, ''),
+        label: cam.name || cam.shortName || cam.id,
+      });
+    }
+
+    const manifestCameras = this.assetLoader?.manifest?.cameras || {};
+    for (const [k, v] of Object.entries(manifestCameras)) {
+      const isSecurityCam = k === 'Cam_Carraio' || v?.is_real_security_camera === true || Boolean(v?.ha_camera_entity);
+      if (!isSecurityCam) continue;
+      if (!byId.has(k)) {
+        const label = v?.ha_label || k;
+        const shortName =
+          k === 'Cam_Carraio'
+            ? 'Carraio'
+            : String(label).replace(/^Telecamera\s+/i, '').replace(/\s*\(.*?\)\s*/g, '').trim() || k;
+        byId.set(k, { id: k, shortName, label });
+      }
+    }
+
+    if (this.cameraProjector?.frustumHelpers) {
+      for (const camId of this.cameraProjector.frustumHelpers.keys()) {
+        if (!byId.has(camId)) {
+          byId.set(camId, {
+            id: camId,
+            shortName: camId.replace(/^Cam_/i, ''),
+            label: camId,
+          });
+        }
+      }
+    }
+
+    return Array.from(byId.values());
+  }
+
+  switchCamera(nextCam) {
+    if (!nextCam || nextCam === this.activeCameraName) return;
+    if (!this.haClient?.isAdmin) return;
+    const camNode = this.assetLoader?.cameras?.get?.(nextCam);
+    if (camNode && this.cameraController?.flyToCameraPOV) {
+      this.cameraController.flyToCameraPOV(
+        camNode,
+        0.9,
+        () => {
+          this.open(nextCam);
+        },
+        { forCalibration: true, cameraName: nextCam }
+      );
+    } else {
+      this.open(nextCam);
+    }
+  }
+
+  _syncCameraSelector() {
+    if (!this.panelEl) return;
+    const row = this.panelEl.querySelector('#calib-cam-selector-row');
+    const select = this.panelEl.querySelector('#calib-cam-select');
+    const pillsWrap = this.panelEl.querySelector('#calib-cam-pills');
+    if (!row || !select) return;
+
+    const securityCams = this._getAvailableSecurityCameras();
+    if (securityCams.length < 2) {
+      row.style.display = 'none';
+      return;
+    }
+
+    row.style.display = '';
+    select.innerHTML = securityCams
+      .map((c) => `<option value="${c.id}"${c.id === this.activeCameraName ? ' selected' : ''}>${c.label}</option>`)
+      .join('');
+    select.value = this.activeCameraName;
+
+    if (pillsWrap) {
+      pillsWrap.innerHTML = securityCams
+        .map(
+          (c) => `
+          <button
+            type="button"
+            class="calib-cam-pill${c.id === this.activeCameraName ? ' active' : ''}"
+            data-calib-cam="${c.id}"
+            role="tab"
+            aria-selected="${c.id === this.activeCameraName ? 'true' : 'false'}"
+            title="${c.label}"
+          >
+            ${icon('cctv', { size: 13 })}
+            <span>${c.shortName}</span>
+          </button>`
+        )
+        .join('');
+
+      pillsWrap.querySelectorAll('[data-calib-cam]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.switchCamera(btn.dataset.calibCam);
+        });
+      });
+    }
+  }
+
   bindEvents() {
+    this.panelEl.querySelector('#calib-cam-select')?.addEventListener('change', (e) => {
+      this.switchCamera(e.target?.value);
+    });
+
     this.panelEl.querySelector('#calib-header-toggle').addEventListener('click', () => {
       this.setCollapsed(!this.panelEl.classList.contains('collapsed'));
     });
@@ -632,7 +801,7 @@ export class CalibrationAssistantUI {
   applyLiveCalibration(syncViewportCamera = true) {
     const pose = this.cameraProjector.applyCameraCalibration(this.activeCameraName, this.state);
     if (syncViewportCamera && pose && this.cameraController) {
-      this.cameraController.setInstantCameraPose(pose.position, pose.quaternion, this.state.fovV);
+      this.cameraController.setInstantCameraPose(pose.position, pose.quaternion, this.state.fovV, this.activeCameraName);
     }
     this.refreshPairErrorsUI();
     return pose;

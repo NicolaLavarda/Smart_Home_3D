@@ -99,6 +99,8 @@ export class SecurityFabHub {
     this.recordingSegmentsByCam = new Map();
     this.liveStreamUnsubs = new Map(); // cameraId -> unsubscribe fn
     this.tileElements = new Map();     // cameraId -> { card, video, badge, meta, noRecOverlay, noRecTime, noRecReason }
+    this._modeListeners = new Set();
+    this._replaySlotListeners = new Set();
     this._liveConnected = false;
     this._hasAutoLoadedRealHistory = false;
     this._activeTrackCount = 0;
@@ -145,6 +147,29 @@ export class SecurityFabHub {
 
   get isStrip() {
     return this.panelState === 'strip';
+  }
+
+  onModeChange(listener) {
+    if (typeof listener !== 'function') return () => {};
+    this._modeListeners.add(listener);
+    return () => this._modeListeners.delete(listener);
+  }
+
+  onReplaySlotStateChange(listener) {
+    if (typeof listener !== 'function') return () => {};
+    this._replaySlotListeners.add(listener);
+    return () => this._replaySlotListeners.delete(listener);
+  }
+
+  getReplayTileInfo(cameraId) {
+    if (this.panelState === 'closed' || this.mode !== 'replay') return null;
+    const tile = this.tileElements.get(cameraId);
+    if (!tile || !tile.videoEl) return null;
+    return {
+      videoEl: tile.videoEl,
+      status: tile.lastReplayState?.status || RecordingPlaybackStatus.IDLE,
+      state: tile.lastReplayState || null,
+    };
   }
 
   initUI() {
@@ -561,7 +586,7 @@ export class SecurityFabHub {
       card.style.setProperty('--cam-aspect', String(cam.aspectRatio));
 
       card.innerHTML = `
-        <video class="m3-cam-video" autoplay muted playsinline></video>
+        <video class="m3-cam-video" autoplay muted playsinline crossorigin="use-credentials"></video>
         <div class="m3-cam-dark-state" hidden>
           <span class="m3-dark-icon">${icon('video-off', { size: 22 })}</span>
           <span class="m3-dark-title">Nessuna registrazione</span>
@@ -623,6 +648,7 @@ export class SecurityFabHub {
         darkStateEl,
         darkTimeEl,
         darkTitleEl,
+        lastReplayState: null,
       });
     });
 
@@ -635,8 +661,8 @@ export class SecurityFabHub {
       if (this.panelState === 'expanded') {
         this.minimizeToStrip();
       }
-      this.cameraController.flyToCameraPOV(camNode, 1.25);
-    } else {
+      this.cameraController.flyToCameraPOV(camNode, 1.25, null, { cameraName: cam.blenderCameraName });
+    } else if (cam.blenderCameraName === 'Cam_Carraio') {
       this.cameraController?.flyToPreset?.('carraio_cam', 1.2);
     }
   }
@@ -790,6 +816,14 @@ export class SecurityFabHub {
       this._updateStatusSummary();
       requestAnimationFrame(() => this.drawDensityCanvas());
     }
+
+    this._modeListeners.forEach((fn) => {
+      try {
+        fn(this.mode);
+      } catch (err) {
+        console.warn('[SecurityFabHub] Errore listener onModeChange:', err);
+      }
+    });
   }
 
   // --- Live Video Multi-Camera ---
@@ -892,6 +926,7 @@ export class SecurityFabHub {
 
   _handleHistoricalSlotState(tile, state) {
     if (!tile || this.mode !== 'replay') return;
+    tile.lastReplayState = state;
     const tsLabel = formatShortDateTime(state.timestampUnix || this.currentUnix);
 
     if (state.status === RecordingPlaybackStatus.PLAYING || state.status === RecordingPlaybackStatus.PAUSED) {
@@ -904,6 +939,14 @@ export class SecurityFabHub {
       this._setTileBadge(tile, 'NO VIDEO', 'norec');
       this._setTileDarkState(tile, true, 'Nessuna registrazione a quest\'ora', tsLabel);
     }
+
+    this._replaySlotListeners.forEach((fn) => {
+      try {
+        fn(tile.cam.id, state);
+      } catch (err) {
+        console.warn('[SecurityFabHub] Errore listener onReplaySlotStateChange:', err);
+      }
+    });
   }
 
   _setTileDarkState(tile, show, title = 'Nessuna registrazione', timeText = '') {

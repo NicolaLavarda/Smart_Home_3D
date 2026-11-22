@@ -10,6 +10,7 @@ export class TopBar {
     calibrationAssistant = null,
     assetLoader = null,
     deviceModals = null,
+    cameraCatalog = null,
   }) {
     this.container = domContainer;
     this.sceneManager = sceneManager;
@@ -20,6 +21,7 @@ export class TopBar {
     this.calibrationAssistant = calibrationAssistant;
     this.assetLoader = assetLoader;
     this.deviceModals = deviceModals;
+    this.cameraCatalog = cameraCatalog;
     this._setQuickNavCollapsed = null;
 
     this.initUI();
@@ -67,7 +69,7 @@ export class TopBar {
               </div>
             </div>
             <div class="settings-dropdown-divider" id="top-settings-divider"></div>
-            <button class="settings-dropdown-item" id="btn-open-cam-calib" title="Apri calibrazione ottica POV su Cam_Carraio" hidden disabled style="display: none;">
+            <button class="settings-dropdown-item" id="btn-open-cam-calib" title="Apri calibrazione ottica POV telecamere" hidden disabled style="display: none;">
               ${icon('sliders-horizontal', { size: 15 })}
               <span>Calibra Cam</span>
             </button>
@@ -226,7 +228,7 @@ export class TopBar {
       }
     });
 
-    // Apertura Calibrazione Ottica POV Cam_Carraio (solo Admin)
+    // Apertura Calibrazione Ottica POV multi-camera (solo Admin)
     this.calibBtn?.addEventListener('click', () => {
       this.closeSettingsDropdown();
       if (!this.haClient?.isAdmin) return;
@@ -236,18 +238,28 @@ export class TopBar {
         this.calibBtn.classList.remove('active');
         return;
       }
+
+      const targetCam = this._resolveCalibrationTargetCamera();
+      const alreadyInTargetPov = this.cameraController?.activePovCameraName === targetCam;
+
       this.deviceModals?.close();
       if (window.innerWidth <= 1024) {
         this.setQuickNavCollapsed(true);
       }
       this.calibBtn.classList.add('active');
-      const camNode = this.assetLoader?.cameras?.get('Cam_Carraio');
-      if (camNode && this.cameraController) {
-        this.cameraController.flyToCameraPOV(camNode, 1.1, () => {
-          this.calibrationAssistant.open('Cam_Carraio');
-        });
+
+      const camNode = this.assetLoader?.cameras?.get?.(targetCam);
+      if (camNode && this.cameraController && !alreadyInTargetPov) {
+        this.cameraController.flyToCameraPOV(
+          camNode,
+          1.1,
+          () => {
+            this.calibrationAssistant.open(targetCam);
+          },
+          { forCalibration: true, cameraName: targetCam }
+        );
       } else {
-        this.calibrationAssistant.open('Cam_Carraio');
+        this.calibrationAssistant.open(targetCam);
       }
     });
 
@@ -270,6 +282,25 @@ export class TopBar {
       const isVisible = this.interactionManager.toggleBadges();
       this.badgesBtn.classList.toggle('active', isVisible);
     });
+  }
+
+  _resolveCalibrationTargetCamera() {
+    const activePov = this.cameraController?.activePovCameraName;
+    if (activePov) {
+      return activePov;
+    }
+    const openEntity = this.deviceModals?.currentEntityId;
+    if (typeof openEntity === 'string' && openEntity.startsWith('camera.')) {
+      const matched = this.deviceModals?.findMatchingBlenderCameraName?.(openEntity);
+      if (matched) return matched;
+    }
+    const lastCalib = this.calibrationAssistant?.activeCameraName;
+    if (lastCalib && (this.assetLoader?.cameras?.has?.(lastCalib) || this.assetLoader?.manifest?.cameras?.[lastCalib])) {
+      return lastCalib;
+    }
+    const catalogFirst = this.cameraCatalog?.getCameras?.()?.[0]?.blenderCameraName;
+    if (catalogFirst) return catalogFirst;
+    return 'Cam_Carraio';
   }
 
   /**

@@ -45,6 +45,7 @@ MATERIAL_COLOR_OVERRIDES = {
     "Mat_Deebot_Dark": (0.12, 0.13, 0.14, 1.0),                # Antracite scuro dock / bumper Deebot
     "Mat_Deebot_Chrome": (0.85, 0.85, 0.87, 1.0),              # Ghiera metallica sensore LDS
     "Mat_Deebot_Glow": (0.15, 0.70, 1.0, 1.0),                 # LED cyan pulsante e dock
+    "Mat_Security_Cam_White": (0.92, 0.93, 0.95, 1.0),         # Corpo bianco opaco telecamera Reolink bullet
 }
 
 
@@ -144,6 +145,14 @@ def extract_camera_data(cam_obj):
     render_w = scene.render.resolution_x
     render_h = scene.render.resolution_y
     aspect = render_w / render_h if render_h != 0 else 1.7778
+    custom_aspect = cam_obj.get("aspect_ratio")
+    if custom_aspect is not None:
+        try:
+            custom_aspect_val = float(custom_aspect)
+            if custom_aspect_val > 0.2:
+                aspect = custom_aspect_val
+        except (TypeError, ValueError):
+            pass
 
     sensor_w = cam.sensor_width
     if cam_obj.get("optical_model") and cam.sensor_height > 0:
@@ -181,7 +190,7 @@ def extract_camera_data(cam_obj):
     raw_dist = cam_obj.get("distortion_coeffs")
     dist_coeffs = [round(float(x), 6) for x in raw_dist] if raw_dist is not None else [0.0, 0.0, 0.0, 0.0, 0.0]
 
-    return {
+    result = {
         "name": cam_obj.name,
         "ha_camera_entity": cam_obj.get("ha_camera_entity", ""),
         "ha_label": cam_obj.get("ha_label", cam_obj.name),
@@ -212,6 +221,15 @@ def extract_camera_data(cam_obj):
             "extrinsic_cv_to_world": matrix_to_list(mat_threejs_cv),
         }
     }
+    if cam_obj.get("camera_model"):
+        result["camera_model"] = str(cam_obj.get("camera_model"))
+    if cam_obj.get("main_stream_label"):
+        result["main_stream_label"] = str(cam_obj.get("main_stream_label"))
+    if cam_obj.get("sub_stream_label"):
+        result["sub_stream_label"] = str(cam_obj.get("sub_stream_label"))
+    if cam_obj.get("is_panoramic_180") is not None:
+        result["is_panoramic_180"] = bool(cam_obj.get("is_panoramic_180"))
+    return result
 
 
 def generate_manifest(manifest_path):
@@ -278,9 +296,10 @@ def generate_manifest(manifest_path):
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
+    real_cams = [k for k, v in manifest["cameras"].items() if v.get("is_real_security_camera")]
     print(f"[Manifest Generato]: {manifest_path}")
     print(f"  - Entità HA: {len(manifest['ha_entities'])}")
-    print(f"  - Telecamere: {len(manifest['cameras'])} (Reale: Cam_Carraio)")
+    print(f"  - Telecamere: {len(manifest['cameras'])} (Reali: {', '.join(real_cams) or 'nessuna'})")
     print(f"  - Ground Colliders: {len(manifest['ground_colliders'])}")
 
 
