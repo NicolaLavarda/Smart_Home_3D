@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +15,8 @@ from spatial_server.domain.models import PnPCorrespondence
 from .interfaces import ICameraOpticalModel
 from .panoramic_model import EquirectangularPanoramicOpticalModel
 from .pinhole_model import PinholeRadTanOpticalModel, matrix_cv_to_gl
+
+logger = logging.getLogger("spatial_server.calibration")
 
 
 def create_optical_model_from_manifest(camera_id: str, cam_entry: dict[str, Any]) -> ICameraOpticalModel:
@@ -54,6 +60,7 @@ class CameraCalibrationSolver:
 
     def __init__(self, override_path: Path) -> None:
         self.override_path = override_path
+        self._file_lock = threading.RLock()
 
     def solve_pnp_ransac(
         self,
@@ -124,17 +131,50 @@ class CameraCalibrationSolver:
             inliers_count=int(len(inliers)) if inliers is not None else len(correspondences),
         )
 
-    def save_override(self, camera_id: str, metadata: dict[str, Any]) -> None:
-        all_data = self.load_all_overrides()
-        all_data[camera_id] = metadata
+    def _write_all_overrides_locked(self, all_data: dict[str, dict[str, Any]]) -> None:
         self.override_path.parent.mkdir(parents=True, exist_ok=True)
-        self.override_path.write_text(json.dumps(all_data, indent=2), encoding="utf-8")
+        serialized = json.dumps(all_data, indent=2)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.override_path.parent),
+            prefix=f".{self.override_path.name}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(serialized)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_name, self.override_path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+
+    def save_override(self, camera_id: str, metadata: dict[str, Any]) -> None:
+        with self._file_lock:
+            all_data = self.load_all_overrides()
+            all_data[camera_id] = metadata
+            self._write_all_overrides_locked(all_data)
+
+    def delete_override(self, camera_id: str) -> bool:
+        with self._file_lock:
+            all_data = self.load_all_overrides()
+            if camera_id not in all_data:
+                return False
+            del all_data[camera_id]
+            self._write_all_overrides_locked(all_data)
+            return True
 
     def load_all_overrides(self) -> dict[str, dict[str, Any]]:
-        if not self.override_path.exists():
-            return {}
-        try:
-            return json.loads(self.override_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+        with self._file_lock:
+            if not self.override_path.exists():
+                return {}
+            try:
+                raw = json.loads(self.override_path.read_text(encoding="utf-8"))
+                return raw if isinstance(raw, dict) else {}
+            except Exception as exc:
+                logger.warning("Failed to load calibration overrides from %s: %s", self.override_path, exc)
+                return {}
 

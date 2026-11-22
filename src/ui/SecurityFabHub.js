@@ -800,10 +800,13 @@ export class SecurityFabHub {
       this.fabIconEl.innerHTML = icon('shield-check', { size: 22 });
     }
 
-    // Libera banda e risorse video quando chiuso
-    this.disconnectAllLiveStreams();
-    this.recordingManager?.detachAll?.();
-    this.setPlaying(false);
+    // Mantieni vivi in background i 4 flussi live delle telecamere anche a pannello chiuso,
+    // così la riapertura di Sicurezza, il Modale camera, la Vista POV 3D e la Calibrazione
+    // sono istantanei (0ms) senza mai ricaricare lo stream da zero.
+    if (this.mode !== 'live') {
+      this.recordingManager?.detachAll?.();
+      this.setPlaying(false);
+    }
     this.onStateChange?.(this.panelState);
   }
 
@@ -921,38 +924,76 @@ export class SecurityFabHub {
 
   async _connectLiveTile(camId, tile) {
     if (!tile || !tile.videoEl) return;
+
+    const streamName = tile.cam.getStreamName('sub');
+
+    // Se è già in corso una connessione per questo tile, attendila senza lanciarne una seconda!
+    if (tile._connectPromise) {
+      return await tile._connectPromise;
+    }
+
+    // Se questo tile ha già uno stream live attivo (WebRTC / MSE / HA Live), riusalo a 0ms senza disconnetterlo!
+    const existingProvider = this.videoStreamManager?.getActiveProvider?.(tile.videoEl);
+    const isAlreadyLive = Boolean(
+      existingProvider &&
+      existingProvider.connected &&
+      (existingProvider.mode === 'webrtc' || existingProvider.mode === 'mse' || existingProvider.hasLiveHaFrames)
+    );
+    if (isAlreadyLive) {
+      this._setTileDarkState(tile, false);
+      this._applyLiveProviderBadge(tile, existingProvider.getStatus());
+      tile.videoEl.play?.().catch(() => {});
+      return;
+    }
+
     this.disconnectLiveForCamera(camId);
 
     this._setTileDarkState(tile, false);
     this._setTileBadge(tile, 'CONNESSIONE...', 'connecting');
 
-    // In griglia/striscia multi-camera preferiamo sub stream se presente per latenza ultra-bassa e consumi ridotti
-    const streamName = tile.cam.getStreamName('sub');
-    try {
-      const provider = await this.videoStreamManager.attachToVideoElement(
-        streamName,
-        tile.videoEl,
-        'auto',
-        { cameraEntityId: tile.cam.entityId }
-      );
-      if (this.mode !== 'live' || this.panelState === 'closed') {
-        this.videoStreamManager.detachFromVideoElement(tile.videoEl);
-        return;
-      }
-
-      this._applyLiveProviderBadge(tile, provider.getStatus());
-
-      if (typeof provider.onStatusChange === 'function') {
-        const unsub = provider.onStatusChange((st) => {
-          if (this.mode === 'live' && this.panelState !== 'closed') {
-            this._applyLiveProviderBadge(tile, st);
+    const work = (async () => {
+      try {
+        const provider = await this.videoStreamManager.attachToVideoElement(
+          streamName,
+          tile.videoEl,
+          'auto',
+          {
+            cameraEntityId: tile.cam.entityId,
+            cameraName: tile.cam.id,
+            cameraLabel: tile.cam.cameraModel || tile.cam.name,
+            cameraIp: tile.cam.cameraIp,
+            aspectRatio: tile.cam.aspectRatio,
+            isPanoramic180: tile.cam.isPanoramic180,
           }
-        });
-        this.liveStreamUnsubs.set(camId, unsub);
+        );
+        if (this.mode !== 'live') {
+          this.videoStreamManager.detachFromVideoElement(tile.videoEl);
+          return;
+        }
+
+        this._applyLiveProviderBadge(tile, provider.getStatus());
+
+        if (typeof provider.onStatusChange === 'function') {
+          const unsub = provider.onStatusChange((st) => {
+            if (this.mode === 'live') {
+              this._applyLiveProviderBadge(tile, st);
+            }
+          });
+          this.liveStreamUnsubs.set(camId, unsub);
+        }
+      } catch {
+        this._setTileBadge(tile, 'OFFLINE', 'offline');
+        this._setTileDarkState(tile, true, 'Telecamera non raggiungibile', 'Verifica connessione stream');
       }
-    } catch {
-      this._setTileBadge(tile, 'OFFLINE', 'offline');
-      this._setTileDarkState(tile, true, 'Telecamera non raggiungibile', 'Verifica connessione stream');
+    })();
+
+    tile._connectPromise = work;
+    try {
+      await work;
+    } finally {
+      if (tile._connectPromise === work) {
+        tile._connectPromise = null;
+      }
     }
   }
 

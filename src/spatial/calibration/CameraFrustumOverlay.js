@@ -19,7 +19,9 @@ export class CameraFrustumOverlay {
     this.opacity = options.opacity ?? 0.5;
     this.isPOVMode = false;
     this.requestedVisible = false;
-    this.distortion = [0, 0, 0, 0, 0];
+    this.distortion = Array.isArray(options.distortion)
+      ? options.distortion.map((v) => Number(v) || 0)
+      : [0, 0, 0, 0, 0];
     this.groundClipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
     this.geometry = new THREE.PlaneGeometry(1, 1, 32, 32);

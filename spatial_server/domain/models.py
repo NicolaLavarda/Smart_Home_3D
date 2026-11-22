@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -77,6 +77,7 @@ class CalibrationOverridePayload(BaseModel):
     fov_h_deg: Optional[float] = None
     distortion_coeffs: Optional[list[float]] = None
     calibrated_matrix_world_gl: Optional[list[float]] = None
+    ui_state: Optional[dict[str, Any]] = None
 
     @field_validator("calibrated_matrix_world_gl")
     @classmethod

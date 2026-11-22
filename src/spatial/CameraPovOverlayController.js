@@ -43,8 +43,12 @@ export class CameraPovOverlayController {
     this.opacity = THREE.MathUtils.clamp(Number(defaultOpacity) || DEFAULT_POV_OPACITY, 0, 1);
     this.activeCameraName = null;
     this.activeSourceMode = null; // 'live' | 'replay'
+    this.preferredLiveQuality = 'main'; // 'main' (con preview/fallback sub istantaneo) | 'sub' (fluido WebRTC)
+    this._effectiveLiveQuality = 'main';
+    this._povDocked = false;
     this._liveTextureEntry = null;
     this._liveStreamName = null;
+    this._previewTextureActive = false;
     this._replayTexture = null;
     this._replayAuxSlotKey = null;
     this._replayAuxVideoEl = null;
@@ -114,6 +118,11 @@ export class CameraPovOverlayController {
       catalogCam?.mainStream ||
       (cameraName === 'Cam_Carraio' ? 'carraio_main' : `${slug}_main`);
 
+    const subStream =
+      manifestCam?.sub_stream_id ||
+      catalogCam?.subStream ||
+      (cameraName === 'Cam_Carraio' ? 'carraio_sub' : `${slug}_sub`);
+
     const shortName =
       catalogCam?.shortName ||
       (cameraName === 'Cam_Carraio'
@@ -141,6 +150,7 @@ export class CameraPovOverlayController {
       cameraName,
       shortName,
       mainStream,
+      subStream,
       entityId,
       cameraLabel,
       cameraIp,
@@ -162,15 +172,34 @@ export class CameraPovOverlayController {
       return;
     }
 
-    if (phase === 'entering') {
+    const mode = this._getCurrentSecurityMode();
+
+    if (phase === 'entering' && cameraName) {
       if (previousCameraName && previousCameraName !== cameraName) {
         this.deactivate(previousCameraName);
+      }
+      // Pre-acquisisce lo stream live GIA' durante il volo camera (1.25s) così all'arrivo l'overlay appare a 0ms!
+      if (mode === 'live') {
+        this._povDocked = false;
+        this._activateOverlayForCamera(cameraName, 'live', { docked: false });
       }
       return;
     }
 
     if (phase === 'active' && cameraName) {
-      this._activateOverlayForCamera(cameraName, this._getCurrentSecurityMode());
+      this._povDocked = true;
+      // Se stavamo già pre-acquisendo questa esatta telecamera in live durante 'entering', rivela subito senza ricaricare!
+      if (this.activeCameraName === cameraName && this.activeSourceMode === mode) {
+        const info = this._getCameraInfo(cameraName);
+        this._ensureHudDOM();
+        this._showHud(info, mode, mode === 'replay' ? 'loading' : 'live');
+        if (mode === 'live' && (this._liveTextureEntry || this._previewTextureActive)) {
+          this.cameraProjector?.setOverlayPOVMode?.(cameraName, true, this.opacity);
+          this._updateHudModeBadge('live', 'LIVE');
+        }
+        return;
+      }
+      this._activateOverlayForCamera(cameraName, mode, { docked: true });
     }
   }
 
@@ -180,7 +209,7 @@ export class CameraPovOverlayController {
    */
   handleSecurityPanelStateChange() {
     if (!this.activeCameraName || this.activeSourceMode !== 'replay' || this._isCalibrationActive()) return;
-    this._activateOverlayForCamera(this.activeCameraName, 'replay');
+    this._activateOverlayForCamera(this.activeCameraName, 'replay', { docked: this._povDocked });
   }
 
   suspendForCalibration() {
@@ -193,7 +222,7 @@ export class CameraPovOverlayController {
     this._suspendedForCalibration = false;
   }
 
-  async _activateOverlayForCamera(cameraName, mode = 'live') {
+  async _activateOverlayForCamera(cameraName, mode = 'live', { docked = true } = {}) {
     const seq = ++this._attachSeq;
     const targetMode = mode === 'replay' ? 'replay' : 'live';
 
@@ -205,10 +234,13 @@ export class CameraPovOverlayController {
 
     this.activeCameraName = cameraName;
     this.activeSourceMode = targetMode;
+    this._povDocked = Boolean(docked);
 
     const info = this._getCameraInfo(cameraName);
-    this._ensureHudDOM();
-    this._showHud(info, targetMode, targetMode === 'replay' ? 'loading' : 'live');
+    if (this._povDocked) {
+      this._ensureHudDOM();
+      this._showHud(info, targetMode, targetMode === 'replay' ? 'loading' : 'live');
+    }
 
     if (targetMode === 'live') {
       await this._attachLiveOverlay(info, seq);
@@ -219,27 +251,52 @@ export class CameraPovOverlayController {
 
   async _attachLiveOverlay(info, seq) {
     if (!this.videoStreamManager || !this.cameraProjector) return;
+    const requestedStream = this.preferredLiveQuality === 'sub' ? info.subStream : info.mainStream;
+    this._effectiveLiveQuality = this.preferredLiveQuality;
+    this._syncHudQualityButton();
+
     try {
-      const entry = await this.videoStreamManager.acquireVideoTexture(info.mainStream, 'auto', {
+      const entry = await this.videoStreamManager.acquireVideoTexture(requestedStream, 'auto', {
         cameraEntityId: info.entityId,
         cameraName: info.cameraName,
         cameraLabel: info.cameraLabel,
         cameraIp: info.cameraIp,
+        onImmediateTexture: (previewEntry) => {
+          if (
+            seq !== this._attachSeq ||
+            this._isCalibrationActive() ||
+            this.activeCameraName !== info.cameraName ||
+            this.activeSourceMode !== 'live'
+          ) {
+            return;
+          }
+          this._previewTextureActive = true;
+          this.cameraProjector.attachOverlayTexture(info.cameraName, previewEntry.texture);
+          if (this._povDocked) {
+            this.cameraProjector.setOverlayPOVMode(info.cameraName, true, this.opacity);
+            this._updateHudModeBadge('live', 'LIVE');
+          }
+        },
       });
 
       if (seq !== this._attachSeq || this._isCalibrationActive() || this.activeCameraName !== info.cameraName || this.activeSourceMode !== 'live') {
-        this.videoStreamManager.releaseVideoTexture(info.mainStream);
+        this.videoStreamManager.releaseVideoTexture(requestedStream);
         return;
       }
 
+      this._previewTextureActive = false;
       this._liveTextureEntry = entry;
-      this._liveStreamName = info.mainStream;
+      this._liveStreamName = requestedStream;
+      this._effectiveLiveQuality = entry.isFallbackToSub || requestedStream === info.subStream ? 'sub' : 'main';
+      this._syncHudQualityButton();
       this.cameraProjector.attachOverlayTexture(info.cameraName, entry.texture);
-      this.cameraProjector.setOverlayPOVMode(info.cameraName, true, this.opacity);
-      this._updateHudModeBadge('live', 'LIVE');
+      if (this._povDocked) {
+        this.cameraProjector.setOverlayPOVMode(info.cameraName, true, this.opacity);
+        this._updateHudModeBadge('live', 'LIVE');
+      }
     } catch (err) {
       if (seq === this._attachSeq) {
-        console.warn(`[CameraPovOverlayController] Impossibile collegare stream live '${info.mainStream}':`, err);
+        console.warn(`[CameraPovOverlayController] Impossibile collegare stream live '${requestedStream}':`, err);
         this._updateHudModeBadge('norec', 'OFFLINE');
       }
     }
@@ -371,6 +428,7 @@ export class CameraPovOverlayController {
     }
     this._liveTextureEntry = null;
     this._liveStreamName = null;
+    this._previewTextureActive = false;
 
     if (this._replayAuxSlotKey && this.recordingManager) {
       this.recordingManager.unregisterSlot(this._replayAuxSlotKey);
@@ -403,6 +461,9 @@ export class CameraPovOverlayController {
         <span class="pov-hud-opacity-val" id="pov-hud-opacity-val">${Math.round(this.opacity * 100)}%</span>
       </div>
       <div class="pov-hud-actions">
+        <button type="button" class="pov-hud-btn pov-hud-quality-btn" id="btn-pov-quality" title="Alterna qualità flusso live (Fluido Sub / HD Main)">
+          <span id="pov-hud-quality-label">HD</span>
+        </button>
         <button type="button" class="pov-hud-btn" id="btn-pov-calibrate" title="Calibra ottica di questa telecamera" hidden disabled style="display:none;">
           ${icon('sliders-horizontal', { size: 13 })}
           <span>Calibra</span>
@@ -424,6 +485,12 @@ export class CameraPovOverlayController {
       }
     });
 
+    hud.querySelector('#btn-pov-quality')?.addEventListener('click', () => {
+      if (!this.activeCameraName || this.activeSourceMode !== 'live') return;
+      this.preferredLiveQuality = this._effectiveLiveQuality === 'sub' ? 'main' : 'sub';
+      this._activateOverlayForCamera(this.activeCameraName, 'live', { docked: true });
+    });
+
     hud.querySelector('#btn-pov-calibrate')?.addEventListener('click', () => {
       if (!this.haClient?.isAdmin || !this.calibrationAssistant || !this.activeCameraName) return;
       const targetCam = this.activeCameraName;
@@ -438,6 +505,23 @@ export class CameraPovOverlayController {
     this.uiLayer.appendChild(hud);
     this.hudEl = hud;
     this._syncHudAdminVisibility();
+    this._syncHudQualityButton();
+  }
+
+  _syncHudQualityButton() {
+    if (!this.hudEl) return;
+    const btn = this.hudEl.querySelector('#btn-pov-quality');
+    const lbl = this.hudEl.querySelector('#pov-hud-quality-label');
+    if (!btn || !lbl) return;
+    const isLive = this.activeSourceMode !== 'replay';
+    btn.hidden = !isLive;
+    btn.style.display = isLive ? '' : 'none';
+    const isSub = this._effectiveLiveQuality === 'sub';
+    lbl.textContent = isSub ? 'SD' : 'HD';
+    btn.classList.toggle('is-sub', isSub);
+    btn.title = isSub
+      ? 'Flusso fluido WebRTC attivo • Clicca per provare HD Main'
+      : 'Flusso HD Main attivo • Clicca per flusso fluido WebRTC (SD)';
   }
 
   _syncHudAdminVisibility() {
@@ -456,6 +540,7 @@ export class CameraPovOverlayController {
     if (nameEl) nameEl.textContent = info.shortName;
     this._updateHudModeBadge(badgeState, mode === 'replay' ? 'REPLAY' : 'LIVE');
     this._syncHudAdminVisibility();
+    this._syncHudQualityButton();
     this.hudEl.hidden = false;
     this.hudEl.classList.add('visible');
   }

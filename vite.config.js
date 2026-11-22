@@ -24,17 +24,22 @@ function haCameraBridgePlugin(env) {
           return;
         }
 
-        const token = (env.VITE_HA_TOKEN || '').trim();
+        const authHeader = String(req.headers?.authorization || '').trim();
+        const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+          ? authHeader.slice(7).trim()
+          : '';
+        const token = bearerToken || (env.VITE_HA_TOKEN || '').trim();
         if (!token) {
           res.statusCode = 503;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'VITE_HA_TOKEN non configurato' }));
+          res.end(JSON.stringify({ error: 'Token Home Assistant mancante (Authorization Bearer o VITE_HA_TOKEN)' }));
           return;
         }
 
         const requestedHaUrl = normalizeHaUrl(reqUrl.searchParams.get('ha_url') || '');
         const rawCandidates = [
           requestedHaUrl && /^https?:\/\//i.test(requestedHaUrl) ? requestedHaUrl : '',
+          normalizeHaUrl(env.VITE_HA_PUBLIC_URL),
           normalizeHaUrl(env.VITE_HA_TAILSCALE_URL),
           normalizeHaUrl(env.VITE_HA_REMOTE_URL),
           normalizeHaUrl(env.VITE_HA_LOCAL_URL),

@@ -58,10 +58,14 @@ export class CalibrationAssistantUI {
     this._rbacToastTimer = null;
     this._listenersAttached = false;
     this._openSeq = 0;
+    this._userEditedSinceOpen = false;
+    this._isSaving = false;
 
     this.isOpen = false;
     this.activeCameraName = 'Cam_Carraio';
     this.streamName = 'carraio_main';
+    this.preferredQuality = 'main'; // 'main' | 'sub'
+    this._effectiveQuality = 'main';
     this.panelEl = null;
     this.hudBannerEl = null;
     this.vectorSvgEl = null;
@@ -158,20 +162,56 @@ export class CalibrationAssistantUI {
     };
   }
 
+  _pickCleanState(raw, defaults) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const num = (key, fallback) => {
+      const v = Number(src[key]);
+      return Number.isFinite(v) ? v : fallback;
+    };
+    return {
+      offsetX: num('offsetX', defaults.offsetX),
+      offsetY: num('offsetY', defaults.offsetY),
+      offsetZ: num('offsetZ', defaults.offsetZ),
+      yawDeg: num('yawDeg', defaults.yawDeg),
+      pitchDeg: num('pitchDeg', defaults.pitchDeg),
+      rollDeg: num('rollDeg', defaults.rollDeg),
+      fovV: num('fovV', defaults.fovV),
+      fovH: num('fovH', defaults.fovH),
+      k1: num('k1', defaults.k1),
+      k2: num('k2', defaults.k2),
+      flip180: src.flip180 !== undefined ? Boolean(src.flip180) : defaults.flip180,
+    };
+  }
+
   loadSavedState(cameraName) {
     const defaults = this.createDefaultState(cameraName);
+    const projectorState = this.cameraProjector?.getCalibrationState?.(cameraName);
+    if (projectorState && typeof projectorState === 'object') {
+      return this._pickCleanState(projectorState, defaults);
+    }
     try {
-      const raw = localStorage.getItem(`${STORAGE_KEY}_${cameraName}`);
-      if (raw) {
-        return { ...defaults, ...JSON.parse(raw) };
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(`${STORAGE_KEY}_${cameraName}`);
+        if (raw) {
+          return this._pickCleanState(JSON.parse(raw), defaults);
+        }
       }
     } catch { }
     return defaults;
   }
 
-  saveStateToLocal(cameraName) {
+  saveStateToLocal(cameraName, meta = {}) {
     try {
-      localStorage.setItem(`${STORAGE_KEY}_${cameraName}`, JSON.stringify(this.state));
+      if (typeof localStorage === 'undefined') return;
+      const defaults = this.createDefaultState(cameraName);
+      const record = this._pickCleanState(this.state, defaults);
+      if (meta.syncedToBackend !== undefined) {
+        record._syncedToBackend = Boolean(meta.syncedToBackend);
+      }
+      if (meta.updatedAt !== undefined && meta.updatedAt !== null) {
+        record._updatedAt = meta.updatedAt;
+      }
+      localStorage.setItem(`${STORAGE_KEY}_${cameraName}`, JSON.stringify(record));
     } catch { }
   }
 
@@ -227,12 +267,15 @@ export class CalibrationAssistantUI {
     }
 
     this.activeCameraName = resolvedCamName;
+    this._userEditedSinceOpen = false;
     this.state = this.loadSavedState(resolvedCamName);
 
     const manifestCam = this.getManifestCamera(resolvedCamName);
     const catalogCam = this.cameraCatalog?.getCameraById?.(resolvedCamName) || null;
     const slug = resolvedCamName.replace(/^Cam_/i, '').toLowerCase() || 'carraio';
-    this.streamName = manifestCam?.stream_id || catalogCam?.mainStream || `${slug}_main`;
+    const mainStream = manifestCam?.stream_id || catalogCam?.mainStream || `${slug}_main`;
+    const subStream = manifestCam?.sub_stream_id || catalogCam?.subStream || `${slug}_sub`;
+    this.streamName = this.preferredQuality === 'sub' ? subStream : mainStream;
 
     if (!this.panelEl) {
       this.createDOM();
@@ -270,26 +313,88 @@ export class CalibrationAssistantUI {
       this.sceneManager.addUpdateCallback(this._onFrameUpdate);
     }
 
-    // Collega VideoTexture live sul frustum 3D della telecamera scelta
+    // Sincronizza dal backend la calibrazione autorevole della camera (senza sovrascrivere eventuali modifiche già fatte dall'utente)
+    this._syncActiveCameraFromBackend(resolvedCamName, seq);
+
+    // Collega VideoTexture live sul frustum 3D della telecamera scelta (riusando il pool condiviso a 0ms!)
+    await this._acquireCalibrationStream(resolvedCamName, seq, { manifestCam, catalogCam, slug });
+    return true;
+  }
+
+  async _syncActiveCameraFromBackend(cameraName, seq) {
+    if (!this.spatialStreamClient || typeof this.spatialStreamClient.fetchCameraCalibration !== 'function') {
+      return;
+    }
+    try {
+      const res = await this.spatialStreamClient.fetchCameraCalibration(cameraName);
+      if (!this.isOpen || seq !== this._openSeq || this.activeCameraName !== cameraName || this._userEditedSinceOpen) {
+        return;
+      }
+      const backendMeta = res?.status === 'ok' ? res.calibration : null;
+      if (!backendMeta) return;
+
+      if (typeof this.cameraProjector?.applyBackendCalibration === 'function') {
+        const applied = this.cameraProjector.applyBackendCalibration(cameraName, backendMeta, { persistLocal: true });
+        if (applied.changed && applied.state) {
+          this.state = this._pickCleanState(applied.state, this.createDefaultState(cameraName));
+          this.syncInputsFromState();
+          this.applyLiveCalibration(true);
+        }
+      }
+    } catch (err) {
+      console.warn(`[CalibrationAssistantUI] Impossibile leggere calibrazione backend per ${cameraName}:`, err);
+    }
+  }
+
+  async _acquireCalibrationStream(resolvedCamName, seq, { manifestCam = null, catalogCam = null, slug = 'carraio' } = {}) {
     const acquiredStream = this.streamName;
+    const alreadyWarm = Boolean(this.videoStreamManager?.isStreamReady?.(acquiredStream));
+    this._syncStreamBadge(alreadyWarm ? 'live' : 'connecting', alreadyWarm ? 'LIVE' : 'CONNESSIONE...');
+
     try {
       const entry = await this.videoStreamManager.acquireVideoTexture(acquiredStream, 'auto', {
         cameraEntityId: manifestCam?.ha_camera_entity || catalogCam?.entityId || `camera.${slug}`,
         cameraName: resolvedCamName,
         cameraLabel: manifestCam?.ha_label || catalogCam?.name || resolvedCamName,
         cameraIp: manifestCam?.camera_ip || catalogCam?.cameraIp || '',
+        onImmediateTexture: (previewEntry) => {
+          if (!this.isOpen || seq !== this._openSeq || this.activeCameraName !== resolvedCamName) return;
+          this.cameraProjector.attachOverlayTexture(resolvedCamName, previewEntry.texture);
+          this.cameraProjector.setOverlayPOVMode(resolvedCamName, true, this.overlayOpacity);
+          this._syncStreamBadge('upgrading', 'LIVE • HD...');
+        },
       });
       if (!this.isOpen || seq !== this._openSeq || this.activeCameraName !== resolvedCamName) {
         this.videoStreamManager.releaseVideoTexture(acquiredStream);
-        return true;
+        return;
       }
       this.videoTextureEntry = entry;
+      const modeTag = String(entry.provider?.mode || 'live').toUpperCase();
+      this._effectiveQuality = entry.isFallbackToSub || acquiredStream.endsWith('_sub') ? 'sub' : 'main';
+      this._syncStreamBadge('live', `${modeTag} • ${this._effectiveQuality === 'sub' ? 'SD' : 'HD'}`);
       this.cameraProjector.attachOverlayTexture(resolvedCamName, entry.texture);
       this.cameraProjector.setOverlayPOVMode(resolvedCamName, true, this.overlayOpacity);
     } catch (err) {
+      if (seq === this._openSeq) {
+        this._syncStreamBadge('offline', 'OFFLINE');
+      }
       console.warn('[CalibrationAssistantUI] Impossibile collegare VideoTexture:', err);
     }
-    return true;
+  }
+
+  _syncStreamBadge(variant, label) {
+    if (!this.panelEl) return;
+    const pill = this.panelEl.querySelector('#calib-stream-status-pill');
+    if (pill) {
+      pill.className = `calib-stream-pill ${variant}`;
+      pill.textContent = label;
+    }
+    const toggleBtn = this.panelEl.querySelector('#calib-stream-quality-toggle');
+    if (toggleBtn) {
+      const isSub = this._effectiveQuality === 'sub';
+      toggleBtn.classList.toggle('active', !isSub);
+      toggleBtn.textContent = isSub ? 'Passa a HD' : 'Passa a Fluido';
+    }
   }
 
   close() {
@@ -370,7 +475,7 @@ export class CalibrationAssistantUI {
   }
 
   createDOM() {
-    const uiLayer = document.querySelector('.ui-layer');
+    const uiLayer = document.querySelector('.ui-layer') || document.body;
     const panel = document.createElement('div');
     panel.className = 'calibration-panel glass';
     panel.id = 'calibration-assistant-panel';
@@ -405,6 +510,10 @@ export class CalibrationAssistantUI {
             <button type="button" class="calib-preset-chip" data-opacity="0">0% Solo 3D</button>
             <button type="button" class="calib-preset-chip" data-opacity="50">50% Mix</button>
             <button type="button" class="calib-preset-chip" data-opacity="85">85% Video</button>
+          </div>
+          <div class="calib-stream-bar">
+            <span class="calib-stream-pill connecting" id="calib-stream-status-pill">LIVE</span>
+            <button type="button" class="calib-preset-chip calib-quality-toggle" id="calib-stream-quality-toggle" title="Alterna tra flusso HD e flusso Fluido WebRTC">Passa a Fluido</button>
           </div>
         </div>
 
@@ -626,6 +735,18 @@ export class CalibrationAssistantUI {
   switchCamera(nextCam) {
     if (!nextCam || nextCam === this.activeCameraName) return;
     if (!this.haClient?.isAdmin) return;
+    // Pre-riscalda lo stream della telecamera di destinazione GIA' durante il volo camera (0.9s)
+    const nextManifest = this.getManifestCamera(nextCam);
+    const nextCatalog = this.cameraCatalog?.getCameraById?.(nextCam) || null;
+    const nextSlug = nextCam.replace(/^Cam_/i, '').toLowerCase() || 'carraio';
+    const nextStream = this.preferredQuality === 'sub'
+      ? (nextManifest?.sub_stream_id || nextCatalog?.subStream || `${nextSlug}_sub`)
+      : (nextManifest?.stream_id || nextCatalog?.mainStream || `${nextSlug}_main`);
+    this.videoStreamManager?.prewarmStream?.(nextStream, {
+      cameraEntityId: nextManifest?.ha_camera_entity || nextCatalog?.entityId || `camera.${nextSlug}`,
+      cameraName: nextCam,
+    });
+
     const camNode = this.assetLoader?.cameras?.get?.(nextCam);
     if (camNode && this.cameraController?.flyToCameraPOV) {
       this.cameraController.flyToCameraPOV(
@@ -711,6 +832,25 @@ export class CalibrationAssistantUI {
       });
     });
 
+    this.panelEl.querySelector('#calib-stream-quality-toggle')?.addEventListener('click', async () => {
+      if (!this.isOpen) return;
+      const nextQ = this._effectiveQuality === 'sub' ? 'main' : 'sub';
+      this.preferredQuality = nextQ;
+      const manifestCam = this.getManifestCamera(this.activeCameraName);
+      const catalogCam = this.cameraCatalog?.getCameraById?.(this.activeCameraName) || null;
+      const slug = this.activeCameraName.replace(/^Cam_/i, '').toLowerCase() || 'carraio';
+      const nextStream = nextQ === 'sub'
+        ? (manifestCam?.sub_stream_id || catalogCam?.subStream || `${slug}_sub`)
+        : (manifestCam?.stream_id || catalogCam?.mainStream || `${slug}_main`);
+      if (this.videoTextureEntry) {
+        this.videoStreamManager.releaseVideoTexture(this.streamName);
+        this.videoTextureEntry = null;
+      }
+      this.streamName = nextStream;
+      const seq = ++this._openSeq;
+      await this._acquireCalibrationStream(this.activeCameraName, seq, { manifestCam, catalogCam, slug });
+    });
+
     this.panelEl.querySelector('#calib-pnp-raise-opacity')?.addEventListener('click', () => {
       this.syncOpacityUI(PNP_STEP_OPACITY_2D_PCT);
     });
@@ -718,6 +858,7 @@ export class CalibrationAssistantUI {
     const bindSlider = (id, key, valId, suffix = '', decimals = 1) => {
       const el = this.panelEl.querySelector(id);
       el.addEventListener('input', (e) => {
+        this._userEditedSinceOpen = true;
         const v = parseFloat(e.target.value);
         this.state[key] = v;
         if (key === 'fovV') {
@@ -746,17 +887,14 @@ export class CalibrationAssistantUI {
     bindSlider('#calib-k2', 'k2', '#calib-val-k2', '', 2);
 
     this.panelEl.querySelector('#calib-flip-180').addEventListener('click', () => {
+      this._userEditedSinceOpen = true;
       this.state.flip180 = !this.state.flip180;
       this.panelEl.querySelector('#calib-flip-180')?.classList.toggle('active', Boolean(this.state.flip180));
       this.applyLiveCalibration(true);
     });
 
-    this.panelEl.querySelector('#calib-reset-btn').addEventListener('click', () => {
-      localStorage.removeItem(`${STORAGE_KEY}_${this.activeCameraName}`);
-      this.state = this.createDefaultState(this.activeCameraName);
-      this.syncInputsFromState();
-      this.applyLiveCalibration(true);
-      this.setStatus('Ripristinati parametri originali da Blender SSoT.', 'info');
+    this.panelEl.querySelector('#calib-reset-btn').addEventListener('click', async () => {
+      await this.resetToManifestDefault();
     });
 
     this.panelEl.querySelector('#calib-save-btn').addEventListener('click', async () => {
@@ -1360,18 +1498,20 @@ export class CalibrationAssistantUI {
   }
 
   buildBackendPayload(pose = null) {
+    const cleanState = this._pickCleanState(this.state, this.createDefaultState(this.activeCameraName));
     return {
       camera_id: this.activeCameraName,
-      offset_xyz: [this.state.offsetX, this.state.offsetY, this.state.offsetZ],
+      offset_xyz: [cleanState.offsetX, cleanState.offsetY, cleanState.offsetZ],
       delta_euler_deg: [
-        this.state.pitchDeg,
-        this.state.yawDeg + (this.state.flip180 ? 180 : 0),
-        this.state.rollDeg,
+        cleanState.pitchDeg,
+        cleanState.yawDeg + (cleanState.flip180 ? 180 : 0),
+        cleanState.rollDeg,
       ],
-      fov_v_deg: this.state.fovV,
-      fov_h_deg: this.state.fovH,
-      distortion_coeffs: [this.state.k1, this.state.k2, 0.0, 0.0, 0.0],
+      fov_v_deg: cleanState.fovV,
+      fov_h_deg: cleanState.fovH,
+      distortion_coeffs: [cleanState.k1, cleanState.k2, 0.0, 0.0, 0.0],
       calibrated_matrix_world_gl: pose ? pose.matrixWorldElements : null,
+      ui_state: cleanState,
     };
   }
 
@@ -1424,6 +1564,7 @@ export class CalibrationAssistantUI {
       }
 
       if (solvedResult && Array.isArray(solvedResult.matrix_world_gl)) {
+        this._userEditedSinceOpen = true;
         this.state = decomposeWorldMatrixToCalibState(
           solvedResult.matrix_world_gl,
           basePose,
@@ -1431,7 +1572,10 @@ export class CalibrationAssistantUI {
         );
         this.syncInputsFromState();
         this.applyLiveCalibration(true);
-        this.saveStateToLocal(this.activeCameraName);
+        this.saveStateToLocal(this.activeCameraName, {
+          syncedToBackend: usedSource === 'backend',
+          updatedAt: solvedResult.calibration?.updated_at ?? null,
+        });
 
         this.showPnpVectors = true;
         this.setPnpMode(false);
@@ -1454,25 +1598,81 @@ export class CalibrationAssistantUI {
     }
   }
 
+  async resetToManifestDefault() {
+    if (!this.haClient?.isAdmin) {
+      this._showRbacToast('Calibrazione riservata agli utenti Admin.');
+      return false;
+    }
+    this._userEditedSinceOpen = true;
+    const camName = this.activeCameraName;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(`${STORAGE_KEY}_${camName}`);
+      }
+    } catch {}
+    this.state = this.createDefaultState(camName);
+    this.syncInputsFromState();
+    let pose = null;
+    if (typeof this.cameraProjector?.resetCameraCalibration === 'function') {
+      pose = this.cameraProjector.resetCameraCalibration(camName, { clearLocal: true });
+      if (pose && this.cameraController) {
+        this.cameraController.setInstantCameraPose(pose.position, pose.quaternion, this.state.fovV, camName);
+      }
+      this.refreshPairErrorsUI();
+    } else {
+      pose = this.applyLiveCalibration(true);
+    }
+
+    if (this.spatialStreamClient && typeof this.spatialStreamClient.resetCameraCalibration === 'function') {
+      const res = await this.spatialStreamClient.resetCameraCalibration(camName);
+      if (res && res.status === 'ok') {
+        this.setStatus('Ripristinati parametri originali Blender SSoT (salvato anche sul server).', 'info');
+        return true;
+      }
+      this.setStatus('Ripristinati in locale. Server non raggiungibile per rimuovere l\'override.', 'warn');
+      return false;
+    }
+
+    this.setStatus('Ripristinati parametri originali da Blender SSoT.', 'info');
+    return true;
+  }
+
   async saveAndSubmitToBackend() {
     if (!this.haClient?.isAdmin) {
       this._showRbacToast('Calibrazione riservata agli utenti Admin.');
       return false;
     }
-    this.saveStateToLocal(this.activeCameraName);
-    const pose = this.cameraProjector.applyCameraCalibration(this.activeCameraName, this.state);
+    if (this._isSaving) return false;
+    this._isSaving = true;
 
-    if (!this.spatialStreamClient) {
-      this.setStatus('Salvato in locale (Spatial Server non connesso).', 'info');
-      return;
-    }
+    const saveBtn = this.panelEl?.querySelector('#calib-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
 
-    const payload = this.buildBackendPayload(pose);
-    const res = await this.spatialStreamClient.updateCameraCalibration(this.activeCameraName, payload);
-    if (res && res.status === 'ok') {
-      this.setStatus('Calibrazione salvata e applicata al Raycaster 3D Python!', 'success');
-    } else {
-      this.setStatus('Salvato nel browser. Avvia spatial_server per sincronizzare il backend.', 'warn');
+    try {
+      const camName = this.activeCameraName;
+      this.saveStateToLocal(camName, { syncedToBackend: false });
+      const pose = this.cameraProjector.applyCameraCalibration(camName, this.state);
+
+      if (!this.spatialStreamClient) {
+        this.setStatus('Salvato solo in locale (Spatial Server non connesso).', 'warn');
+        return false;
+      }
+
+      const payload = this.buildBackendPayload(pose);
+      const res = await this.spatialStreamClient.updateCameraCalibration(camName, payload);
+      if (res && res.status === 'ok') {
+        this.saveStateToLocal(camName, {
+          syncedToBackend: true,
+          updatedAt: res.calibration?.updated_at ?? null,
+        });
+        this.setStatus('Calibrazione salvata sul server e sincronizzata su tutti i dispositivi!', 'success');
+        return true;
+      }
+      this.setStatus('Salvato solo in questo browser: sincronizzazione col server fallita.', 'warn');
+      return false;
+    } finally {
+      this._isSaving = false;
+      if (saveBtn) saveBtn.disabled = false;
     }
   }
 

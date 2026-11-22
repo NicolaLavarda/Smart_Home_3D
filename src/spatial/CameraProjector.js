@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { CameraFrustumOverlay } from './calibration/CameraFrustumOverlay.js';
+import { decomposeWorldMatrixToCalibState } from './calibration/PnPSolver.js';
 
-const CALIBRATION_STORAGE_PREFIX = 'sh3d_camera_calibration_v2_';
+export const CALIBRATION_STORAGE_PREFIX = 'sh3d_camera_calibration_v2_';
 export const FRUSTUM_DEPTH = 16.0; // Copertura ottica fino a 16 metri su strada e ingressi
 export const GROUND_CLIP_Y = 0.015; // Piano terra (z=0 in Blender -> y=0 in Three.js) con leggero offset anti z-fighting
 const GROUND_EPS = 1e-5;
@@ -326,6 +327,7 @@ export class CameraProjector {
     this.frustumVolumes = new Map();
     this.baseCameraPoses = new Map();
     this.calibratedPoses = new Map();
+    this.calibratedStates = new Map();
     this.povActiveCameras = new Set();
     this.frustumsVisible = false; // Nascosto di default all'avvio su richiesta dell'utente
     this.groundColliders = [];
@@ -370,19 +372,21 @@ export class CameraProjector {
         distortion: manifestData?.distortion_coeffs || [-0.18, 0.04, 0.0, 0.0, 0.0],
       });
 
+      // Allinea il FOV iniziale del nodo 3D al manifesto SSoT (evita yfov grezzi del GLB prima della calibrazione)
+      if (camNode.isPerspectiveCamera && Number.isFinite(fovV) && fovV > 0) {
+        camNode.fov = fovV;
+        camNode.updateProjectionMatrix();
+      }
+
       const frustumGroup = this.createFrustumCone(camNode, manifestData);
       this.scene.add(frustumGroup);
       this.frustumHelpers.set(camName, frustumGroup);
       this.syncGroupVisibility(camName);
 
-      // Ripristina eventuale calibrazione salvata in localStorage
-      try {
-        const saved = localStorage.getItem(`${CALIBRATION_STORAGE_PREFIX}${camName}`);
-        if (saved) {
-          this.applyCameraCalibration(camName, JSON.parse(saved));
-        }
-      } catch (e) {
-        console.warn(`[CameraProjector] Errore lettura calibrazione salvata per ${camName}:`, e);
+      // Ripristina eventuale cache locale in attesa della sincronizzazione autorevole dal backend
+      const saved = this.readLocalCalibration(camName);
+      if (saved) {
+        this.applyCameraCalibration(camName, saved);
       }
     });
 
@@ -579,31 +583,250 @@ export class CameraProjector {
     }
   }
 
+  _isPanoramicBase(base) {
+    if (!base) return false;
+    const optical = String(base.opticalModel || '').toLowerCase();
+    return optical.includes('equirectangular') || optical.includes('panoramic') || Number(base.fovH || 0) >= 150;
+  }
+
+  createDefaultCalibrationState(camName) {
+    const base = this.baseCameraPoses.get(camName);
+    const isPano = this._isPanoramicBase(base);
+    const dist = Array.isArray(base?.distortion)
+      ? base.distortion
+      : (isPano ? [0, 0, 0, 0, 0] : [-0.18, 0.04, 0, 0, 0]);
+    return {
+      offsetX: 0.0,
+      offsetY: 0.0,
+      offsetZ: 0.0,
+      yawDeg: 0.0,
+      pitchDeg: 0.0,
+      rollDeg: 0.0,
+      fovV: Number(base?.fovV) || (isPano ? 55.0 : 42.0),
+      fovH: Number(base?.fovH) || (isPano ? 180.0 : 80.0),
+      k1: isPano ? 0.0 : (Number.isFinite(Number(dist[0])) ? Number(dist[0]) : -0.18),
+      k2: isPano ? 0.0 : (Number.isFinite(Number(dist[1])) ? Number(dist[1]) : 0.04),
+      flip180: false,
+    };
+  }
+
+  normalizeCalibrationState(camName, rawState = {}) {
+    const defaults = this.createDefaultCalibrationState(camName);
+    const src = rawState && typeof rawState === 'object' ? rawState : {};
+    const num = (key, fallback) => {
+      const val = Number(src[key]);
+      return Number.isFinite(val) ? val : fallback;
+    };
+    const isPano = this._isPanoramicBase(this.baseCameraPoses.get(camName));
+    return {
+      offsetX: num('offsetX', defaults.offsetX),
+      offsetY: num('offsetY', defaults.offsetY),
+      offsetZ: num('offsetZ', defaults.offsetZ),
+      yawDeg: num('yawDeg', defaults.yawDeg),
+      pitchDeg: num('pitchDeg', defaults.pitchDeg),
+      rollDeg: num('rollDeg', defaults.rollDeg),
+      fovV: Math.max(5, num('fovV', defaults.fovV)),
+      fovH: Math.max(10, num('fovH', defaults.fovH)),
+      k1: isPano ? 0.0 : num('k1', defaults.k1),
+      k2: isPano ? 0.0 : num('k2', defaults.k2),
+      flip180: Boolean(src.flip180),
+    };
+  }
+
+  _computePoseFromState(base, normalized) {
+    const finalPos = base.position.clone().add(
+      new THREE.Vector3(normalized.offsetX, normalized.offsetY, normalized.offsetZ)
+    );
+    const totalYawDeg = normalized.yawDeg + (normalized.flip180 ? 180.0 : 0.0);
+    const deltaEuler = new THREE.Euler(
+      THREE.MathUtils.degToRad(normalized.pitchDeg),
+      THREE.MathUtils.degToRad(totalYawDeg),
+      THREE.MathUtils.degToRad(normalized.rollDeg),
+      'YXZ'
+    );
+    const deltaQuat = new THREE.Quaternion().setFromEuler(deltaEuler);
+    const finalQuat = base.quaternion.clone().multiply(deltaQuat);
+    return { finalPos, finalQuat };
+  }
+
+  _uiStateMatchesWorldMatrix(base, uiState, matrixWorldGl) {
+    if (!Array.isArray(matrixWorldGl) || matrixWorldGl.length !== 16) return true;
+    if (!matrixWorldGl.every((v) => Number.isFinite(Number(v)))) return true;
+    const { finalPos, finalQuat } = this._computePoseFromState(base, uiState);
+    const mat = new THREE.Matrix4().set(...matrixWorldGl.map(Number));
+    const matPos = new THREE.Vector3();
+    const matQuat = new THREE.Quaternion();
+    const matScale = new THREE.Vector3();
+    mat.decompose(matPos, matQuat, matScale);
+    const posErr = finalPos.distanceTo(matPos);
+    const angleErrRad = finalQuat.angleTo(matQuat);
+    return posErr <= 0.02 && angleErrRad <= THREE.MathUtils.degToRad(0.5);
+  }
+
+  readLocalCalibration(camName) {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem(`${CALIBRATION_STORAGE_PREFIX}${camName}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (e) {
+      console.warn(`[CameraProjector] Errore lettura calibrazione salvata per ${camName}:`, e);
+      return null;
+    }
+  }
+
+  saveLocalCalibration(camName, calibState, meta = {}) {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const normalized = this.normalizeCalibrationState(camName, calibState);
+      const record = { ...normalized };
+      if (meta.syncedToBackend !== undefined) {
+        record._syncedToBackend = Boolean(meta.syncedToBackend);
+      }
+      if (meta.updatedAt !== undefined && meta.updatedAt !== null) {
+        record._updatedAt = meta.updatedAt;
+      }
+      localStorage.setItem(`${CALIBRATION_STORAGE_PREFIX}${camName}`, JSON.stringify(record));
+    } catch (e) {
+      console.warn(`[CameraProjector] Impossibile salvare cache locale per ${camName}:`, e);
+    }
+  }
+
+  clearLocalCalibration(camName) {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.removeItem(`${CALIBRATION_STORAGE_PREFIX}${camName}`);
+    } catch {}
+  }
+
+  calibrationFromBackendMetadata(camName, backendMeta) {
+    const base = this.baseCameraPoses.get(camName);
+    if (!base || !backendMeta || typeof backendMeta !== 'object') return null;
+
+    const defaults = this.createDefaultCalibrationState(camName);
+    const isPano = this._isPanoramicBase(base);
+    const fovV = Number.isFinite(Number(backendMeta.fov_v_deg))
+      ? Number(backendMeta.fov_v_deg)
+      : defaults.fovV;
+    const fovH = Number.isFinite(Number(backendMeta.fov_h_deg))
+      ? Number(backendMeta.fov_h_deg)
+      : defaults.fovH;
+    const dist = Array.isArray(backendMeta.distortion_coeffs) ? backendMeta.distortion_coeffs : null;
+    const k1 = isPano ? 0.0 : (dist && Number.isFinite(Number(dist[0])) ? Number(dist[0]) : defaults.k1);
+    const k2 = isPano ? 0.0 : (dist && Number.isFinite(Number(dist[1])) ? Number(dist[1]) : defaults.k2);
+
+    const opticalSeed = { ...defaults, fovV, fovH, k1, k2 };
+
+    if (backendMeta.ui_state && typeof backendMeta.ui_state === 'object') {
+      const candidate = this.normalizeCalibrationState(camName, {
+        ...opticalSeed,
+        ...backendMeta.ui_state,
+        fovV,
+        fovH,
+        k1,
+        k2,
+      });
+      if (this._uiStateMatchesWorldMatrix(base, candidate, backendMeta.matrix_world_gl)) {
+        return candidate;
+      }
+    }
+
+    if (
+      Array.isArray(backendMeta.matrix_world_gl) &&
+      backendMeta.matrix_world_gl.length === 16 &&
+      backendMeta.matrix_world_gl.every((v) => Number.isFinite(Number(v)))
+    ) {
+      const decomposed = decomposeWorldMatrixToCalibState(
+        backendMeta.matrix_world_gl.map(Number),
+        base,
+        opticalSeed
+      );
+      return this.normalizeCalibrationState(camName, decomposed);
+    }
+
+    return this.normalizeCalibrationState(camName, opticalSeed);
+  }
+
+  applyBackendCalibration(camName, backendMeta, { persistLocal = true } = {}) {
+    if (!this.baseCameraPoses.has(camName) || !backendMeta || typeof backendMeta !== 'object') {
+      return { applied: false, reset: false, changed: false, state: null, pose: null };
+    }
+
+    if (backendMeta.is_calibrated === true) {
+      const calibState = this.calibrationFromBackendMetadata(camName, backendMeta);
+      if (!calibState) {
+        return { applied: false, reset: false, changed: false, state: null, pose: null };
+      }
+      const pose = this.applyCameraCalibration(camName, calibState);
+      if (persistLocal) {
+        this.saveLocalCalibration(camName, calibState, {
+          syncedToBackend: true,
+          updatedAt: backendMeta.updated_at ?? null,
+        });
+      }
+      return { applied: true, reset: false, changed: true, state: calibState, pose };
+    }
+
+    if (backendMeta.is_calibrated === false) {
+      const local = this.readLocalCalibration(camName);
+      if (local && local._syncedToBackend === false) {
+        return { applied: false, reset: false, changed: false, state: this.getCalibrationState(camName), pose: this.getCalibratedCameraPose(camName) };
+      }
+      if (this.calibratedStates.has(camName) || local) {
+        const pose = this.resetCameraCalibration(camName, { clearLocal: persistLocal });
+        return { applied: false, reset: true, changed: true, state: this.createDefaultCalibrationState(camName), pose };
+      }
+    }
+
+    return { applied: false, reset: false, changed: false, state: this.getCalibrationState(camName), pose: this.getCalibratedCameraPose(camName) };
+  }
+
+  applyBackendCalibrations(calibrationsMap, options = {}) {
+    const appliedCameras = [];
+    const resetCameras = [];
+    const updatedCameras = [];
+    if (!calibrationsMap || typeof calibrationsMap !== 'object') {
+      return { appliedCameras, resetCameras, updatedCameras };
+    }
+
+    for (const [camName, meta] of Object.entries(calibrationsMap)) {
+      const res = this.applyBackendCalibration(camName, meta, options);
+      if (res.applied) appliedCameras.push(camName);
+      if (res.reset) resetCameras.push(camName);
+      if (res.changed) updatedCameras.push(camName);
+    }
+
+    if (appliedCameras.length > 0 || resetCameras.length > 0) {
+      console.log(
+        `[CameraProjector] Calibrazioni sincronizzate dal backend: applicate=${appliedCameras.length} (${appliedCameras.join(', ') || '-'}), ripristinate=${resetCameras.length}.`
+      );
+    }
+    return { appliedCameras, resetCameras, updatedCameras };
+  }
+
+  resetCameraCalibration(camName, { clearLocal = true } = {}) {
+    const base = this.baseCameraPoses.get(camName);
+    if (!base) return null;
+    const defaults = this.createDefaultCalibrationState(camName);
+    const pose = this.applyCameraCalibration(camName, defaults);
+    this.calibratedPoses.delete(camName);
+    this.calibratedStates.delete(camName);
+    if (clearLocal) {
+      this.clearLocalCalibration(camName);
+    }
+    return pose;
+  }
+
   applyCameraCalibration(camName, calibState) {
     const base = this.baseCameraPoses.get(camName);
     const group = this.frustumHelpers.get(camName);
     if (!base) return null;
 
-    const finalPos = base.position.clone().add(
-      new THREE.Vector3(
-        Number(calibState.offsetX) || 0,
-        Number(calibState.offsetY) || 0,
-        Number(calibState.offsetZ) || 0
-      )
-    );
-
-    const totalYawDeg = (Number(calibState.yawDeg) || 0) + (calibState.flip180 ? 180.0 : 0.0);
-    const deltaEuler = new THREE.Euler(
-      THREE.MathUtils.degToRad(Number(calibState.pitchDeg) || 0),
-      THREE.MathUtils.degToRad(totalYawDeg),
-      THREE.MathUtils.degToRad(Number(calibState.rollDeg) || 0),
-      'YXZ'
-    );
-    const deltaQuat = new THREE.Quaternion().setFromEuler(deltaEuler);
-    const finalQuat = base.quaternion.clone().multiply(deltaQuat);
-
-    const fovV = Number(calibState.fovV) || base.fovV;
-    const fovH = Number(calibState.fovH) || base.fovH;
+    const normalized = this.normalizeCalibrationState(camName, calibState);
+    const { finalPos, finalQuat } = this._computePoseFromState(base, normalized);
+    const fovV = normalized.fovV;
+    const fovH = normalized.fovH;
 
     if (group) {
       group.position.copy(finalPos);
@@ -615,7 +838,7 @@ export class CameraProjector {
       overlay.updateOptics({
         fovV,
         fovH,
-        distortion: [Number(calibState.k1) || 0, Number(calibState.k2) || 0, 0, 0, 0],
+        distortion: [normalized.k1, normalized.k2, 0, 0, 0],
       });
     }
 
@@ -651,7 +874,13 @@ export class CameraProjector {
       matrixWorldElements,
     };
     this.calibratedPoses.set(camName, result);
+    this.calibratedStates.set(camName, normalized);
     return result;
+  }
+
+  getCalibrationState(camName) {
+    const st = this.calibratedStates.get(camName);
+    return st ? { ...st } : null;
   }
 
   getCalibratedCameraPose(camName) {

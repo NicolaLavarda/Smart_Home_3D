@@ -97,6 +97,7 @@ class SpatialPipelineService:
         repository: ITrackRepository,
         calibration_solver: CameraCalibrationSolver,
         camera_manifest_meta: Optional[dict[str, dict[str, Any]]] = None,
+        saved_calibration_overrides: Optional[dict[str, dict[str, Any]]] = None,
     ) -> None:
         self.config = config
         self.optical_models = optical_models
@@ -106,6 +107,11 @@ class SpatialPipelineService:
         self.repository = repository
         self.calibration_solver = calibration_solver
         self.camera_manifest_meta: dict[str, dict[str, Any]] = dict(camera_manifest_meta or {})
+        self.saved_calibration_overrides: dict[str, dict[str, Any]] = {
+            cam_id: dict(ov)
+            for cam_id, ov in (saved_calibration_overrides or {}).items()
+            if isinstance(ov, dict)
+        }
 
         self.ingestion_mode: str = config.default_ingestion_mode
         self.active_sources: list[IDetectionSource] = []
@@ -124,6 +130,81 @@ class SpatialPipelineService:
 
     def get_optical_model(self, camera_id: str) -> Optional[ICameraOpticalModel]:
         return self.optical_models.get(camera_id)
+
+    @staticmethod
+    def _sanitize_ui_state(raw_state: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        if not isinstance(raw_state, dict):
+            return None
+        numeric_keys = (
+            "offsetX",
+            "offsetY",
+            "offsetZ",
+            "yawDeg",
+            "pitchDeg",
+            "rollDeg",
+            "fovV",
+            "fovH",
+            "k1",
+            "k2",
+        )
+        cleaned: dict[str, Any] = {}
+        for key in numeric_keys:
+            if key in raw_state:
+                try:
+                    val = float(raw_state[key])
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(val):
+                    cleaned[key] = val
+        if "flip180" in raw_state:
+            cleaned["flip180"] = bool(raw_state["flip180"])
+        return cleaned if cleaned else None
+
+    def get_camera_calibration_metadata(self, camera_id: str) -> dict[str, Any]:
+        model = self.optical_models[camera_id]
+        meta = dict(model.to_metadata_dict())
+        ov = self.saved_calibration_overrides.get(camera_id)
+        if ov is not None:
+            meta["is_calibrated"] = True
+            if ov.get("updated_at") is not None:
+                meta["updated_at"] = ov["updated_at"]
+            ui_state = self._sanitize_ui_state(ov.get("ui_state"))
+            if ui_state is not None:
+                meta["ui_state"] = ui_state
+        else:
+            meta["is_calibrated"] = False
+        return meta
+
+    def get_all_camera_calibrations(self) -> dict[str, dict[str, Any]]:
+        return {
+            cam_id: self.get_camera_calibration_metadata(cam_id)
+            for cam_id in self.optical_models
+        }
+
+    def save_camera_calibration_override(
+        self,
+        camera_id: str,
+        ui_state: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        model = self.optical_models[camera_id]
+        meta: dict[str, Any] = {
+            **model.to_metadata_dict(),
+            "is_calibrated": True,
+            "updated_at": round(time.time(), 3),
+        }
+        cleaned_ui = self._sanitize_ui_state(ui_state)
+        if cleaned_ui is not None:
+            meta["ui_state"] = cleaned_ui
+        self.calibration_solver.save_override(camera_id, meta)
+        self.saved_calibration_overrides[camera_id] = dict(meta)
+        return meta
+
+    def reset_camera_calibration(self, camera_id: str) -> dict[str, Any]:
+        cam_data = self.camera_manifest_meta.get(camera_id, {})
+        self.optical_models[camera_id] = create_optical_model_from_manifest(camera_id, cam_data)
+        self.saved_calibration_overrides.pop(camera_id, None)
+        self.calibration_solver.delete_override(camera_id)
+        return self.get_camera_calibration_metadata(camera_id)
 
     async def start(self) -> None:
         self._flush_task = asyncio.create_task(self._db_flush_loop())
@@ -467,6 +548,15 @@ class SpatialPipelineService:
             }
         )
 
+    async def broadcast_calibration_update(self, camera_id: str, calibration: dict[str, Any]) -> None:
+        await self._broadcast_json(
+            {
+                "type": "calibration_updated",
+                "camera_id": camera_id,
+                "calibration": calibration,
+            }
+        )
+
     async def broadcast_frame(self, active_tracks: list[TrackedEntity3D], timestamp: float) -> None:
         await self._broadcast_json(
             {
@@ -546,6 +636,7 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
         repository=repository,
         calibration_solver=calib_solver,
         camera_manifest_meta=camera_manifest_meta,
+        saved_calibration_overrides=saved_overrides,
     )
 
 
@@ -767,19 +858,29 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             media_type = "video/x-matroska"
         return FileResponse(path=file_path, media_type=media_type, filename=file_path.name)
 
+    @app.get("/api/v1/calibrations")
+    async def get_all_camera_calibrations(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "calibrations": service.get_all_camera_calibrations()}
+
     @app.get("/api/v1/calibration/{camera_id}")
     async def get_camera_calibration(
         camera_id: str,
+        response: Response,
         _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> dict[str, Any]:
-        model = service.optical_models.get(camera_id)
-        if model is None:
+        if camera_id not in service.optical_models:
             raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not registered")
-        return {"status": "ok", "calibration": model.to_metadata_dict()}
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "calibration": service.get_camera_calibration_metadata(camera_id)}
 
     @app.post("/api/v1/calibration/solve-pnp")
     async def solve_camera_pnp(
         req: SolvePnPRequest,
+        response: Response,
         _admin: HAUserPrincipal = Depends(require_admin_user),
     ) -> dict[str, Any]:
         model = service.optical_models.get(req.camera_id)
@@ -788,19 +889,23 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
 
         result = service.calibration_solver.solve_pnp_ransac(model, req.correspondences)
         model.update_calibration(extrinsic_cv_to_world=result.extrinsic_cv_to_world)
-        service.calibration_solver.save_override(req.camera_id, model.to_metadata_dict())
+        meta = service.save_camera_calibration_override(req.camera_id, ui_state=None)
+        await service.broadcast_calibration_update(req.camera_id, meta)
+        response.headers["Cache-Control"] = "no-store"
         return {
             "status": "ok",
             "reprojection_error_px": result.reprojection_error_px,
             "inliers_count": result.inliers_count,
             "extrinsic_cv_to_world": result.extrinsic_cv_to_world,
             "matrix_world_gl": result.matrix_world_gl,
+            "calibration": meta,
         }
 
     @app.post("/api/v1/calibration/{camera_id}")
     async def update_camera_calibration(
         camera_id: str,
         payload: CalibrationOverridePayload,
+        response: Response,
         _admin: HAUserPrincipal = Depends(require_admin_user),
     ) -> dict[str, Any]:
         model = service.optical_models.get(camera_id)
@@ -818,9 +923,23 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             fov_v_deg=payload.fov_v_deg,
             distortion_coeffs=payload.distortion_coeffs,
         )
-        meta = model.to_metadata_dict()
-        service.calibration_solver.save_override(camera_id, meta)
+        meta = service.save_camera_calibration_override(camera_id, ui_state=payload.ui_state)
+        await service.broadcast_calibration_update(camera_id, meta)
+        response.headers["Cache-Control"] = "no-store"
         return {"status": "ok", "calibration": meta}
+
+    @app.delete("/api/v1/calibration/{camera_id}")
+    async def delete_camera_calibration(
+        camera_id: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        if camera_id not in service.optical_models:
+            raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not registered")
+        meta = service.reset_camera_calibration(camera_id)
+        await service.broadcast_calibration_update(camera_id, meta)
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "camera_id": camera_id, "calibration": meta}
 
     @app.post("/api/v1/ingestion/mode")
     async def switch_ingestion_mode(

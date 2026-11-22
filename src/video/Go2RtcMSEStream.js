@@ -212,6 +212,19 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
         }
       }
     } catch (err) {
+      if (err?.name === 'QuotaExceededError' && this.sourceBuffer && typeof this.sourceBuffer.remove === 'function') {
+        try {
+          const b = this.sourceBuffer.buffered || this.videoElement?.buffered;
+          if (b && b.length > 0) {
+            const start = b.start(0);
+            const end = b.end(b.length - 1);
+            if (end - start > 2) {
+              this.sourceBuffer.remove(start, end - 1.5);
+              return;
+            }
+          }
+        } catch {}
+      }
       this.queue = [];
     }
   }
@@ -250,4 +263,3 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
     this.notifyStatus();
   }
 }
-

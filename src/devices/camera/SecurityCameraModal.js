@@ -20,9 +20,12 @@ export class SecurityCameraModal {
     this.hintEl = null;
     this.endpointEl = null;
     this.activeStreamName = 'carraio_main';
+    this.mainStreamName = 'carraio_main';
+    this.subStreamName = 'carraio_sub';
     this.isSyntheticActive = true;
     this._unsubscribeStatus = null;
     this._unsubscribeAuth = null;
+    this._connectSeq = 0;
     this._camIp = '192.168.86.47';
     this._camName = 'Cam_Carraio';
     this._entityId = 'camera.carraio_scorrevole';
@@ -66,6 +69,8 @@ export class SecurityCameraModal {
     this._camName = camName;
     this._entityId = manifestCam?.ha_camera_entity || entityId;
     this._camLabel = manifestCam?.ha_label || cameraModel;
+    this.mainStreamName = mainStream;
+    this.subStreamName = subStream;
     this.activeStreamName = mainStream;
 
     const haClient = this.controller.haClient || context.haClient;
@@ -74,16 +79,10 @@ export class SecurityCameraModal {
       ? `Tailscale Bridge → ${camIp} • ${camName}`
       : `${camIp} • ${camName}`;
 
-    // Controlla stato corrente del backend spaziale se disponibile
-    let serverMode = 'synthetic';
+    // Rendering DOM sincrono immediato (zero blocco su fetchStatus() del backend spaziale!)
     const spatialClient = this.controller.spatialStreamClient || context.spatialStreamClient;
-    if (spatialClient) {
-      const st = await spatialClient.fetchStatus().catch(() => null);
-      if (st?.ingestion_mode) {
-        serverMode = st.ingestion_mode;
-      }
-    }
-    this.isSyntheticActive = serverMode === 'synthetic';
+    const cachedMode = spatialClient?.lastStatusPayload?.ingestion_mode;
+    this.isSyntheticActive = (cachedMode || 'synthetic') === 'synthetic';
 
     container.innerHTML = `
       <div class="camera-preview-stream${isPano180 ? ' is-panoramic' : ''}" id="cam-preview-wrapper">
@@ -135,7 +134,7 @@ export class SecurityCameraModal {
       </button>
 
       <div id="cam-status-hint" style="font-size:11px;color:var(--text-muted);line-height:1.45;text-align:center;">
-        Streaming gestito da go2rtc (WebRTC → MSE → Snapshot Fallback).
+        Streaming condiviso go2rtc (Istantaneo da pool • WebRTC → MSE → Sub Live).
       </div>
     `;
 
@@ -145,21 +144,26 @@ export class SecurityCameraModal {
     this.hintEl = container.querySelector('#cam-status-hint');
     this.endpointEl = container.querySelector('#cam-endpoint-label');
 
-    await this.connectStream(this.activeStreamName);
-
     // Qualità Main / Sub
     container.querySelectorAll('.stream-quality-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        container.querySelectorAll('.stream-quality-btn').forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.activeStreamName = btn.dataset.stream;
-        await this.connectStream(this.activeStreamName);
+        const targetStream = btn.dataset.stream;
+        const isExplicitMain = targetStream === this.mainStreamName;
+        this._syncQualityButtons(targetStream);
+        this.activeStreamName = targetStream;
+        await this.connectStream(this.activeStreamName, {
+          forceReconnect: isExplicitMain,
+          allowSubReuse: !isExplicitMain,
+        });
       });
     });
 
-    // Riconnetti
+    // Riconnetti forzato
     container.querySelector('#btn-cam-reconnect')?.addEventListener('click', () => {
-      this.connectStream(this.activeStreamName);
+      this.connectStream(this.activeStreamName, {
+        forceReconnect: true,
+        allowSubReuse: this.activeStreamName === this.subStreamName,
+      });
     });
 
     // Vista POV 3D
@@ -168,6 +172,10 @@ export class SecurityCameraModal {
     const camCtrl = this.controller.cameraController || context.cameraController;
     if (camNode && camCtrl) {
       povBtn.addEventListener('click', () => {
+        this.controller.videoStreamManager?.prewarmStream?.(this.activeStreamName, {
+          cameraEntityId: this._entityId,
+          cameraName: this._camName,
+        });
         camCtrl.flyToCameraPOV(
           camNode,
           1.4,
@@ -206,9 +214,28 @@ export class SecurityCameraModal {
       });
     }
 
+    // Aggiorna lo stato del backend spaziale in parallelo senza bloccare l'apertura del modale o del video
+    if (spatialClient && typeof spatialClient.fetchStatus === 'function') {
+      spatialClient.fetchStatus().then((st) => {
+        if (!this.container || this.container !== container) return;
+        if (st?.ingestion_mode) {
+          this.isSyntheticActive = st.ingestion_mode === 'synthetic';
+          if (simBtn) {
+            simBtn.innerHTML = this.isSyntheticActive
+              ? `${icon('brain', { size: 15 })} <span>Passa a Rilevamento OpenVINO Live</span>`
+              : `${icon('footprints', { size: 15 })} <span>Avvia Simulatore Camminata 3D</span>`;
+          }
+        }
+      }).catch(() => {});
+    }
+
     calibBtn?.addEventListener('click', async () => {
       if (!haClient?.isAdmin) return;
       const calibUI = this.controller.calibrationAssistant;
+      this.controller.videoStreamManager?.prewarmStream?.(this.activeStreamName, {
+        cameraEntityId: this._entityId,
+        cameraName: this._camName,
+      });
       if (camNode && camCtrl) {
         camCtrl.flyToCameraPOV(
           camNode,
@@ -247,25 +274,46 @@ export class SecurityCameraModal {
         this.hintEl.textContent = 'Backend spaziale offline: impossibile cambiare modalità CV.';
       }
     });
+
+    // Collega il flusso video (istantaneo a 0ms se caldo nel pool o con preview sub immediata!)
+    await this.connectStream(this.activeStreamName);
   }
 
-  updateStreamStatusUI(status) {
+  _syncQualityButtons(activeStream) {
+    if (!this.container) return;
+    this.container.querySelectorAll('.stream-quality-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.stream === activeStream);
+    });
+  }
+
+  updateStreamStatusUI(status, meta = {}) {
     if (!this.badgeEl || !this.hintEl) return;
     const isTailscale = Boolean(status.isTailscale || this.controller.haClient?.isTailscale);
+    const activeName = meta.activeStreamName || status.streamName || this.activeStreamName;
+    const isUpgrading = Boolean(meta.upgrading);
+    const isFallbackToSub = Boolean(meta.fallbackToSub);
 
-    if (status.mode === 'webrtc') {
-      this.badgeEl.textContent = 'WEBRTC LIVE';
+    if (isUpgrading) {
+      this.badgeEl.textContent = 'LIVE • HD...';
       this.badgeEl.style.background = 'rgba(16, 185, 129, 0.92)';
-      this.hintEl.textContent = `Stream reale a bassa latenza (${this.activeStreamName}) connesso via WebRTC.`;
+      this.hintEl.textContent = `Video live istantaneo (${activeName}) • Upgrade HD in corso...`;
+    } else if (status.mode === 'webrtc') {
+      this.badgeEl.textContent = isFallbackToSub ? 'WEBRTC LIVE (SUB)' : 'WEBRTC LIVE';
+      this.badgeEl.style.background = 'rgba(16, 185, 129, 0.92)';
+      this.hintEl.textContent = isFallbackToSub
+        ? `Flusso live fluido attivo (${activeName}) • Main HD non decodificabile su questo browser.`
+        : `Stream reale a bassa latenza (${activeName}) connesso via WebRTC.`;
       if (this.endpointEl) {
         this.endpointEl.textContent = isTailscale
           ? `Tailscale Direct → ${this._camIp} • ${this._camName}`
           : `${this._camIp} • ${this._camName}`;
       }
     } else if (status.mode === 'mse') {
-      this.badgeEl.textContent = 'MSE LIVE';
+      this.badgeEl.textContent = isFallbackToSub ? 'MSE LIVE (SUB)' : 'MSE LIVE';
       this.badgeEl.style.background = 'rgba(6, 182, 212, 0.92)';
-      this.hintEl.textContent = `Stream reale connesso via go2rtc MSE (${this.activeStreamName}).`;
+      this.hintEl.textContent = isFallbackToSub
+        ? `Flusso live attivo (${activeName}) • Main HD non disponibile.`
+        : `Stream reale connesso via go2rtc MSE (${activeName}).`;
       if (this.endpointEl) {
         this.endpointEl.textContent = isTailscale
           ? `Tailscale Direct → ${this._camIp} • ${this._camName}`
@@ -304,17 +352,23 @@ export class SecurityCameraModal {
     }
   }
 
-  async connectStream(streamName) {
+  async connectStream(streamName, { forceReconnect = false, allowSubReuse = true } = {}) {
     const vsm = this.controller.videoStreamManager;
     if (!vsm || !this.videoEl) return;
+
+    const seq = ++this._connectSeq;
+    this._lastFallbackToSub = false;
 
     if (this._unsubscribeStatus) {
       this._unsubscribeStatus();
       this._unsubscribeStatus = null;
     }
 
-    this.badgeEl.textContent = 'CONNESSIONE...';
-    this.badgeEl.style.background = 'rgba(245, 158, 11, 0.9)';
+    const alreadyWarm = !forceReconnect && Boolean(vsm.isStreamReady?.(streamName));
+    if (!alreadyWarm && this.badgeEl) {
+      this.badgeEl.textContent = 'CONNESSIONE...';
+      this.badgeEl.style.background = 'rgba(245, 158, 11, 0.9)';
+    }
 
     try {
       const provider = await vsm.attachToVideoElement(streamName, this.videoEl, 'auto', {
@@ -322,23 +376,44 @@ export class SecurityCameraModal {
         cameraName: this._camName,
         cameraLabel: this._camLabel,
         cameraIp: this._camIp,
+        forceReconnect,
+        allowSubReuse,
       });
-      this.updateStreamStatusUI(provider.getStatus());
+
+      if (seq !== this._connectSeq || !this.container) return;
+
+      const activeStreamName = provider.streamName || streamName;
+      const didFallbackToSub = Boolean(activeStreamName !== streamName && activeStreamName === this.subStreamName);
+      this._lastFallbackToSub = didFallbackToSub;
+      if (didFallbackToSub) {
+        this._syncQualityButtons(this.subStreamName);
+      }
+
+      this.updateStreamStatusUI(provider.getStatus(), {
+        fallbackToSub: didFallbackToSub,
+        activeStreamName,
+      });
 
       if (typeof provider.onStatusChange === 'function') {
         this._unsubscribeStatus = provider.onStatusChange((st) => {
-          if (this.container && st.connected) {
-            this.updateStreamStatusUI(st);
+          if (seq === this._connectSeq && this.container && st.connected) {
+            this.updateStreamStatusUI(st, {
+              fallbackToSub: this._lastFallbackToSub,
+              activeStreamName,
+            });
           }
         });
       }
     } catch (err) {
-      this.badgeEl.textContent = 'OFFLINE';
-      this.badgeEl.style.background = 'rgba(239, 68, 68, 0.9)';
+      if (seq === this._connectSeq && this.badgeEl) {
+        this.badgeEl.textContent = 'OFFLINE';
+        this.badgeEl.style.background = 'rgba(239, 68, 68, 0.9)';
+      }
     }
   }
 
   destroy() {
+    this._connectSeq += 1;
     if (this._unsubscribeStatus) {
       this._unsubscribeStatus();
       this._unsubscribeStatus = null;

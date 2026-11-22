@@ -54,6 +54,7 @@ export class SpatialStreamClient {
     this.frameListeners = new Set();
     this.statusListeners = new Set();
     this.authErrorListeners = new Set();
+    this.calibrationListeners = new Set();
     this.lastStatusPayload = null;
   }
 
@@ -84,6 +85,11 @@ export class SpatialStreamClient {
   onStatusChange(callback) {
     this.statusListeners.add(callback);
     return () => this.statusListeners.delete(callback);
+  }
+
+  onCalibrationUpdate(callback) {
+    this.calibrationListeners.add(callback);
+    return () => this.calibrationListeners.delete(callback);
   }
 
   emitStatus(connected, meta = null) {
@@ -128,6 +134,14 @@ export class SpatialStreamClient {
           this.frameListeners.forEach((cb) => cb(msg));
         } else if (msg.type === 'server_status') {
           this.emitStatus(true, msg);
+        } else if (msg.type === 'calibration_updated') {
+          this.calibrationListeners.forEach((cb) => {
+            try {
+              cb(msg);
+            } catch (e) {
+              console.warn('[SpatialStreamClient] Errore listener calibration_updated:', e);
+            }
+          });
         }
       } catch (err) {
         console.warn('[SpatialStreamClient] Payload WS non valido:', err);
@@ -254,6 +268,7 @@ export class SpatialStreamClient {
     }
 
     if (!resp.ok) {
+      console.warn(`[SpatialStreamClient] Richiesta fallita (${resp.status}) su ${path}`);
       return null;
     }
 
@@ -323,14 +338,31 @@ export class SpatialStreamClient {
     return await this.requestJson(`/api/v1/timeline-density?${params.toString()}`, { method: 'GET', timeoutMs: 10000 });
   }
 
+  async fetchAllCameraCalibrations() {
+    return await this.requestJson('/api/v1/calibrations', {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 6000,
+    });
+  }
+
   async fetchCameraCalibration(cameraId) {
-    return await this.requestJson(`/api/v1/calibration/${encodeURIComponent(cameraId)}`, { method: 'GET' });
+    return await this.requestJson(`/api/v1/calibration/${encodeURIComponent(cameraId)}`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
   }
 
   async updateCameraCalibration(cameraId, payload) {
     return await this.requestJson(`/api/v1/calibration/${encodeURIComponent(cameraId)}`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  }
+
+  async resetCameraCalibration(cameraId) {
+    return await this.requestJson(`/api/v1/calibration/${encodeURIComponent(cameraId)}`, {
+      method: 'DELETE',
     });
   }
 

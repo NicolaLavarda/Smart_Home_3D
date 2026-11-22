@@ -178,4 +178,3 @@ export class Go2RtcWebRTCStream extends IVideoStreamProvider {
     this.notifyStatus();
   }
 }
-

@@ -325,6 +325,65 @@ async function bootstrap() {
     }
   });
 
+  let frustumsReady = false;
+  let authReadyForSpatial = false;
+  let lastSpatialWsConnected = false;
+  let calibrationSyncPromise = null;
+
+  const refreshActivePovIfNeeded = (updatedCameras = []) => {
+    if (!Array.isArray(updatedCameras) || updatedCameras.length === 0) return;
+    if (calibrationAssistant?.isOpen) return;
+    const activePovCam = cameraController?.activePovCameraName;
+    if (!activePovCam || !updatedCameras.includes(activePovCam)) return;
+    if (cameraController.isTransitioning || cameraController._povPhase !== 'active') return;
+    const pose = cameraProjector.getCalibratedCameraPose(activePovCam);
+    if (pose?.position && pose?.quaternion) {
+      cameraController.setInstantCameraPose(pose.position, pose.quaternion, pose.fovV, activePovCam);
+    }
+  };
+
+  const syncCalibrationsFromBackend = async () => {
+    if (!frustumsReady || !authReadyForSpatial) return null;
+    if (calibrationSyncPromise) return await calibrationSyncPromise;
+    calibrationSyncPromise = (async () => {
+      try {
+        const res = await spatialStreamClient.fetchAllCameraCalibrations();
+        if (res?.status === 'ok' && res.calibrations) {
+          const syncRes = cameraProjector.applyBackendCalibrations(res.calibrations, { persistLocal: true });
+          refreshActivePovIfNeeded(syncRes.updatedCameras);
+          return syncRes;
+        }
+      } catch (err) {
+        console.warn('[Main] Errore sincronizzazione calibrazioni dal backend:', err);
+      }
+      return null;
+    })();
+    try {
+      return await calibrationSyncPromise;
+    } finally {
+      calibrationSyncPromise = null;
+    }
+  };
+
+  spatialStreamClient.onCalibrationUpdate((msg) => {
+    if (!frustumsReady || !msg?.camera_id || !msg?.calibration) return;
+    if (calibrationAssistant?.isOpen && calibrationAssistant.activeCameraName === msg.camera_id) {
+      return;
+    }
+    const res = cameraProjector.applyBackendCalibration(msg.camera_id, msg.calibration, { persistLocal: true });
+    if (res.changed) {
+      refreshActivePovIfNeeded([msg.camera_id]);
+    }
+  });
+
+  spatialStreamClient.onStatusChange((connected) => {
+    const isNowConnected = Boolean(connected);
+    if (isNowConnected && !lastSpatialWsConnected) {
+      syncCalibrationsFromBackend();
+    }
+    lastSpatialWsConnected = isNowConnected;
+  });
+
   haClient.onAuthChange(async (authState) => {
     let isProdBuild = false;
     try { isProdBuild = Boolean(import.meta.env.PROD); } catch {}
@@ -336,6 +395,8 @@ async function bootstrap() {
       const session = token ? await spatialStreamClient.authenticateWithHaToken(token) : false;
       if (session === true || session?.authenticated || (!isProd && Boolean(session))) {
         spatialStreamClient.connectWebSocket();
+        authReadyForSpatial = true;
+        syncCalibrationsFromBackend();
       }
       return;
     }
@@ -344,11 +405,14 @@ async function bootstrap() {
       authOverlay.hide();
       if (!isProd) {
         spatialStreamClient.connectWebSocket();
+        authReadyForSpatial = true;
+        syncCalibrationsFromBackend();
       }
       return;
     }
 
     if (authState.status === 'auth_required' || authState.status === 'error') {
+      authReadyForSpatial = false;
       if (authState.reason === 'logout' || spatialStreamClient.isAuthenticated || spatialStreamClient.connected) {
         await spatialStreamClient.logout().catch(() => {});
       } else {
@@ -370,6 +434,8 @@ async function bootstrap() {
     // Registra ground colliders per il raycasting spaziale
     cameraProjector.setGroundColliders(groundColliders);
     cameraProjector.setupCameraFrustums();
+    frustumsReady = true;
+    syncCalibrationsFromBackend();
 
     // Collega entità a EntityBinder e InteractionManager
     entityBinder.bindEntities(haEntitiesMap);
