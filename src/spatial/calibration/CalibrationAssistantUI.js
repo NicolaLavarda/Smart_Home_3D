@@ -114,9 +114,23 @@ export class CalibrationAssistantUI {
     return this.assetLoader?.manifest?.cameras?.[cameraName] || null;
   }
 
-  getOpticalTanRatio(cameraName = this.activeCameraName) {
+  isPanoramicCamera(cameraName = this.activeCameraName) {
     const manifestCam = this.getManifestCamera(cameraName);
-    if (manifestCam?.fov_h_deg && manifestCam?.fov_v_deg) {
+    const optical = String(manifestCam?.optical_model || '').toLowerCase();
+    return (
+      Boolean(manifestCam?.is_panoramic_180) ||
+      optical.includes('equirectangular') ||
+      optical.includes('panoramic') ||
+      Number(manifestCam?.fov_h_deg || 0) >= 150
+    );
+  }
+
+  getOpticalTanRatio(cameraName = this.activeCameraName) {
+    if (this.isPanoramicCamera(cameraName)) {
+      return this.getManifestCamera(cameraName)?.aspect_ratio || 32 / 9;
+    }
+    const manifestCam = this.getManifestCamera(cameraName);
+    if (manifestCam?.fov_h_deg && manifestCam?.fov_v_deg && manifestCam.fov_h_deg < 170) {
       return (
         Math.tan(THREE.MathUtils.degToRad(manifestCam.fov_h_deg * 0.5)) /
         Math.max(1e-5, Math.tan(THREE.MathUtils.degToRad(manifestCam.fov_v_deg * 0.5)))
@@ -127,7 +141,8 @@ export class CalibrationAssistantUI {
 
   createDefaultState(cameraName = this.activeCameraName) {
     const manifestCam = this.getManifestCamera(cameraName);
-    const dist = manifestCam?.distortion_coeffs || [-0.18, 0.04, 0, 0, 0];
+    const isPano = this.isPanoramicCamera(cameraName);
+    const dist = manifestCam?.distortion_coeffs || (isPano ? [0, 0, 0, 0, 0] : [-0.18, 0.04, 0, 0, 0]);
     return {
       offsetX: 0.0,
       offsetY: 0.0,
@@ -135,10 +150,10 @@ export class CalibrationAssistantUI {
       yawDeg: 0.0,
       pitchDeg: 0.0,
       rollDeg: 0.0,
-      fovV: manifestCam?.fov_v_deg ?? 42.0,
-      fovH: manifestCam?.fov_h_deg ?? 80.0,
-      k1: dist[0] ?? -0.18,
-      k2: dist[1] ?? 0.04,
+      fovV: manifestCam?.fov_v_deg ?? (isPano ? 55.0 : 42.0),
+      fovH: manifestCam?.fov_h_deg ?? (isPano ? 180.0 : 80.0),
+      k1: isPano ? 0.0 : (dist[0] ?? -0.18),
+      k2: isPano ? 0.0 : (dist[1] ?? 0.04),
       flip180: false,
     };
   }
@@ -706,10 +721,14 @@ export class CalibrationAssistantUI {
         const v = parseFloat(e.target.value);
         this.state[key] = v;
         if (key === 'fovV') {
-          const tanRatio = this.getOpticalTanRatio(this.activeCameraName);
-          this.state.fovH = Number(
-            (2 * THREE.MathUtils.radToDeg(Math.atan(Math.tan(THREE.MathUtils.degToRad(v * 0.5)) * tanRatio))).toFixed(2)
-          );
+          if (this.isPanoramicCamera(this.activeCameraName)) {
+            this.state.fovH = this.getManifestCamera(this.activeCameraName)?.fov_h_deg ?? 180.0;
+          } else {
+            const tanRatio = this.getOpticalTanRatio(this.activeCameraName);
+            this.state.fovH = Number(
+              (2 * THREE.MathUtils.radToDeg(Math.atan(Math.tan(THREE.MathUtils.degToRad(v * 0.5)) * tanRatio))).toFixed(2)
+            );
+          }
         }
         this.panelEl.querySelector(valId).textContent = `${v.toFixed(decimals)}${suffix}`;
         this.applyLiveCalibration(true);
@@ -1053,32 +1072,44 @@ export class CalibrationAssistantUI {
     const visBtn = this.panelEl.querySelector('#calib-pnp-vis-toggle');
     const visLabel = this.panelEl.querySelector('#calib-pnp-vis-label');
 
-    toggleBtn?.classList.toggle('active', this.pnpMode);
+    const isPano = this.isPanoramicCamera(this.activeCameraName);
+    if (toggleBtn) {
+      toggleBtn.disabled = isPano;
+      toggleBtn.classList.toggle('active', !isPano && this.pnpMode);
+    }
     if (toggleLabel) {
-      toggleLabel.textContent = this.pnpMode ? 'Ferma Raccolta' : (this.correspondences.length > 0 ? 'Aggiungi Coppie' : 'Avvia Raccolta');
+      toggleLabel.textContent = isPano
+        ? 'PnP solo Pinhole'
+        : this.pnpMode
+          ? 'Ferma Raccolta'
+          : this.correspondences.length > 0
+            ? 'Aggiungi Coppie'
+            : 'Avvia Raccolta';
     }
 
     if (solveBtn) {
-      solveBtn.disabled = this.correspondences.length < 4 || this.isSolvingPnP;
+      solveBtn.disabled = isPano || this.correspondences.length < 4 || this.isSolvingPnP;
       solveBtn.innerHTML = this.isSolvingPnP
         ? `${icon('refresh-cw', { size: 14, className: 'spin' })} <span>Risolvo...</span>`
         : `${icon('zap', { size: 14 })} <span>Risolvi PnP</span>`;
     }
 
     if (nudgeEl) {
-      nudgeEl.style.display = this.pnpMode && this.pnpStep === '2d' && this.overlayOpacity < 0.08 ? 'flex' : 'none';
+      nudgeEl.style.display = !isPano && this.pnpMode && this.pnpStep === '2d' && this.overlayOpacity < 0.08 ? 'flex' : 'none';
     }
 
     const hasAnyPoints = this.correspondences.length > 0 || Boolean(this.pendingPoint3D);
     if (footerEl) {
-      footerEl.style.display = hasAnyPoints ? 'flex' : 'none';
+      footerEl.style.display = !isPano && hasAnyPoints ? 'flex' : 'none';
     }
     if (visBtn && visLabel) {
       visBtn.innerHTML = `${icon(this.showPnpVectors ? 'eye' : 'eye-off', { size: 13 })} <span id="calib-pnp-vis-label">${this.showPnpVectors ? 'Nascondi vettori' : 'Mostra vettori'}</span>`;
     }
 
     if (hintEl) {
-      if (!this.pnpMode && this.correspondences.length === 0) {
+      if (isPano) {
+        hintEl.textContent = 'Camera panoramica 180° (equirettangolare): allinea l\'overlay sferico con i cursori Yaw / Pitch / Roll / Offset e salva sul backend.';
+      } else if (!this.pnpMode && this.correspondences.length === 0) {
         hintEl.textContent = '1. Clicca un punto sul modello 3D → 2. Clicca lo stesso punto sul video. Servono almeno 4 spigoli distanti.';
       } else if (!this.pnpMode && this.correspondences.length < 4) {
         hintEl.textContent = `Raccolte ${this.correspondences.length}/4 coppie minime. Riavvia la raccolta per aggiungerne altre.`;

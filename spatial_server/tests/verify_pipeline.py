@@ -531,6 +531,160 @@ def test_multicam_portico_raycast_openvino_and_overlap_fusion() -> None:
     print("[PASS] Cam_Portico SSoT optics, GLB raycast, multi-camera OpenVINO & range-weighted overlap fusion")
 
 
+def test_multicam_ingresso_180_equirectangular_raycast_and_3cam_fusion() -> None:
+    from spatial_server.main import build_pipeline_service
+
+    manifest_path = REPO_ROOT / "public" / "models" / "scene_manifest.json"
+    glb_path = REPO_ROOT / "public" / "models" / "house_optimized.glb"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert "Cam_Ingresso" in manifest["cameras"], "Cam_Ingresso missing from scene_manifest.json"
+    ing_entry = manifest["cameras"]["Cam_Ingresso"]
+    assert ing_entry["is_real_security_camera"] is True
+    assert ing_entry["ha_camera_entity"] == "camera.ingresso"
+    assert ing_entry["stream_id"] == "ingresso_main"
+    assert ing_entry["sub_stream_id"] == "ingresso_sub"
+    assert ing_entry["camera_ip"] == "192.168.86.53"
+    assert ing_entry["optical_model"] == "equirectangular_180"
+    assert ing_entry["is_panoramic_180"] is True
+    assert math.isclose(ing_entry["fov_h_deg"], 180.0, abs_tol=0.1)
+    assert math.isclose(ing_entry["fov_v_deg"], 55.0, abs_tol=0.1)
+    assert math.isclose(ing_entry["aspect_ratio"], 32.0 / 9.0, abs_tol=0.01)
+
+    # 1. Optical model factory builds EquirectangularPanoramicOpticalModel at (-0.1, 3.5, 5.936) looking West (-X) -25 deg
+    ing_model = create_optical_model_from_manifest("Cam_Ingresso", ing_entry)
+    assert isinstance(ing_model, EquirectangularPanoramicOpticalModel)
+    center_ray = ing_model.pixel_to_world_ray(0.5, 0.5)
+    assert abs(center_ray.origin[0] - (-0.10)) < 1e-3
+    assert abs(center_ray.origin[1] - 3.50) < 1e-3
+    assert abs(center_ray.origin[2] - 5.936) < 1e-3
+    assert math.isclose(center_ray.direction[0], -math.cos(math.radians(25.0)), abs_tol=1e-3)
+    assert math.isclose(center_ray.direction[1], -math.sin(math.radians(25.0)), abs_tol=1e-3)
+    assert abs(center_ray.direction[2]) < 1e-3
+
+    # Wide 180-deg azimuth span: left ray points South (+Z glTF), right ray points North (-Z glTF)
+    ray_left = ing_model.pixel_to_world_ray(0.15, 0.65)
+    ray_right = ing_model.pixel_to_world_ray(0.85, 0.65)
+    assert ray_left.direction[2] > 0.5 and ray_right.direction[2] < -0.5
+
+    for u, v in [(0.5, 0.5), (0.15, 0.65), (0.85, 0.65)]:
+        r = ing_model.pixel_to_world_ray(u, v)
+        p_test = (
+            r.origin[0] + 6.0 * r.direction[0],
+            r.origin[1] + 6.0 * r.direction[1],
+            r.origin[2] + 6.0 * r.direction[2],
+        )
+        uv_back = ing_model.world_point_to_pixel(p_test)
+        assert uv_back is not None
+        assert abs(uv_back[0] - u) < 1e-3 and abs(uv_back[1] - v) < 1e-3
+
+    # 2. Ground raycast across west yard hits real GLB ground collider meshes (not fallback plane)
+    raycaster = TrimeshGroundRaycaster(glb_path, manifest_path)
+    hit_center = raycaster.intersect_ground_detailed(center_ray)
+    assert hit_center is not None
+    assert not hit_center.used_fallback_plane, "Cam_Ingresso center ray should hit GLB west yard collider"
+    assert hit_center.point[0] < -5.0 and abs(hit_center.point[1]) < 0.25 and 4.5 <= hit_center.point[2] <= 7.5
+
+    hit_south = raycaster.intersect_ground_detailed(ray_left)
+    assert hit_south is not None and not hit_south.used_fallback_plane
+    assert hit_south.point[0] < 0.0 and hit_south.point[2] > 8.0
+
+    # 3. 3-camera OpenVINO shared-model target resolution, FPS budget split & MQTT camera aliasing
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        cfg = SpatialServerConfig(
+            host="127.0.0.1",
+            port=8765,
+            manifest_path=manifest_path,
+            glb_path=glb_path,
+            sqlite_db_path=tmp_dir / "multicam3_test.db",
+            calibration_override_path=tmp_dir / "calibs.json",
+            data_dir=tmp_dir,
+            models_dir=tmp_dir,
+            default_ingestion_mode="synthetic",
+            go2rtc_rtsp_url="rtsp://127.0.0.1:8554/carraio_sub",
+            mqtt_host="127.0.0.1",
+            mqtt_port=1883,
+            mqtt_user="",
+            mqtt_password="",
+            mqtt_topic_prefix="frigate/events",
+            openvino_device="CPU",
+            openvino_model_path="",
+            db_retention_days=7,
+            face_webhook_url="",
+            openvino_target_fps=7.0,
+            auth_required=False,
+        )
+        svc = build_pipeline_service(cfg)
+        try:
+            assert {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}.issubset(set(svc.optical_models.keys()))
+            assert isinstance(svc.optical_models["Cam_Ingresso"], EquirectangularPanoramicOpticalModel)
+
+            targets = dict(svc._resolve_openvino_camera_targets())
+            assert targets["Cam_Carraio"].endswith("/carraio_sub")
+            assert targets["Cam_Portico"].endswith("/portico_sub")
+            assert targets["Cam_Ingresso"].endswith("/ingresso_sub")
+
+            ov_sources = svc._build_openvino_sources()
+            assert len(ov_sources) >= 3
+            by_cam = {s.camera_id: s for s in ov_sources}
+            assert {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}.issubset(by_cam.keys())
+            assert by_cam["Cam_Carraio"]._infer_lock is by_cam["Cam_Ingresso"]._infer_lock
+            assert by_cam["Cam_Portico"]._infer_lock is by_cam["Cam_Ingresso"]._infer_lock
+            # FPS budget split across 3 cameras (target ~2.33 FPS each -> interval >= 0.40s)
+            assert by_cam["Cam_Ingresso"].frame_interval_s >= (3.0 / 7.0) - 0.02
+            assert "openvino:Cam_Ingresso" in by_cam["Cam_Ingresso"].status_details()
+
+            mqtt_src = svc._build_mqtt_source()
+            evt_ing = mqtt_src._parse_payload(
+                json.dumps({
+                    "type": "new",
+                    "after": {
+                        "label": "person",
+                        "camera": "ingresso",
+                        "box": [0.45, 0.4, 0.55, 0.78],
+                        "score": 0.93,
+                    },
+                })
+            )
+            assert evt_ing is not None and evt_ing.camera_id == "Cam_Ingresso"
+        finally:
+            svc.repository.close()
+
+    # 4. Intelligent west-yard overlap fusion: Cam_Carraio + Cam_Ingresso observing same person near walkway
+    tracker = Kalman3DMultiTracker()
+    t1 = tracker.update(
+        [
+            TrackObservation3D(
+                camera_id="Cam_Carraio",
+                timestamp=3000.0,
+                class_label="person",
+                position=(-4.2, 0.0, 8.2),
+                confidence=0.87,
+                range_m=7.4,
+            )
+        ],
+        now_ts=3000.0,
+    )
+    assert len(t1) == 1
+    t2 = tracker.update(
+        [
+            TrackObservation3D(
+                camera_id="Cam_Ingresso",
+                timestamp=3000.08,
+                class_label="person",
+                position=(-4.0, 0.0, 8.0),
+                confidence=0.92,
+                range_m=5.8,
+            )
+        ],
+        now_ts=3000.08,
+    )
+    assert len(t2) == 1, f"Cam_Carraio + Cam_Ingresso west-yard overlap must fuse into 1 track_id, got {len(t2)}"
+    assert set(t2[0].state.camera_sources) == {"Cam_Carraio", "Cam_Ingresso"}
+    print("[PASS] Cam_Ingresso 180-deg equirectangular SSoT optics, GLB raycast, 3-cam OpenVINO & overlap fusion")
+
+
 if __name__ == "__main__":
     test_optics_pinhole_and_panoramic()
     test_openvino_letterbox_and_ovdict_parsing()
@@ -540,5 +694,6 @@ if __name__ == "__main__":
     test_sqlite_wal_repository()
     test_fastapi_rest_and_websocket()
     test_multicam_portico_raycast_openvino_and_overlap_fusion()
+    test_multicam_ingresso_180_equirectangular_raycast_and_3cam_fusion()
     print("\nALL SPATIAL SERVER PIPELINE CHECKS PASSED!")
 

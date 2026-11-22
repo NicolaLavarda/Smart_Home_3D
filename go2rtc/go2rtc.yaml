@@ -25,4 +25,10 @@ streams:
     - "rtsp://${REOLINK_PORTICO_USER:admin}:${REOLINK_PORTICO_PASS:}@${REOLINK_PORTICO_IP:192.168.86.51}:554/h264Preview_01_sub"
   portico:
     - "rtsp://127.0.0.1:8554/portico_main"
+  ingresso_main:
+    - "rtsp://${REOLINK_INGRESSO_USER:admin}:${REOLINK_INGRESSO_PASS:}@${REOLINK_INGRESSO_IP:192.168.86.53}:554/Preview_01_main"
+  ingresso_sub:
+    - "rtsp://${REOLINK_INGRESSO_USER:admin}:${REOLINK_INGRESSO_PASS:}@${REOLINK_INGRESSO_IP:192.168.86.53}:554/Preview_01_sub"
+  ingresso:
+    - "rtsp://127.0.0.1:8554/ingresso_main"
 

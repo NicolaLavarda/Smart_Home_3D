@@ -55,6 +55,11 @@ export class SecurityCameraModal {
     const fovH = manifestCam?.fov_h_deg ?? 80;
     const fovV = manifestCam?.fov_v_deg ?? 42;
     const lensMm = manifestCam?.lens_mm ?? 4.0;
+    const isPano180 =
+      Boolean(manifestCam?.is_panoramic_180) ||
+      String(manifestCam?.optical_model || '').toLowerCase().includes('equirectangular') ||
+      Number(fovH) >= 150;
+    const opticsSuffix = isPano180 ? `${fovH}°×${fovV}° Panoramica` : `${fovH}°×${fovV}°`;
     const camIp = manifestCam?.camera_ip || (camName === 'Cam_Carraio' ? '192.168.86.47' : 'LAN');
 
     this._camIp = camIp;
@@ -104,7 +109,7 @@ export class SecurityCameraModal {
       <div class="control-row">
         <label>Modello & Ottica SSoT</label>
         <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-cyan);">
-          ${cameraModel} • ${lensMm}mm (${fovH}°×${fovV}°)
+          ${cameraModel} • ${lensMm}mm (${opticsSuffix})
         </span>
       </div>
 

@@ -240,6 +240,13 @@ class SpatialPipelineService:
             "portico_main": "Cam_Portico",
             "portico_sub": "Cam_Portico",
             "Cam_Portico": "Cam_Portico",
+            "ingresso": "Cam_Ingresso",
+            "camera.ingresso": "Cam_Ingresso",
+            "camera.ingresso_scorrevole": "Cam_Ingresso",
+            "ingresso_scorrevole": "Cam_Ingresso",
+            "ingresso_main": "Cam_Ingresso",
+            "ingresso_sub": "Cam_Ingresso",
+            "Cam_Ingresso": "Cam_Ingresso",
         }
         for cam_id in self.optical_models:
             aliases[cam_id] = cam_id

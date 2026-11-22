@@ -279,6 +279,71 @@
         6.28
       ]
     },
+    "camera.ingresso": {
+      "entity_id": "camera.ingresso",
+      "domain": "camera",
+      "name": "Ingresso",
+      "action": "modal",
+      "ui_type": "camera",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Cam_Ingresso",
+          "type": "CAMERA",
+          "centroid": [
+            -0.1,
+            -5.936,
+            3.5
+          ],
+          "dimensions": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Security_Cam_Ingresso_Body",
+          "type": "MESH",
+          "centroid": [
+            -0.0637,
+            -5.936,
+            3.5169
+          ],
+          "dimensions": [
+            0.094,
+            0.195,
+            0.117
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Security_Cam_Ingresso_Mount",
+          "type": "MESH",
+          "centroid": [
+            -0.0205,
+            -5.936,
+            3.5387
+          ],
+          "dimensions": [
+            0.045,
+            0.084,
+            0.084
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        -0.1,
+        -5.936,
+        3.5
+      ],
+      "centroid_gltf": [
+        -0.1,
+        3.5,
+        5.936
+      ]
+    },
     "camera.portico": {
       "entity_id": "camera.portico",
       "domain": "camera",
@@ -2593,6 +2658,115 @@
           1.0
         ]
       }
+    },
+    "Cam_Ingresso": {
+      "name": "Cam_Ingresso",
+      "ha_camera_entity": "camera.ingresso",
+      "ha_label": "Ingresso (Reolink Duo 3 PoE)",
+      "coverage_zone": "zona ovest della casa",
+      "is_real_security_camera": true,
+      "optical_model": "equirectangular_180",
+      "distortion_coeffs": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "stream_id": "ingresso_main",
+      "sub_stream_id": "ingresso_sub",
+      "camera_ip": "192.168.86.53",
+      "lens_mm": 2.8,
+      "sensor_width_mm": 16.0,
+      "sensor_height_mm": 2.9152,
+      "fov_v_deg": 55.0,
+      "fov_h_deg": 180.0,
+      "aspect_ratio": 3.5556,
+      "clip_near": 0.1,
+      "clip_far": 250.0,
+      "blender_transform": {
+        "position": [
+          -0.1,
+          -5.936,
+          3.5
+        ],
+        "quaternion": [
+          0.37993,
+          0.37993,
+          0.59637,
+          0.59637
+        ],
+        "rotation_euler_deg": [
+          65.0,
+          -0.0,
+          90.0
+        ],
+        "matrix_world": [
+          -0.0,
+          -0.422618,
+          0.906308,
+          -0.1,
+          1.0,
+          -0.0,
+          0.0,
+          -5.936,
+          0.0,
+          0.906308,
+          0.422618,
+          3.5,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          -0.1,
+          3.5,
+          5.936
+        ],
+        "matrix_world_gl": [
+          -0.0,
+          -0.422618,
+          0.906308,
+          -0.1,
+          0.0,
+          0.906308,
+          0.422618,
+          3.5,
+          -1.0,
+          0.0,
+          -0.0,
+          5.936,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "extrinsic_cv_to_world": [
+          -0.0,
+          0.422618,
+          -0.906308,
+          -0.1,
+          0.0,
+          -0.906308,
+          -0.422618,
+          3.5,
+          -1.0,
+          -0.0,
+          0.0,
+          5.936,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "camera_model": "Reolink Duo 3 PoE",
+      "main_stream_label": "Main 16MP 180°",
+      "sub_stream_label": "Sub 1536×576",
+      "is_panoramic_180": true
     },
     "Cam_Portico": {
       "name": "Cam_Portico",

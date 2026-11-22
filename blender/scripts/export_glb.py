@@ -163,7 +163,18 @@ def extract_camera_data(cam_obj):
 
     fov_h_rad = 2.0 * math.atan((sensor_w / 2.0) / lens)
     fov_v_rad = 2.0 * math.atan((sensor_h / 2.0) / lens)
+    fov_h_deg = math.degrees(fov_h_rad)
     fov_deg = math.degrees(fov_v_rad)
+    if cam_obj.get("fov_h_deg") is not None:
+        try:
+            fov_h_deg = float(cam_obj.get("fov_h_deg"))
+        except (TypeError, ValueError):
+            pass
+    if cam_obj.get("fov_v_deg") is not None:
+        try:
+            fov_deg = float(cam_obj.get("fov_v_deg"))
+        except (TypeError, ValueError):
+            pass
 
     mat_world = cam_obj.matrix_world
     quat_world = mat_world.to_quaternion()
@@ -205,7 +216,7 @@ def extract_camera_data(cam_obj):
         "sensor_width_mm": round(sensor_w, 4),
         "sensor_height_mm": round(sensor_h, 4),
         "fov_v_deg": round(fov_deg, 2),
-        "fov_h_deg": round(math.degrees(fov_h_rad), 2),
+        "fov_h_deg": round(fov_h_deg, 2),
         "aspect_ratio": round(aspect, 4),
         "clip_near": round(cam.clip_start, 3),
         "clip_far": round(cam.clip_end, 3),

@@ -88,27 +88,90 @@ export function computeClippedFrustumData(
   depth = FRUSTUM_DEPTH,
   groundY = GROUND_CLIP_Y
 ) {
-  const tanV = Math.tan(THREE.MathUtils.degToRad(fovV * 0.5));
-  const tanH = Math.tan(THREE.MathUtils.degToRad(fovH * 0.5));
-  const halfH = tanV * depth;
-  const halfW = tanH * depth;
-
   const toWorld = (lx, ly, lz) =>
     new THREE.Vector3(lx, ly, lz).applyQuaternion(worldQuat).add(worldPos);
 
   const v0 = worldPos.clone();
-  const v1 = toWorld(-halfW, halfH, -depth);
-  const v2 = toWorld(halfW, halfH, -depth);
-  const v3 = toWorld(halfW, -halfH, -depth);
-  const v4 = toWorld(-halfW, -halfH, -depth);
+  const isPanoramic = Number(fovH) >= 150;
+  let faces = [];
+  const panoSliceGround = [];
 
-  const faces = [
-    [v0, v1, v2],
-    [v0, v2, v3],
-    [v0, v3, v4],
-    [v0, v4, v1],
-    [v1, v4, v3, v2],
-  ];
+  if (isPanoramic) {
+    // Ventaglio panoramico 180° (es. Reolink Duo 3 PoE): discretizza l'arco sferico senza singolarità tan(90°)
+    const segments = 24;
+    const clampedFovH = Math.min(Math.max(Number(fovH) || 180, 150), 350);
+    const clampedFovV = Math.min(Math.max(Number(fovV) || 55, 10), 160);
+    const halfHRad = THREE.MathUtils.degToRad(clampedFovH * 0.5);
+    const halfVRad = THREE.MathUtils.degToRad(clampedFovV * 0.5);
+    const cosV = Math.cos(halfVRad);
+    const sinV = Math.sin(halfVRad);
+
+    const intersectSegGround = (a, b) => {
+      const dy = b.y - a.y;
+      if (Math.abs(dy) < 1e-9) return null;
+      const t = (groundY - a.y) / dy;
+      if (t < -1e-6 || t > 1 + 1e-6) return null;
+      const tc = THREE.MathUtils.clamp(t, 0, 1);
+      return new THREE.Vector3(
+        a.x + (b.x - a.x) * tc,
+        groundY,
+        a.z + (b.z - a.z) * tc
+      );
+    };
+
+    const topPts = [];
+    const botPts = [];
+    for (let i = 0; i <= segments; i++) {
+      const th = -halfHRad + (i / segments) * (2.0 * halfHRad);
+      const sx = depth * cosV * Math.sin(th);
+      const sz = -depth * cosV * Math.cos(th);
+      const tPt = toWorld(sx, depth * sinV, sz);
+      const bPt = toWorld(sx, -depth * sinV, sz);
+      topPts.push(tPt);
+      botPts.push(bPt);
+
+      // Intersezione della fetta verticale [v0, tPt, bPt] col piano ground (evita poligoni non convessi a mezzaluna)
+      const hits = [];
+      for (const [ea, eb] of [[v0, bPt], [v0, tPt], [tPt, bPt]]) {
+        const hit = intersectSegGround(ea, eb);
+        if (hit && !hits.some((h) => h.distanceToSquared(hit) <= 1e-8)) {
+          hits.push(hit);
+        }
+      }
+      if (hits.length >= 2) {
+        hits.sort((p1, p2) => p1.distanceToSquared(v0) - p2.distanceToSquared(v0));
+        panoSliceGround.push({ near: hits[0], far: hits[hits.length - 1] });
+      } else {
+        panoSliceGround.push(null);
+      }
+    }
+
+    for (let i = 0; i < segments; i++) {
+      faces.push([v0, topPts[i], topPts[i + 1]]);
+      faces.push([v0, botPts[i + 1], botPts[i]]);
+      faces.push([topPts[i], botPts[i], botPts[i + 1], topPts[i + 1]]);
+    }
+    faces.push([v0, botPts[0], topPts[0]]);
+    faces.push([v0, topPts[segments], botPts[segments]]);
+  } else {
+    const tanV = Math.tan(THREE.MathUtils.degToRad(fovV * 0.5));
+    const tanH = Math.tan(THREE.MathUtils.degToRad(fovH * 0.5));
+    const halfH = tanV * depth;
+    const halfW = tanH * depth;
+
+    const v1 = toWorld(-halfW, halfH, -depth);
+    const v2 = toWorld(halfW, halfH, -depth);
+    const v3 = toWorld(halfW, -halfH, -depth);
+    const v4 = toWorld(-halfW, -halfH, -depth);
+
+    faces = [
+      [v0, v1, v2],
+      [v0, v2, v3],
+      [v0, v3, v4],
+      [v0, v4, v1],
+      [v1, v4, v3, v2],
+    ];
+  }
 
   const coneWorldPts = [];
   const clippedEdgeMap = new Map();
@@ -141,37 +204,81 @@ export function computeClippedFrustumData(
     }
   }
 
-  // Deduplica i punti d'intersezione col piano ground e ordina il poligono convesso in XZ
-  const uniqueGroundPts = [];
-  for (const pt of rawGroundPts) {
-    if (!uniqueGroundPts.some((existing) => existing.distanceToSquared(pt) <= 1e-8)) {
-      uniqueGroundPts.push(new THREE.Vector3(pt.x, groundY, pt.z));
-    }
-  }
-
   let groundPolygon = [];
-  if (uniqueGroundPts.length >= 3) {
-    let cx = 0;
-    let cz = 0;
-    for (const p of uniqueGroundPts) {
-      cx += p.x;
-      cz += p.z;
-    }
-    cx /= uniqueGroundPts.length;
-    cz /= uniqueGroundPts.length;
+  const groundWorldPts = [];
+  const groundLineWorldPts = [];
 
-    uniqueGroundPts.sort(
-      (a, b) => Math.atan2(a.z - cz, a.x - cx) - Math.atan2(b.z - cz, b.x - cx)
-    );
-
-    let area2 = 0;
-    for (let i = 0; i < uniqueGroundPts.length; i++) {
-      const p1 = uniqueGroundPts[i];
-      const p2 = uniqueGroundPts[(i + 1) % uniqueGroundPts.length];
-      area2 += p1.x * p2.z - p2.x * p1.z;
+  if (isPanoramic) {
+    // Costruisce l'impronta a terra a mezzaluna/ventaglio per fette convesse senza auto-intersezioni
+    const validSlices = [];
+    for (let i = 0; i < panoSliceGround.length; i++) {
+      if (panoSliceGround[i]) validSlices.push(panoSliceGround[i]);
     }
-    if (Math.abs(area2) * 0.5 > 1e-4) {
-      groundPolygon = uniqueGroundPts;
+    for (let i = 0; i < panoSliceGround.length - 1; i++) {
+      const s0 = panoSliceGround[i];
+      const s1 = panoSliceGround[i + 1];
+      if (!s0 || !s1) continue;
+      groundWorldPts.push(s0.near, s0.far, s1.far);
+      groundWorldPts.push(s0.near, s1.far, s1.near);
+    }
+    if (validSlices.length >= 2) {
+      const outerArc = validSlices.map((s) => s.far);
+      const innerArcRev = validSlices.slice().reverse().map((s) => s.near);
+      const perim = [...outerArc, ...innerArcRev];
+      for (const pt of perim) {
+        if (groundPolygon.length === 0 || groundPolygon[groundPolygon.length - 1].distanceToSquared(pt) > 1e-8) {
+          groundPolygon.push(pt);
+        }
+      }
+      if (groundPolygon.length >= 2 && groundPolygon[0].distanceToSquared(groundPolygon[groundPolygon.length - 1]) <= 1e-8) {
+        groundPolygon.pop();
+      }
+      if (groundPolygon.length >= 3) {
+        for (let i = 0; i < groundPolygon.length; i++) {
+          groundLineWorldPts.push(groundPolygon[i], groundPolygon[(i + 1) % groundPolygon.length]);
+        }
+      } else {
+        groundPolygon = [];
+      }
+    }
+  } else {
+    // Deduplica i punti d'intersezione col piano ground e ordina il poligono convesso in XZ
+    const uniqueGroundPts = [];
+    for (const pt of rawGroundPts) {
+      if (!uniqueGroundPts.some((existing) => existing.distanceToSquared(pt) <= 1e-8)) {
+        uniqueGroundPts.push(new THREE.Vector3(pt.x, groundY, pt.z));
+      }
+    }
+
+    if (uniqueGroundPts.length >= 3) {
+      let cx = 0;
+      let cz = 0;
+      for (const p of uniqueGroundPts) {
+        cx += p.x;
+        cz += p.z;
+      }
+      cx /= uniqueGroundPts.length;
+      cz /= uniqueGroundPts.length;
+
+      uniqueGroundPts.sort(
+        (a, b) => Math.atan2(a.z - cz, a.x - cx) - Math.atan2(b.z - cz, b.x - cx)
+      );
+
+      let area2 = 0;
+      for (let i = 0; i < uniqueGroundPts.length; i++) {
+        const p1 = uniqueGroundPts[i];
+        const p2 = uniqueGroundPts[(i + 1) % uniqueGroundPts.length];
+        area2 += p1.x * p2.z - p2.x * p1.z;
+      }
+      if (Math.abs(area2) * 0.5 > 1e-4) {
+        groundPolygon = uniqueGroundPts;
+        for (let i = 1; i < groundPolygon.length - 1; i++) {
+          groundWorldPts.push(groundPolygon[0], groundPolygon[i], groundPolygon[i + 1]);
+        }
+        for (let i = 0; i < groundPolygon.length; i++) {
+          groundLineWorldPts.push(groundPolygon[i], groundPolygon[(i + 1) % groundPolygon.length]);
+        }
+      }
     }
   }
 
@@ -182,19 +289,6 @@ export function computeClippedFrustumData(
       continue; // Il perimetro a terra viene disegnato da groundLines
     }
     wireWorldPts.push(a, b);
-  }
-
-  const groundWorldPts = [];
-  const groundLineWorldPts = [];
-  if (hasGroundProjection) {
-    for (let i = 1; i < groundPolygon.length - 1; i++) {
-      groundWorldPts.push(groundPolygon[0], groundPolygon[i], groundPolygon[i + 1]);
-    }
-    for (let i = 0; i < groundPolygon.length; i++) {
-      const a = groundPolygon[i];
-      const b = groundPolygon[(i + 1) % groundPolygon.length];
-      groundLineWorldPts.push(a, b);
-    }
   }
 
   const worldMat = new THREE.Matrix4().compose(worldPos, worldQuat, new THREE.Vector3(1, 1, 1));
@@ -272,6 +366,7 @@ export class CameraProjector {
         fovV,
         fovH,
         aspect,
+        opticalModel: manifestData?.optical_model || 'pinhole_radtan',
         distortion: manifestData?.distortion_coeffs || [-0.18, 0.04, 0.0, 0.0, 0.0],
       });
 
@@ -365,6 +460,7 @@ export class CameraProjector {
       fovV,
       fovH,
       aspect,
+      opticalModel: manifestData?.optical_model || 'pinhole_radtan',
       distortion: manifestData?.distortion_coeffs || [-0.18, 0.04, 0, 0, 0],
     });
     group.add(overlay.mesh);
@@ -585,10 +681,35 @@ export class CameraProjector {
     const u = Array.isArray(uvBottomCenter) ? uvBottomCenter[0] : uvBottomCenter.u;
     const v = Array.isArray(uvBottomCenter) ? uvBottomCenter[1] : uvBottomCenter.v;
 
-    const ndcX = u * 2.0 - 1.0;
-    const ndcY = 1.0 - v * 2.0;
+    const basePose = this.baseCameraPoses.get(cameraName);
+    const calibrated = this.calibratedPoses.get(cameraName);
+    const opticalModel = String(basePose?.opticalModel || '').toLowerCase();
+    const fovH = calibrated?.fovH ?? basePose?.fovH ?? 80;
+    const fovV = calibrated?.fovV ?? basePose?.fovV ?? 42;
 
-    this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camNode);
+    if (opticalModel.includes('equirectangular') || opticalModel.includes('panoramic') || fovH >= 150) {
+      camNode.updateMatrixWorld(true);
+      const origin = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      camNode.getWorldPosition(origin);
+      camNode.getWorldQuaternion(quat);
+
+      const theta = THREE.MathUtils.degToRad((u - 0.5) * fovH);
+      const phi = THREE.MathUtils.degToRad((v - 0.5) * fovV);
+      const cosPhi = Math.cos(phi);
+      // Coerente con EquirectangularPanoramicOpticalModel (+X right, +Y up, -Z forward in Three.js)
+      const dirLocal = new THREE.Vector3(
+        cosPhi * Math.sin(theta),
+        -Math.sin(phi),
+        -cosPhi * Math.cos(theta)
+      ).normalize();
+      const dirWorld = dirLocal.applyQuaternion(quat).normalize();
+      this.raycaster.set(origin, dirWorld);
+    } else {
+      const ndcX = u * 2.0 - 1.0;
+      const ndcY = 1.0 - v * 2.0;
+      this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camNode);
+    }
 
     const colliders = this.groundColliders.length > 0 ? this.groundColliders : this.assetLoader.groundColliders;
     const intersects = this.raycaster.intersectObjects(colliders, false);

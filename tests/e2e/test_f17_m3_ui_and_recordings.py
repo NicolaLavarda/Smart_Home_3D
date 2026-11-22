@@ -956,7 +956,7 @@ def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
     res = run_js_scenario({"code": code})
     assert res["ok"] is True, res
     d = res["data"]
-    assert set(d["catalogIds"]) == {"Cam_Carraio", "Cam_Portico"}
+    assert set(d["catalogIds"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
     assert d["porticoEntry"]["entityId"] == "camera.portico"
     assert d["porticoEntry"]["mainStream"] == "portico_main"
     assert d["porticoEntry"]["subStream"] == "portico_sub"
@@ -975,8 +975,8 @@ def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
     assert d["resolvedPorticoExact"] == "camera.portico"
     assert d["resolvedPorticoVariant"] == "camera.portico_scorrevole"
     assert d["resolvedPorticoMissing"] == "camera.portico"
-    assert set(d["hubCamIds"]) == {"Cam_Carraio", "Cam_Portico"}
-    assert set(d["hubAttached"]) == {"carraio_sub", "portico_sub"}
+    assert set(d["hubCamIds"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
+    assert set(d["hubAttached"]) == {"carraio_sub", "portico_sub", "ingresso_sub"}
 
 
 def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
@@ -1041,7 +1041,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
 
       const projectorState = new Map();
       const projectorMock = {{
-        frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}]]),
+        frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}], ['Cam_Ingresso', {{}}]]),
         attachOverlayTexture(cam, tex) {{
           const s = projectorState.get(cam) || {{}};
           s.texture = tex;
@@ -1116,7 +1116,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
         trajectoryRenderer: {{ setLiveMode() {{}}, setEntitiesVisible() {{}}, loadDetections() {{}}, clearHistorical() {{}}, updateAtTime() {{}}, interpolateLive() {{}} }},
         spatialStreamClient: {{ connected: false, onStatusChange: () => () => {{}}, onFrame: () => () => {{}} }},
         cameraController: camCtrl,
-        assetLoader: {{ cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}]]), manifest }},
+        assetLoader: {{ cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]), manifest }},
         deviceModals: {{ open() {{}} }},
       }});
 
@@ -1134,7 +1134,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
 
       const assetLoaderMock = {{
         manifest,
-        cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}]]),
+        cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]),
       }};
 
       const calibUI = new CalibrationAssistantUI({{
@@ -1264,7 +1264,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
     assert 0.3 <= d["replayPlayingOpacity"] <= 0.65
     assert d["replayPlayingBadge"] == "REPLAY"
     assert d["calibActiveAfterTopBar"] == "Cam_Portico"
-    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico"}
+    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
     assert d["hudHiddenDuringCalib"] is True
     assert d["calibAfterSwitchToCarraio"] == "Cam_Carraio"
     assert d["carraioPovActive"] is True
@@ -1275,3 +1275,247 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
     assert "carraio_main" in d["acquiredStreams"]
     assert "portico_main" in d["releasedLive"]
     assert "carraio_main" in d["releasedLive"]
+
+
+def test_f17_ingresso_180_panoramic_frustum_overlay_and_modal():
+    import json
+
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo_root / "public" / "models" / "scene_manifest.json").read_text(encoding="utf-8"))
+    manifest_subset = {
+        "cameras": {
+            k: v
+            for k, v in manifest.get("cameras", {}).items()
+            if v.get("is_real_security_camera")
+        },
+        "ha_entities": {
+            k: v
+            for k, v in manifest.get("ha_entities", {}).items()
+            if k in ("camera.carraio_scorrevole", "camera.portico", "camera.ingresso")
+        },
+    }
+    manifest_json = json.dumps(manifest_subset)
+
+    code = f"""
+      const manifest = {manifest_json};
+      const THREE = await loadModule('three');
+      const {{ CameraCatalog }} = await loadModule('/src/video/CameraCatalog.js');
+      const {{ HAClient }} = await loadModule('/src/ha/HAClient.js');
+      const {{ DeviceModals }} = await loadModule('/src/ha/DeviceModals.js');
+      const {{ deviceRegistry }} = await loadModule('/src/devices/DeviceRegistry.js');
+      const {{ SecurityFabHub }} = await loadModule('/src/ui/SecurityFabHub.js');
+      const {{ computeClippedFrustumData }} = await loadModule('/src/spatial/CameraProjector.js');
+      const {{ CameraFrustumOverlay }} = await loadModule('/src/spatial/calibration/CameraFrustumOverlay.js');
+      const {{ CalibrationAssistantUI }} = await loadModule('/src/spatial/calibration/CalibrationAssistantUI.js');
+
+      const catalog = new CameraCatalog();
+      catalog.syncFromManifest(manifest);
+      const ingCam = catalog.getCameraById('Cam_Ingresso');
+
+      // 1. Verifica frustum 180° sferico (zero NaN/Infinity da tan(90°) e impronta ground ad ovest)
+      const ingManifest = manifest.cameras.Cam_Ingresso;
+      const matRowMajor = ingManifest.gltf_transform.matrix_world_gl;
+      const mat4 = new THREE.Matrix4().set(...matRowMajor);
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      mat4.decompose(pos, quat, scale);
+
+      const frustum = computeClippedFrustumData(pos, quat, 55.0, 180.0, 16.0);
+      const allConeFinite = Array.from(frustum.conePositions).every((v) => Number.isFinite(v));
+      const allWireFinite = Array.from(frustum.wirePositions).every((v) => Number.isFinite(v));
+      const allGroundFinite = Array.from(frustum.groundPositions).every((v) => Number.isFinite(v));
+      const groundCentroidX = frustum.groundPolygonWorld.length > 0
+        ? frustum.groundPolygonWorld.reduce((acc, p) => acc + p.x, 0) / frustum.groundPolygonWorld.length
+        : 0;
+      const groundMinX = frustum.groundPolygonWorld.length > 0
+        ? Math.min(...frustum.groundPolygonWorld.map((p) => p.x))
+        : 0;
+      const groundWestCount = frustum.groundPolygonWorld.filter((p) => Number.isFinite(p.x) && p.x < 0.0).length;
+      const allGroundWest = frustum.groundPolygonWorld.length >= 20 &&
+        groundMinX < -10.0 &&
+        groundCentroidX < -4.0 &&
+        groundWestCount / frustum.groundPolygonWorld.length >= 0.8;
+
+      // 2. Verifica cupola sferica equirettangolare CameraFrustumOverlay (raggio costante = depth, zero NaN)
+      const overlay = new CameraFrustumOverlay('Cam_Ingresso', {{
+        opticalModel: 'equirectangular_180',
+        fovH: 180.0,
+        fovV: 55.0,
+        aspect: 32 / 9,
+        depth: 2.0,
+      }});
+      const ovPos = overlay.geometry.attributes.position;
+      let ovAllFinite = true;
+      let ovMaxRadiusErr = 0;
+      let ovMinX = Infinity;
+      let ovMaxX = -Infinity;
+      for (let i = 0; i < ovPos.count; i++) {{
+        const x = ovPos.getX(i);
+        const y = ovPos.getY(i);
+        const z = ovPos.getZ(i);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {{
+          ovAllFinite = false;
+          break;
+        }}
+        const r = Math.hypot(x, y, z);
+        ovMaxRadiusErr = Math.max(ovMaxRadiusErr, Math.abs(r - 2.0));
+        ovMinX = Math.min(ovMinX, x);
+        ovMaxX = Math.max(ovMaxX, x);
+      }}
+
+      // 3. Modale DeviceModals('camera.ingresso') e risoluzione entity HA
+      const ha = new HAClient();
+      ha.initMockMode();
+      const attachedStreams = [];
+      const mockVideoMgr = {{
+        attachToVideoElement: async (streamName) => {{
+          attachedStreams.push(streamName);
+          return {{ mode: 'webrtc', getStatus: () => ({{ mode: 'webrtc', connected: true }}), onStatusChange: () => () => {{}} }};
+        }},
+        detachFromVideoElement: () => {{}},
+        acquireVideoTexture: async (streamName) => ({{ streamName, texture: {{ isVideoTexture: true, dispose() {{}} }} }}),
+        releaseVideoTexture: () => {{}},
+      }};
+
+      const secCtrl = deviceRegistry.get('security_camera');
+      secCtrl.setServices({{
+        haClient: ha,
+        videoStreamManager: mockVideoMgr,
+        cameraCatalog: catalog,
+        assetLoader: {{ cameras: new Map([['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]), manifest }},
+      }});
+      secCtrl.syncFromManifest(manifest);
+
+      const drawer = ctx.document.createElement('div');
+      ctx.document.body.appendChild(drawer);
+      const modals = new DeviceModals(
+        drawer,
+        ha,
+        {{ flyToPreset: () => {{}}, flyToCameraPOV: () => {{}}, startFollowing: () => {{}} }},
+        {{ cameras: new Map([['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]), manifest }}
+      );
+      modals.open('camera.ingresso');
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      const ingTitle = drawer.querySelector('#modal-title')?.textContent?.trim();
+      const ingSubtitle = drawer.querySelector('#modal-subtitle')?.textContent?.trim();
+      const ingMainBtn = drawer.querySelector('[data-stream="ingresso_main"]')?.textContent?.trim();
+      const ingSubBtn = drawer.querySelector('[data-stream="ingresso_sub"]')?.textContent?.trim();
+      const ingHtml = drawer.innerHTML;
+      modals.close();
+
+      // 4. SecurityFabHub marca il riquadro Cam_Ingresso come is-panoramic (32:9)
+      const hubRoot = ctx.document.createElement('div');
+      ctx.document.body.appendChild(hubRoot);
+      const hub = new SecurityFabHub(hubRoot, {{
+        cameraCatalog: catalog,
+        videoStreamManager: mockVideoMgr,
+        recordingManager: {{
+          registerSlot: () => {{}},
+          setPlaybackRate: () => {{}},
+          setPlaying: () => {{}},
+          seekAllToTimestamp: async () => {{}},
+          queryAllSegments: async () => new Map(),
+          detachAll: () => {{}},
+          getStorageSummary: async () => ({{ configured: false }}),
+        }},
+        trajectoryRenderer: {{ setLiveMode() {{}}, setEntitiesVisible() {{}}, loadDetections() {{}}, clearHistorical() {{}}, updateAtTime() {{}}, interpolateLive() {{}} }},
+        spatialStreamClient: {{ connected: false, onStatusChange: () => () => {{}}, onFrame: () => () => {{}} }},
+        cameraController: {{ flyToPreset: () => {{}}, flyToCameraPOV: () => {{}} }},
+        assetLoader: {{ cameras: new Map(), manifest }},
+        deviceModals: {{ open: () => {{}} }},
+      }});
+      hubRoot.querySelector('#btn-security-fab').click();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const ingTile = hubRoot.querySelector('.m3-cam-tile[data-camera-id="Cam_Ingresso"]');
+      const ingTileIsPanoramic = Boolean(ingTile?.classList.contains('is-panoramic'));
+      hub.dispose();
+
+      // 5. CalibrationAssistantUI su Cam_Ingresso disabilita PnP pinhole ma mantiene i 3 switcher
+      const haAdmin = {{ isAdmin: true, isMockMode: false, authStatus: 'authenticated', currentUser: {{ name: 'Admin' }}, onStatusChange: () => () => {{}}, onAuthChange: () => () => {{}} }};
+      const fakeCanvas = ctx.document.createElement('canvas');
+      const calibUI = new CalibrationAssistantUI({{
+        sceneManager: {{ renderer: {{ domElement: fakeCanvas }}, camera: {{ updateMatrixWorld() {{}} }}, scene: {{ children: [] }}, addUpdateCallback() {{}}, removeUpdateCallback() {{}} }},
+        cameraController: {{ activePovCameraName: null, flyToCameraPOV(_c, _d, cb) {{ if (cb) cb(); }}, exitCameraPOV() {{}}, setPovExitLocked() {{}}, setInstantCameraPose() {{}} }},
+        cameraProjector: {{
+          frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}], ['Cam_Ingresso', {{}}]]),
+          attachOverlayTexture() {{}},
+          detachOverlayTexture() {{}},
+          setOverlayPOVMode() {{}},
+          setOverlayOpacity() {{}},
+          applyCameraCalibration() {{ return {{ position: pos, quaternion: quat, matrixWorldElements: matRowMajor }}; }},
+          getCalibratedCameraPose() {{ return null; }},
+        }},
+        videoStreamManager: mockVideoMgr,
+        spatialStreamClient: null,
+        assetLoader: {{ manifest, cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]) }},
+        haClient: haAdmin,
+        cameraCatalog: catalog,
+      }});
+      await calibUI.open('Cam_Ingresso');
+      const pnpDisabledForPano = Boolean(ctx.document.querySelector('#calib-pnp-toggle')?.disabled);
+      const calibPills = Array.from(ctx.document.querySelectorAll('.calib-cam-pill')).map((b) => b.dataset.calibCam);
+      calibUI.close();
+
+      return {{
+        ingIsPanoramic: ingCam?.isPanoramic180,
+        ingFovH: ingCam?.fovH,
+        ingFovV: ingCam?.fovV,
+        ingAspect: ingCam?.aspectRatio,
+        ingIp: ingCam?.cameraIp,
+        ingEntity: ingCam?.entityId,
+        ingMainStream: ingCam?.mainStream,
+        ingSubStream: ingCam?.subStream,
+        coneLen: frustum.conePositions.length,
+        groundLen: frustum.groundPositions.length,
+        allConeFinite,
+        allWireFinite,
+        allGroundFinite,
+        allGroundWest,
+        ovAllFinite,
+        ovMaxRadiusErr,
+        ovSpanX: ovMaxX - ovMinX,
+        ingTitle,
+        ingSubtitle,
+        ingMainBtn,
+        ingSubBtn,
+        ingHasIp: ingHtml.includes('192.168.86.53'),
+        ingHasOptics: ingHtml.includes('180°×55° Panoramica'),
+        attachedStreams,
+        ingTileIsPanoramic,
+        pnpDisabledForPano,
+        calibPills,
+        resolvedIngresso: ha.resolveCameraEntityId('camera.ingresso'),
+      }};
+    """
+    res = run_js_scenario({"code": code})
+    assert res["ok"] is True, res
+    d = res["data"]
+    assert d["ingIsPanoramic"] is True
+    assert d["ingFovH"] == 180
+    assert d["ingFovV"] == 55
+    assert abs(d["ingAspect"] - (32.0 / 9.0)) < 0.01
+    assert d["ingIp"] == "192.168.86.53"
+    assert d["ingEntity"] == "camera.ingresso"
+    assert d["ingMainStream"] == "ingresso_main"
+    assert d["ingSubStream"] == "ingresso_sub"
+    assert d["coneLen"] > 100 and d["groundLen"] > 100
+    assert d["allConeFinite"] is True
+    assert d["allWireFinite"] is True
+    assert d["allGroundFinite"] is True
+    assert d["allGroundWest"] is True
+    assert d["ovAllFinite"] is True
+    assert d["ovMaxRadiusErr"] < 1e-4
+    assert d["ovSpanX"] > 3.5  # cupola 180° raggio 2m -> larghezza ~3.55m..4.0m
+    assert "Ingresso" in d["ingTitle"]
+    assert "." not in d["ingSubtitle"]
+    assert d["ingMainBtn"] == "Main 16MP 180°"
+    assert d["ingSubBtn"] == "Sub 1536×576"
+    assert d["ingHasIp"] is True
+    assert d["ingHasOptics"] is True
+    assert d["attachedStreams"][0] == "ingresso_main"
+    assert set(d["attachedStreams"][1:]) == {"carraio_sub", "portico_sub", "ingresso_sub"}
+    assert d["ingTileIsPanoramic"] is True
+    assert d["pnpDisabledForPano"] is True
+    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
+    assert d["resolvedIngresso"] == "camera.ingresso"

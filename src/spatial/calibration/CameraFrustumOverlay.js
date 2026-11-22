@@ -14,6 +14,7 @@ export class CameraFrustumOverlay {
     this.fovV = options.fovV || 42.0;
     this.fovH = options.fovH || 80.0;
     this.aspect = options.aspect || 16 / 9;
+    this.opticalModel = String(options.opticalModel || 'pinhole_radtan');
     this.depth = options.depth || 2.0;
     this.opacity = options.opacity ?? 0.5;
     this.isPOVMode = false;
@@ -81,10 +82,16 @@ export class CameraFrustumOverlay {
     this.updateGeometry();
   }
 
-  updateOptics({ fovV, fovH, aspect, distortion }) {
+  isPanoramic() {
+    const opt = this.opticalModel.toLowerCase();
+    return opt.includes('equirectangular') || opt.includes('panoramic') || this.fovH >= 150;
+  }
+
+  updateOptics({ fovV, fovH, aspect, opticalModel, distortion }) {
     if (fovV !== undefined) this.fovV = Number(fovV);
     if (fovH !== undefined) this.fovH = Number(fovH);
     if (aspect !== undefined) this.aspect = Number(aspect);
+    if (opticalModel !== undefined) this.opticalModel = String(opticalModel);
     if (Array.isArray(distortion)) {
       this.distortion = distortion.map((v) => Number(v) || 0);
     }
@@ -92,13 +99,40 @@ export class CameraFrustumOverlay {
   }
 
   updateGeometry() {
+    const posAttr = this.geometry.attributes.position;
+    const uvAttr = this.geometry.attributes.uv;
+
+    if (this.isPanoramic()) {
+      // Cupola sferica equirettangolare 180° (Reolink Duo 3 PoE): mappa ogni pixel (u, v) sul raggio reale (theta, phi)
+      const clampedFovH = THREE.MathUtils.clamp(Number(this.fovH) || 180.0, 150.0, 355.0);
+      const clampedFovV = THREE.MathUtils.clamp(Number(this.fovV) || 55.0, 10.0, 170.0);
+      const halfH = THREE.MathUtils.degToRad(clampedFovH * 0.5);
+      const halfV = THREE.MathUtils.degToRad(clampedFovV * 0.5);
+
+      for (let i = 0; i < posAttr.count; i++) {
+        const u0 = this.baseUVs[i * 2];
+        const v0 = this.baseUVs[i * 2 + 1];
+        const theta = (u0 - 0.5) * 2.0 * halfH;
+        const phi = (v0 - 0.5) * 2.0 * halfV;
+        const cosPhi = Math.cos(phi);
+        const px = this.depth * cosPhi * Math.sin(theta);
+        const py = this.depth * Math.sin(phi);
+        const pz = -this.depth * cosPhi * Math.cos(theta);
+        posAttr.setXYZ(i, px, py, pz);
+        uvAttr.setXY(i, u0, v0);
+      }
+
+      posAttr.needsUpdate = true;
+      uvAttr.needsUpdate = true;
+      this.geometry.computeBoundingSphere();
+      return;
+    }
+
     const tanV = Math.tan(THREE.MathUtils.degToRad(this.fovV * 0.5));
     const tanH = this.fovH ? Math.tan(THREE.MathUtils.degToRad(this.fovH * 0.5)) : tanV * this.aspect;
     const h = 2.0 * tanV * this.depth;
     const w = 2.0 * tanH * this.depth;
 
-    const posAttr = this.geometry.attributes.position;
-    const uvAttr = this.geometry.attributes.uv;
     const k1 = this.distortion[0] || 0;
     const k2 = this.distortion[1] || 0;
 
