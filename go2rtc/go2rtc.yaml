@@ -31,4 +31,10 @@ streams:
     - "rtsp://${REOLINK_INGRESSO_USER:admin}:${REOLINK_INGRESSO_PASS:}@${REOLINK_INGRESSO_IP:192.168.86.53}:554/Preview_01_sub"
   ingresso:
     - "rtsp://127.0.0.1:8554/ingresso_main"
+  stradina_main:
+    - "rtsp://${REOLINK_STRADINA_USER:admin}:${REOLINK_STRADINA_PASS:}@${REOLINK_STRADINA_IP:192.168.86.55}:554/Preview_01_main"
+  stradina_sub:
+    - "rtsp://${REOLINK_STRADINA_USER:admin}:${REOLINK_STRADINA_PASS:}@${REOLINK_STRADINA_IP:192.168.86.55}:554/Preview_01_sub"
+  stradina:
+    - "rtsp://127.0.0.1:8554/stradina_main"
 

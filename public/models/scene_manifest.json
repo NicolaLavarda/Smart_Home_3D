@@ -409,6 +409,71 @@
         8.22
       ]
     },
+    "camera.stradina": {
+      "entity_id": "camera.stradina",
+      "domain": "camera",
+      "name": "Stradina",
+      "action": "modal",
+      "ui_type": "camera",
+      "badge_style": "",
+      "objects": [
+        {
+          "object_name": "Cam_Stradina",
+          "type": "CAMERA",
+          "centroid": [
+            13.41,
+            0.12,
+            2.77
+          ],
+          "dimensions": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Security_Cam_Stradina_Body",
+          "type": "MESH",
+          "centroid": [
+            13.416,
+            0.0859,
+            2.79
+          ],
+          "dimensions": [
+            0.209,
+            0.132,
+            0.117
+          ],
+          "badge_style": ""
+        },
+        {
+          "object_name": "Security_Cam_Stradina_Mount",
+          "type": "MESH",
+          "centroid": [
+            13.4202,
+            0.0314,
+            2.814
+          ],
+          "dimensions": [
+            0.084,
+            0.067,
+            0.084
+          ],
+          "badge_style": ""
+        }
+      ],
+      "centroid_blender": [
+        13.41,
+        0.12,
+        2.77
+      ],
+      "centroid_gltf": [
+        13.41,
+        2.77,
+        -0.12
+      ]
+    },
     "vacuum.deebot": {
       "entity_id": "vacuum.deebot",
       "domain": "vacuum",
@@ -4135,6 +4200,115 @@
           1.0
         ]
       }
+    },
+    "Cam_Stradina": {
+      "name": "Cam_Stradina",
+      "ha_camera_entity": "camera.stradina",
+      "ha_label": "Stradina (Reolink Duo 3 PoE)",
+      "coverage_zone": "zona nord della casa",
+      "is_real_security_camera": true,
+      "optical_model": "equirectangular_180",
+      "distortion_coeffs": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "stream_id": "stradina_main",
+      "sub_stream_id": "stradina_sub",
+      "camera_ip": "192.168.86.55",
+      "lens_mm": 2.8,
+      "sensor_width_mm": 16.0,
+      "sensor_height_mm": 2.9152,
+      "fov_v_deg": 55.0,
+      "fov_h_deg": 180.0,
+      "aspect_ratio": 3.5556,
+      "clip_near": 0.1,
+      "clip_far": 250.0,
+      "blender_transform": {
+        "position": [
+          13.41,
+          0.12,
+          2.77
+        ],
+        "quaternion": [
+          0.4981,
+          0.04358,
+          0.07548,
+          0.86273
+        ],
+        "rotation_euler_deg": [
+          60.0,
+          0.0,
+          10.0
+        ],
+        "matrix_world": [
+          0.984808,
+          -0.086824,
+          0.150384,
+          13.41,
+          0.173648,
+          0.492404,
+          -0.852869,
+          0.12,
+          -0.0,
+          0.866026,
+          0.5,
+          2.77,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "gltf_transform": {
+        "position": [
+          13.41,
+          2.77,
+          -0.12
+        ],
+        "matrix_world_gl": [
+          0.984808,
+          -0.086824,
+          0.150384,
+          13.41,
+          -0.0,
+          0.866026,
+          0.5,
+          2.77,
+          -0.173648,
+          -0.492404,
+          0.852869,
+          -0.12,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "extrinsic_cv_to_world": [
+          0.984808,
+          0.086824,
+          -0.150384,
+          13.41,
+          -0.0,
+          -0.866026,
+          -0.5,
+          2.77,
+          -0.173648,
+          0.492404,
+          -0.852869,
+          -0.12,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "camera_model": "Reolink Duo 3 PoE",
+      "main_stream_label": "Main 16MP 180°",
+      "sub_stream_label": "Sub 1536×576",
+      "is_panoramic_180": true
     },
     "Cam_User_Feedback_View": {
       "name": "Cam_User_Feedback_View",

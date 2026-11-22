@@ -685,6 +685,167 @@ def test_multicam_ingresso_180_equirectangular_raycast_and_3cam_fusion() -> None
     print("[PASS] Cam_Ingresso 180-deg equirectangular SSoT optics, GLB raycast, 3-cam OpenVINO & overlap fusion")
 
 
+def test_multicam_stradina_180_equirectangular_4cam_openvino_and_overlap() -> None:
+    from spatial_server.main import build_pipeline_service
+
+    manifest_path = REPO_ROOT / "public" / "models" / "scene_manifest.json"
+    glb_path = REPO_ROOT / "public" / "models" / "house_optimized.glb"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert "Cam_Stradina" in manifest["cameras"], "Cam_Stradina missing from scene_manifest.json"
+    str_entry = manifest["cameras"]["Cam_Stradina"]
+    assert str_entry["is_real_security_camera"] is True
+    assert str_entry["ha_camera_entity"] == "camera.stradina"
+    assert str_entry["stream_id"] == "stradina_main"
+    assert str_entry["sub_stream_id"] == "stradina_sub"
+    assert str_entry["camera_ip"] == "192.168.86.55"
+    assert str_entry["optical_model"] == "equirectangular_180"
+    assert str_entry["is_panoramic_180"] is True
+    assert math.isclose(str_entry["fov_h_deg"], 180.0, abs_tol=0.1)
+    assert math.isclose(str_entry["fov_v_deg"], 55.0, abs_tol=0.1)
+    assert math.isclose(str_entry["aspect_ratio"], 32.0 / 9.0, abs_tol=0.01)
+
+    # 1. Optical model factory builds EquirectangularPanoramicOpticalModel at glTF (13.41, 2.77, -0.12)
+    #    looking North (-Z glTF) rotated 10 deg West (-X) and pitched 30 deg down (-Y)
+    str_model = create_optical_model_from_manifest("Cam_Stradina", str_entry)
+    assert isinstance(str_model, EquirectangularPanoramicOpticalModel)
+    center_ray = str_model.pixel_to_world_ray(0.5, 0.5)
+    assert abs(center_ray.origin[0] - 13.41) < 1e-3
+    assert abs(center_ray.origin[1] - 2.77) < 1e-3
+    assert abs(center_ray.origin[2] - (-0.12)) < 1e-3
+    exp_dx = -math.cos(math.radians(30.0)) * math.sin(math.radians(10.0))
+    exp_dy = -math.sin(math.radians(30.0))
+    exp_dz = -math.cos(math.radians(30.0)) * math.cos(math.radians(10.0))
+    assert math.isclose(center_ray.direction[0], exp_dx, abs_tol=1e-3)
+    assert math.isclose(center_ray.direction[1], exp_dy, abs_tol=1e-3)
+    assert math.isclose(center_ray.direction[2], exp_dz, abs_tol=1e-3)
+
+    # Wide 180-deg span: left ray points West (-X), right ray points East (+X)
+    ray_left = str_model.pixel_to_world_ray(0.15, 0.65)
+    ray_right = str_model.pixel_to_world_ray(0.85, 0.65)
+    assert ray_left.direction[0] < -0.5 and ray_right.direction[0] > 0.5
+
+    for u, v in [(0.5, 0.5), (0.15, 0.65), (0.85, 0.65)]:
+        r = str_model.pixel_to_world_ray(u, v)
+        p_test = (
+            r.origin[0] + 6.0 * r.direction[0],
+            r.origin[1] + 6.0 * r.direction[1],
+            r.origin[2] + 6.0 * r.direction[2],
+        )
+        uv_back = str_model.world_point_to_pixel(p_test)
+        assert uv_back is not None
+        assert abs(uv_back[0] - u) < 1e-3 and abs(uv_back[1] - v) < 1e-3
+
+    # 2. Ground raycast hits northern lane (Z_gltf < -3.5 via infinite ground plane)
+    #    and west-along-wall ray (u=0.08, v=0.85) hits real GLB Site_Foundation_Earth collider
+    raycaster = TrimeshGroundRaycaster(glb_path, manifest_path)
+    hit_center = raycaster.intersect_ground_detailed(center_ray)
+    assert hit_center is not None
+    assert 11.0 <= hit_center.point[0] <= 14.0 and abs(hit_center.point[1]) < 0.25 and hit_center.point[2] < -3.5
+
+    along_wall_ray = str_model.pixel_to_world_ray(0.08, 0.85)
+    hit_near = raycaster.intersect_ground_detailed(along_wall_ray)
+    assert hit_near is not None
+    assert not hit_near.used_fallback_plane, "West-along-wall ray from Cam_Stradina should hit GLB ground collider"
+
+    # 3. 4-camera OpenVINO shared-model target resolution, FPS budget split & MQTT aliasing
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        cfg = SpatialServerConfig(
+            host="127.0.0.1",
+            port=8765,
+            manifest_path=manifest_path,
+            glb_path=glb_path,
+            sqlite_db_path=tmp_dir / "multicam4_test.db",
+            calibration_override_path=tmp_dir / "calibs.json",
+            data_dir=tmp_dir,
+            models_dir=tmp_dir,
+            default_ingestion_mode="synthetic",
+            go2rtc_rtsp_url="rtsp://127.0.0.1:8554/carraio_sub",
+            mqtt_host="127.0.0.1",
+            mqtt_port=1883,
+            mqtt_user="",
+            mqtt_password="",
+            mqtt_topic_prefix="frigate/events",
+            openvino_device="CPU",
+            openvino_model_path="",
+            db_retention_days=7,
+            face_webhook_url="",
+            openvino_target_fps=7.0,
+            auth_required=False,
+        )
+        svc = build_pipeline_service(cfg)
+        try:
+            expected_cams = {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
+            assert expected_cams.issubset(set(svc.optical_models.keys()))
+            assert isinstance(svc.optical_models["Cam_Stradina"], EquirectangularPanoramicOpticalModel)
+
+            targets = dict(svc._resolve_openvino_camera_targets())
+            assert targets["Cam_Carraio"].endswith("/carraio_sub")
+            assert targets["Cam_Portico"].endswith("/portico_sub")
+            assert targets["Cam_Ingresso"].endswith("/ingresso_sub")
+            assert targets["Cam_Stradina"].endswith("/stradina_sub")
+
+            ov_sources = svc._build_openvino_sources()
+            assert len(ov_sources) >= 4
+            by_cam = {s.camera_id: s for s in ov_sources}
+            assert expected_cams.issubset(by_cam.keys())
+            for cam_id in expected_cams:
+                assert by_cam[cam_id]._infer_lock is by_cam["Cam_Carraio"]._infer_lock
+            # 7.0 FPS split across 4 cameras -> 1.75 FPS each (interval ~0.571s)
+            assert by_cam["Cam_Stradina"].frame_interval_s >= (4.0 / 7.0) - 0.02
+            assert "openvino:Cam_Stradina" in by_cam["Cam_Stradina"].status_details()
+
+            mqtt_src = svc._build_mqtt_source()
+            evt_str = mqtt_src._parse_payload(
+                json.dumps({
+                    "type": "new",
+                    "after": {
+                        "label": "person",
+                        "camera": "stradina",
+                        "box": [0.45, 0.4, 0.55, 0.78],
+                        "score": 0.92,
+                    },
+                })
+            )
+            assert evt_str is not None and evt_str.camera_id == "Cam_Stradina"
+        finally:
+            svc.repository.close()
+
+    # 4. Intelligent multi-camera overlap fusion (Cam_Ingresso + Cam_Stradina near NW corner)
+    tracker = Kalman3DMultiTracker()
+    t1 = tracker.update(
+        [
+            TrackObservation3D(
+                camera_id="Cam_Ingresso",
+                timestamp=4000.0,
+                class_label="person",
+                position=(-1.5, 0.0, -1.2),
+                confidence=0.88,
+                range_m=7.5,
+            )
+        ],
+        now_ts=4000.0,
+    )
+    assert len(t1) == 1
+    t2 = tracker.update(
+        [
+            TrackObservation3D(
+                camera_id="Cam_Stradina",
+                timestamp=4000.06,
+                class_label="person",
+                position=(-1.3, 0.0, -1.3),
+                confidence=0.86,
+                range_m=14.9,
+            )
+        ],
+        now_ts=4000.06,
+    )
+    assert len(t2) == 1, f"Cam_Ingresso + Cam_Stradina NW overlap must fuse into 1 track_id, got {len(t2)}"
+    assert set(t2[0].state.camera_sources) == {"Cam_Ingresso", "Cam_Stradina"}
+    print("[PASS] Cam_Stradina 180-deg equirectangular SSoT optics, 4-cam OpenVINO & overlap fusion")
+
+
 if __name__ == "__main__":
     test_optics_pinhole_and_panoramic()
     test_openvino_letterbox_and_ovdict_parsing()
@@ -695,5 +856,6 @@ if __name__ == "__main__":
     test_fastapi_rest_and_websocket()
     test_multicam_portico_raycast_openvino_and_overlap_fusion()
     test_multicam_ingresso_180_equirectangular_raycast_and_3cam_fusion()
+    test_multicam_stradina_180_equirectangular_4cam_openvino_and_overlap()
     print("\nALL SPATIAL SERVER PIPELINE CHECKS PASSED!")
 

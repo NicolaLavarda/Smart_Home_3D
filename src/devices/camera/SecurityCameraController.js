@@ -25,6 +25,10 @@ export class SecurityCameraController extends BaseDeviceController {
         'camera.ingresso_scorrevole',
         'camera.ingresso_trasparente',
         'camera.ingresso_fluente',
+        'camera.stradina',
+        'camera.stradina_scorrevole',
+        'camera.stradina_trasparente',
+        'camera.stradina_fluente',
         ...(options.associatedEntityIds || []),
       ],
       haClient: options.haClient,
@@ -135,6 +139,7 @@ export class SecurityCameraController extends BaseDeviceController {
 
     if (targetLower.includes('portico')) return 'Cam_Portico';
     if (targetLower.includes('ingresso')) return 'Cam_Ingresso';
+    if (targetLower.includes('stradina')) return 'Cam_Stradina';
     return 'Cam_Carraio';
   }
 
@@ -148,6 +153,7 @@ export class SecurityCameraController extends BaseDeviceController {
       catalogCam?.name ||
       (camName === 'Cam_Portico' ? 'Portico (Reolink RLC-810A)' : null) ||
       (camName === 'Cam_Ingresso' ? 'Ingresso (Reolink Duo 3 PoE)' : null) ||
+      (camName === 'Cam_Stradina' ? 'Stradina (Reolink Duo 3 PoE)' : null) ||
       entity?.attributes?.friendly_name ||
       this.name;
 

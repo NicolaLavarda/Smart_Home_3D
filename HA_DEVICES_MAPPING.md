@@ -43,6 +43,10 @@
   - **Oggetto 3D / Ruolo:** Cam_Ingresso, Security_Cam_Ingresso_Body, Security_Cam_Ingresso_Mount (Telecamera panoramica 180° Reolink Duo 3 PoE su facciata ovest a X=-0.10m, Y=-5.936m, Z=3.50m, inclinata 25° verso il basso, FOV 180°×55°)
   - **Azione:** `GIA_MAPPATO`
 
+* **`camera.stradina`** — *Stradina* (Stato live: `idle`)
+  - **Oggetto 3D / Ruolo:** Cam_Stradina, Security_Cam_Stradina_Body, Security_Cam_Stradina_Mount (Telecamera panoramica 180° Reolink Duo 3 PoE su facciata nord a X=13.41m, Y=+0.12m, Z=2.77m, ruotata 10° a ovest e inclinata 30° verso il basso, FOV 180°×55°)
+  - **Azione:** `GIA_MAPPATO`
+
 * **`vacuum.deebot`** — *Ecovacs Deebot* (Stato live: `docked`)
   - **Oggetto 3D / Ruolo:** Ecovacs_Deebot_Body, Ecovacs_Deebot_Dock_Base, Ecovacs_Deebot_Dock_Tower, Ecovacs_Deebot_Lidar (Robot aspirapolvere e stazione su parete Est sala da pranzo vicino al caminetto)
   - **Azione:** `GIA_MAPPATO`
@@ -773,6 +777,13 @@
 - **Azione:** `GIA_MAPPATO` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
 - **Posizione 3D:** Cam_Ingresso (Reolink Duo 3 PoE panoramica 180° montata sulla facciata ovest a Z=3.50m, 593.6cm a sud dallo spigolo nord-ovest della casa, sporgenza ~10cm staffa; guarda verso ovest perpendicolarmente al muro, inclinata 25° verso il basso)
 - **Funzionamento / Note:** Streaming go2rtc (`ingresso_main` / `ingresso_sub` H.264), ottica `equirectangular_180` (180°×55°, 32:9), frustum panoramico 3D & overlay sferico 180° in POV, tracking AI multi-camera OpenVINO con fusione 3D Kalman in sovrapposizione con `Cam_Carraio`.
+
+### `camera.stradina` `[COLLEGATO]`
+- **Nome HA:** Stradina
+- **Stato Live:** `idle`
+- **Azione:** `GIA_MAPPATO` <!-- Scrivi "mappa" per includerlo nel 3D, oppure lascia "ignora" -->
+- **Posizione 3D:** Cam_Stradina (Reolink Duo 3 PoE panoramica 180° montata sulla facciata nord a Z=2.77m, 1341cm a est dallo spigolo nord-ovest della casa, sporgenza 12cm staffa; guarda verso nord 10° a ovest rispetto alla perpendicolare al muro, inclinata 30° verso il basso)
+- **Funzionamento / Note:** Streaming go2rtc (`stradina_main` / `stradina_sub` H.264), ottica `equirectangular_180` (180°×55°, 32:9), frustum panoramico 3D & overlay sferico 180° in POV, tracking AI multi-camera OpenVINO condiviso su 4 camere con fusione 3D Kalman.
 
 ---
 

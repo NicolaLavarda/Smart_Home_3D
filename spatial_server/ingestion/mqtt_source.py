@@ -61,6 +61,13 @@ class MqttFrigateDetectionSource(IDetectionSource):
             "ingresso_main": "Cam_Ingresso",
             "ingresso_sub": "Cam_Ingresso",
             "Cam_Ingresso": "Cam_Ingresso",
+            "stradina": "Cam_Stradina",
+            "camera.stradina": "Cam_Stradina",
+            "camera.stradina_scorrevole": "Cam_Stradina",
+            "stradina_scorrevole": "Cam_Stradina",
+            "stradina_main": "Cam_Stradina",
+            "stradina_sub": "Cam_Stradina",
+            "Cam_Stradina": "Cam_Stradina",
         }
         self._alias_map_lower = {k.lower(): v for k, v in self.camera_alias_map.items()}
         self._running = False

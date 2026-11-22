@@ -956,7 +956,7 @@ def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
     res = run_js_scenario({"code": code})
     assert res["ok"] is True, res
     d = res["data"]
-    assert set(d["catalogIds"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
+    assert set(d["catalogIds"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
     assert d["porticoEntry"]["entityId"] == "camera.portico"
     assert d["porticoEntry"]["mainStream"] == "portico_main"
     assert d["porticoEntry"]["subStream"] == "portico_sub"
@@ -975,8 +975,8 @@ def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
     assert d["resolvedPorticoExact"] == "camera.portico"
     assert d["resolvedPorticoVariant"] == "camera.portico_scorrevole"
     assert d["resolvedPorticoMissing"] == "camera.portico"
-    assert set(d["hubCamIds"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
-    assert set(d["hubAttached"]) == {"carraio_sub", "portico_sub", "ingresso_sub"}
+    assert set(d["hubCamIds"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
+    assert set(d["hubAttached"]) == {"carraio_sub", "portico_sub", "ingresso_sub", "stradina_sub"}
 
 
 def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
@@ -1041,7 +1041,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
 
       const projectorState = new Map();
       const projectorMock = {{
-        frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}], ['Cam_Ingresso', {{}}]]),
+        frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}], ['Cam_Ingresso', {{}}], ['Cam_Stradina', {{}}]]),
         attachOverlayTexture(cam, tex) {{
           const s = projectorState.get(cam) || {{}};
           s.texture = tex;
@@ -1116,7 +1116,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
         trajectoryRenderer: {{ setLiveMode() {{}}, setEntitiesVisible() {{}}, loadDetections() {{}}, clearHistorical() {{}}, updateAtTime() {{}}, interpolateLive() {{}} }},
         spatialStreamClient: {{ connected: false, onStatusChange: () => () => {{}}, onFrame: () => () => {{}} }},
         cameraController: camCtrl,
-        assetLoader: {{ cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]), manifest }},
+        assetLoader: {{ cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}], ['Cam_Stradina', {{ name: 'Cam_Stradina' }}]]), manifest }},
         deviceModals: {{ open() {{}} }},
       }});
 
@@ -1134,7 +1134,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
 
       const assetLoaderMock = {{
         manifest,
-        cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]),
+        cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}], ['Cam_Stradina', {{ name: 'Cam_Stradina' }}]]),
       }};
 
       const calibUI = new CalibrationAssistantUI({{
@@ -1264,7 +1264,7 @@ def test_f17_pov_video_overlay_live_replay_exit_and_multicam_calibration():
     assert 0.3 <= d["replayPlayingOpacity"] <= 0.65
     assert d["replayPlayingBadge"] == "REPLAY"
     assert d["calibActiveAfterTopBar"] == "Cam_Portico"
-    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
+    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
     assert d["hudHiddenDuringCalib"] is True
     assert d["calibAfterSwitchToCarraio"] == "Cam_Carraio"
     assert d["carraioPovActive"] is True
@@ -1438,7 +1438,7 @@ def test_f17_ingresso_180_panoramic_frustum_overlay_and_modal():
         sceneManager: {{ renderer: {{ domElement: fakeCanvas }}, camera: {{ updateMatrixWorld() {{}} }}, scene: {{ children: [] }}, addUpdateCallback() {{}}, removeUpdateCallback() {{}} }},
         cameraController: {{ activePovCameraName: null, flyToCameraPOV(_c, _d, cb) {{ if (cb) cb(); }}, exitCameraPOV() {{}}, setPovExitLocked() {{}}, setInstantCameraPose() {{}} }},
         cameraProjector: {{
-          frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}], ['Cam_Ingresso', {{}}]]),
+          frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}], ['Cam_Ingresso', {{}}], ['Cam_Stradina', {{}}]]),
           attachOverlayTexture() {{}},
           detachOverlayTexture() {{}},
           setOverlayPOVMode() {{}},
@@ -1448,7 +1448,7 @@ def test_f17_ingresso_180_panoramic_frustum_overlay_and_modal():
         }},
         videoStreamManager: mockVideoMgr,
         spatialStreamClient: null,
-        assetLoader: {{ manifest, cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}]]) }},
+        assetLoader: {{ manifest, cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}], ['Cam_Stradina', {{ name: 'Cam_Stradina' }}]]) }},
         haClient: haAdmin,
         cameraCatalog: catalog,
       }});
@@ -1514,8 +1514,245 @@ def test_f17_ingresso_180_panoramic_frustum_overlay_and_modal():
     assert d["ingHasIp"] is True
     assert d["ingHasOptics"] is True
     assert d["attachedStreams"][0] == "ingresso_main"
-    assert set(d["attachedStreams"][1:]) == {"carraio_sub", "portico_sub", "ingresso_sub"}
+    assert set(d["attachedStreams"][1:]) == {"carraio_sub", "portico_sub", "ingresso_sub", "stradina_sub"}
     assert d["ingTileIsPanoramic"] is True
     assert d["pnpDisabledForPano"] is True
-    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
+    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
     assert d["resolvedIngresso"] == "camera.ingresso"
+
+
+def test_f17_stradina_180_panoramic_frustum_overlay_and_4cam_ui():
+    import json
+
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo_root / "public" / "models" / "scene_manifest.json").read_text(encoding="utf-8"))
+    manifest_subset = {
+        "cameras": {
+            k: v
+            for k, v in manifest.get("cameras", {}).items()
+            if v.get("is_real_security_camera")
+        },
+        "ha_entities": {
+            k: v
+            for k, v in manifest.get("ha_entities", {}).items()
+            if k in ("camera.carraio_scorrevole", "camera.portico", "camera.ingresso", "camera.stradina")
+        },
+    }
+    manifest_json = json.dumps(manifest_subset)
+
+    code = f"""
+      const manifest = {manifest_json};
+      const THREE = await loadModule('three');
+      const {{ CameraCatalog }} = await loadModule('/src/video/CameraCatalog.js');
+      const {{ HAClient }} = await loadModule('/src/ha/HAClient.js');
+      const {{ DeviceModals }} = await loadModule('/src/ha/DeviceModals.js');
+      const {{ deviceRegistry }} = await loadModule('/src/devices/DeviceRegistry.js');
+      const {{ SecurityFabHub }} = await loadModule('/src/ui/SecurityFabHub.js');
+      const {{ computeClippedFrustumData }} = await loadModule('/src/spatial/CameraProjector.js');
+      const {{ CameraFrustumOverlay }} = await loadModule('/src/spatial/calibration/CameraFrustumOverlay.js');
+      const {{ CalibrationAssistantUI }} = await loadModule('/src/spatial/calibration/CalibrationAssistantUI.js');
+
+      const catalog = new CameraCatalog();
+      catalog.syncFromManifest(manifest);
+      const strCam = catalog.getCameraById('Cam_Stradina');
+
+      // 1. Verifica frustum 180° sferico verso Nord (-Z glTF) ruotato 10° Ovest e inclinato 30° giù
+      const strManifest = manifest.cameras.Cam_Stradina;
+      const matRowMajor = strManifest.gltf_transform.matrix_world_gl;
+      const mat4 = new THREE.Matrix4().set(...matRowMajor);
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      mat4.decompose(pos, quat, scale);
+
+      const frustum = computeClippedFrustumData(pos, quat, 55.0, 180.0, 16.0);
+      const allConeFinite = Array.from(frustum.conePositions).every((v) => Number.isFinite(v));
+      const allWireFinite = Array.from(frustum.wirePositions).every((v) => Number.isFinite(v));
+      const allGroundFinite = Array.from(frustum.groundPositions).every((v) => Number.isFinite(v));
+      const groundCentroidZ = frustum.groundPolygonWorld.length > 0
+        ? frustum.groundPolygonWorld.reduce((acc, p) => acc + p.z, 0) / frustum.groundPolygonWorld.length
+        : 0;
+      const groundMinZ = frustum.groundPolygonWorld.length > 0
+        ? Math.min(...frustum.groundPolygonWorld.map((p) => p.z))
+        : 0;
+      const groundNorthCount = frustum.groundPolygonWorld.filter((p) => Number.isFinite(p.z) && p.z < 0.0).length;
+      const groundNorthOk = frustum.groundPolygonWorld.length >= 20 &&
+        groundMinZ < -10.0 &&
+        groundCentroidZ < -3.5 &&
+        groundNorthCount / frustum.groundPolygonWorld.length >= 0.8;
+
+      // 2. Verifica cupola sferica equirettangolare CameraFrustumOverlay
+      const overlay = new CameraFrustumOverlay('Cam_Stradina', {{
+        opticalModel: 'equirectangular_180',
+        fovH: 180.0,
+        fovV: 55.0,
+        aspect: 32 / 9,
+        depth: 2.0,
+      }});
+      const ovPos = overlay.geometry.attributes.position;
+      let ovAllFinite = true;
+      let ovMaxRadiusErr = 0;
+      for (let i = 0; i < ovPos.count; i++) {{
+        const x = ovPos.getX(i), y = ovPos.getY(i), z = ovPos.getZ(i);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {{
+          ovAllFinite = false;
+          break;
+        }}
+        ovMaxRadiusErr = Math.max(ovMaxRadiusErr, Math.abs(Math.hypot(x, y, z) - 2.0));
+      }}
+
+      // 3. Modale DeviceModals('camera.stradina') e risoluzione entity HA
+      const ha = new HAClient();
+      ha.initMockMode();
+      const attachedStreams = [];
+      const mockVideoMgr = {{
+        attachToVideoElement: async (streamName) => {{
+          attachedStreams.push(streamName);
+          return {{ mode: 'webrtc', getStatus: () => ({{ mode: 'webrtc', connected: true }}), onStatusChange: () => () => {{}} }};
+        }},
+        detachFromVideoElement: () => {{}},
+        acquireVideoTexture: async (streamName) => ({{ streamName, texture: {{ isVideoTexture: true, dispose() {{}} }} }}),
+        releaseVideoTexture: () => {{}},
+      }};
+
+      const secCtrl = deviceRegistry.get('security_camera');
+      secCtrl.setServices({{
+        haClient: ha,
+        videoStreamManager: mockVideoMgr,
+        cameraCatalog: catalog,
+        assetLoader: {{ cameras: new Map([['Cam_Stradina', {{ name: 'Cam_Stradina' }}]]), manifest }},
+      }});
+      secCtrl.syncFromManifest(manifest);
+
+      const drawer = ctx.document.createElement('div');
+      ctx.document.body.appendChild(drawer);
+      const modals = new DeviceModals(
+        drawer,
+        ha,
+        {{ flyToPreset: () => {{}}, flyToCameraPOV: () => {{}}, startFollowing: () => {{}} }},
+        {{ cameras: new Map([['Cam_Stradina', {{ name: 'Cam_Stradina' }}]]), manifest }}
+      );
+      modals.open('camera.stradina');
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      const strTitle = drawer.querySelector('#modal-title')?.textContent?.trim();
+      const strSubtitle = drawer.querySelector('#modal-subtitle')?.textContent?.trim();
+      const strMainBtn = drawer.querySelector('[data-stream="stradina_main"]')?.textContent?.trim();
+      const strSubBtn = drawer.querySelector('[data-stream="stradina_sub"]')?.textContent?.trim();
+      const strHtml = drawer.innerHTML;
+      modals.close();
+
+      // 4. SecurityFabHub mostra tutte le 4 camere e marca entrambe le Duo 3 PoE come is-panoramic
+      const hubRoot = ctx.document.createElement('div');
+      ctx.document.body.appendChild(hubRoot);
+      const hub = new SecurityFabHub(hubRoot, {{
+        cameraCatalog: catalog,
+        videoStreamManager: mockVideoMgr,
+        recordingManager: {{
+          registerSlot: () => {{}},
+          setPlaybackRate: () => {{}},
+          setPlaying: () => {{}},
+          seekAllToTimestamp: async () => {{}},
+          queryAllSegments: async () => new Map(),
+          detachAll: () => {{}},
+          getStorageSummary: async () => ({{ configured: false }}),
+        }},
+        trajectoryRenderer: {{ setLiveMode() {{}}, setEntitiesVisible() {{}}, loadDetections() {{}}, clearHistorical() {{}}, updateAtTime() {{}}, interpolateLive() {{}} }},
+        spatialStreamClient: {{ connected: false, onStatusChange: () => () => {{}}, onFrame: () => () => {{}} }},
+        cameraController: {{ flyToPreset: () => {{}}, flyToCameraPOV: () => {{}} }},
+        assetLoader: {{ cameras: new Map(), manifest }},
+        deviceModals: {{ open: () => {{}} }},
+      }});
+      hubRoot.querySelector('#btn-security-fab').click();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const panoTileIds = hubRoot.querySelectorAll('.m3-cam-tile.is-panoramic').map((t) => t.dataset.cameraId);
+      const allTileIds = hubRoot.querySelectorAll('.m3-cam-tile').map((t) => t.dataset.cameraId);
+      hub.dispose();
+
+      // 5. CalibrationAssistantUI su Cam_Stradina disabilita PnP pinhole e mostra 4 switcher
+      const haAdmin = {{ isAdmin: true, isMockMode: false, authStatus: 'authenticated', currentUser: {{ name: 'Admin' }}, onStatusChange: () => () => {{}}, onAuthChange: () => () => {{}} }};
+      const fakeCanvas = ctx.document.createElement('canvas');
+      const calibUI = new CalibrationAssistantUI({{
+        sceneManager: {{ renderer: {{ domElement: fakeCanvas }}, camera: {{ updateMatrixWorld() {{}} }}, scene: {{ children: [] }}, addUpdateCallback() {{}}, removeUpdateCallback() {{}} }},
+        cameraController: {{ activePovCameraName: null, flyToCameraPOV(_c, _d, cb) {{ if (cb) cb(); }}, exitCameraPOV() {{}}, setPovExitLocked() {{}}, setInstantCameraPose() {{}} }},
+        cameraProjector: {{
+          frustumHelpers: new Map([['Cam_Carraio', {{}}], ['Cam_Portico', {{}}], ['Cam_Ingresso', {{}}], ['Cam_Stradina', {{}}]]),
+          attachOverlayTexture() {{}},
+          detachOverlayTexture() {{}},
+          setOverlayPOVMode() {{}},
+          setOverlayOpacity() {{}},
+          applyCameraCalibration() {{ return {{ position: pos, quaternion: quat, matrixWorldElements: matRowMajor }}; }},
+          getCalibratedCameraPose() {{ return null; }},
+        }},
+        videoStreamManager: mockVideoMgr,
+        spatialStreamClient: null,
+        assetLoader: {{ manifest, cameras: new Map([['Cam_Carraio', {{ name: 'Cam_Carraio' }}], ['Cam_Portico', {{ name: 'Cam_Portico' }}], ['Cam_Ingresso', {{ name: 'Cam_Ingresso' }}], ['Cam_Stradina', {{ name: 'Cam_Stradina' }}]]) }},
+        haClient: haAdmin,
+        cameraCatalog: catalog,
+      }});
+      await calibUI.open('Cam_Stradina');
+      const pnpDisabledForPano = Boolean(ctx.document.querySelector('#calib-pnp-toggle')?.disabled);
+      const calibPills = Array.from(ctx.document.querySelectorAll('.calib-cam-pill')).map((b) => b.dataset.calibCam);
+      calibUI.close();
+
+      return {{
+        strIsPanoramic: strCam?.isPanoramic180,
+        strFovH: strCam?.fovH,
+        strFovV: strCam?.fovV,
+        strAspect: strCam?.aspectRatio,
+        strIp: strCam?.cameraIp,
+        strEntity: strCam?.entityId,
+        strMainStream: strCam?.mainStream,
+        strSubStream: strCam?.subStream,
+        coneLen: frustum.conePositions.length,
+        groundLen: frustum.groundPositions.length,
+        allConeFinite,
+        allWireFinite,
+        allGroundFinite,
+        groundNorthOk,
+        ovAllFinite,
+        ovMaxRadiusErr,
+        strTitle,
+        strSubtitle,
+        strMainBtn,
+        strSubBtn,
+        strHasIp: strHtml.includes('192.168.86.55'),
+        strHasOptics: strHtml.includes('180°×55° Panoramica'),
+        attachedStreams,
+        panoTileIds,
+        allTileIds,
+        pnpDisabledForPano,
+        calibPills,
+        resolvedStradina: ha.resolveCameraEntityId('camera.stradina'),
+      }};
+    """
+    res = run_js_scenario({"code": code})
+    assert res["ok"] is True, res
+    d = res["data"]
+    assert d["strIsPanoramic"] is True
+    assert d["strFovH"] == 180
+    assert d["strFovV"] == 55
+    assert abs(d["strAspect"] - (32.0 / 9.0)) < 0.01
+    assert d["strIp"] == "192.168.86.55"
+    assert d["strEntity"] == "camera.stradina"
+    assert d["strMainStream"] == "stradina_main"
+    assert d["strSubStream"] == "stradina_sub"
+    assert d["coneLen"] > 100 and d["groundLen"] > 100
+    assert d["allConeFinite"] is True
+    assert d["allWireFinite"] is True
+    assert d["allGroundFinite"] is True
+    assert d["groundNorthOk"] is True
+    assert d["ovAllFinite"] is True
+    assert d["ovMaxRadiusErr"] < 1e-4
+    assert "Stradina" in d["strTitle"]
+    assert "." not in d["strSubtitle"]
+    assert d["strMainBtn"] == "Main 16MP 180°"
+    assert d["strSubBtn"] == "Sub 1536×576"
+    assert d["strHasIp"] is True
+    assert d["strHasOptics"] is True
+    assert d["attachedStreams"][0] == "stradina_main"
+    assert set(d["attachedStreams"][1:]) == {"carraio_sub", "portico_sub", "ingresso_sub", "stradina_sub"}
+    assert set(d["panoTileIds"]) == {"Cam_Ingresso", "Cam_Stradina"}
+    assert set(d["allTileIds"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
+    assert d["pnpDisabledForPano"] is True
+    assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
+    assert d["resolvedStradina"] == "camera.stradina"

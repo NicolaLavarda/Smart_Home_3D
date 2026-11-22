@@ -247,6 +247,13 @@ class SpatialPipelineService:
             "ingresso_main": "Cam_Ingresso",
             "ingresso_sub": "Cam_Ingresso",
             "Cam_Ingresso": "Cam_Ingresso",
+            "stradina": "Cam_Stradina",
+            "camera.stradina": "Cam_Stradina",
+            "camera.stradina_scorrevole": "Cam_Stradina",
+            "stradina_scorrevole": "Cam_Stradina",
+            "stradina_main": "Cam_Stradina",
+            "stradina_sub": "Cam_Stradina",
+            "Cam_Stradina": "Cam_Stradina",
         }
         for cam_id in self.optical_models:
             aliases[cam_id] = cam_id

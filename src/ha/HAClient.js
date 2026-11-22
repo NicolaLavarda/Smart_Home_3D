@@ -536,6 +536,14 @@ export class HAClient {
           brand: 'Reolink Duo 3 PoE 16MP 180°',
         },
       },
+      'camera.stradina': {
+        entity_id: 'camera.stradina',
+        state: 'idle',
+        attributes: {
+          friendly_name: 'Stradina',
+          brand: 'Reolink Duo 3 PoE 16MP 180°',
+        },
+      },
       'button.wake_on_lan_58_fd_b1_ae_99_79': {
         entity_id: 'button.wake_on_lan_58_fd_b1_ae_99_79',
         state: '2026-11-11T12:00:00Z',

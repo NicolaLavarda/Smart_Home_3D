@@ -375,7 +375,7 @@ ENTITY_MAPPINGS = {
 }
 
 
-SECURITY_CAMERA_NAMES = {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
+SECURITY_CAMERA_NAMES = {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
 
 
 def _get_or_create_camera_material(name, color=(0.92, 0.93, 0.95, 1.0), roughness=0.35, metallic=0.05):
@@ -814,10 +814,172 @@ def _setup_cam_ingresso(col_cameras):
     print(f"  [OK] Telecamera reale configurata: {cam_name} a loc={tuple(round(c, 3) for c in cam_pos)} rot={euler_deg}")
 
 
+def _setup_cam_stradina(col_cameras):
+    """
+    Crea o aggiorna la telecamera panoramica 180° Cam_Stradina (Reolink Duo 3 PoE, dual-lens 2.8mm).
+    Misure fisiche confermate dall'utente rispetto alla casa:
+    - Quota obiettivo da terra: Z = 2.77 m (277 cm)
+    - Distanza dallo spigolo nord-ovest della casa (X = 0.00): 1341 cm verso est -> X = 13.41 m (79 cm dallo spigolo NE 14.20 m)
+    - Sporgenza dalla facciata nord (Y = 0.00): 12 cm (staffa orientabile Reolink Duo 3 PoE angolata 30° giu + 10° ovest, zero compenetrazione muro) -> Y = +0.12 m
+    - Direzione: guarda verso nord (+Y), ruotata di 10° a ovest rispetto alla perpendicolare al muro, inclinata di 30° verso il basso.
+    - Ottica ufficiale Reolink Duo 3 PoE: dual-lens f=2.8mm F1.6, equirectangular 180° H x 55° V,
+      Main 7680x2160 (16MP, 32:9 = 3.5556), Sub 1536x576 (H.264).
+    """
+    import bmesh
+
+    cam_pos = mathutils.Vector((13.41, 0.12, 2.77))
+    yaw_west_deg = 10.0
+    pitch_down_deg = 30.0
+    yw_rad = math.radians(yaw_west_deg)
+    pd_rad = math.radians(pitch_down_deg)
+    # Nord (+Y) ruotato 10° verso Ovest (-X), inclinato 30° verso il basso (-Z)
+    direction = mathutils.Vector((
+        -math.cos(pd_rad) * math.sin(yw_rad),
+        math.cos(pd_rad) * math.cos(yw_rad),
+        -math.sin(pd_rad),
+    )).normalized()
+    rot_quat = direction.to_track_quat("-Z", "Y")
+    rot_euler = rot_quat.to_euler("XYZ")
+
+    mat_white = _get_or_create_camera_material(
+        "Mat_Security_Cam_White",
+        color=(0.92, 0.93, 0.95, 1.0),
+        roughness=0.35,
+        metallic=0.05,
+    )
+    mat_dark = bpy.data.materials.get("Mat_Infissi_Antracite") or _get_or_create_camera_material(
+        "Mat_Infissi_Antracite",
+        color=(0.14, 0.14, 0.16, 1.0),
+        roughness=0.45,
+        metallic=0.3,
+    )
+
+    # 1. Mesh corpo dual-lens Reolink Duo 3 PoE (195mm x 103mm x 56mm), strettamente dietro la lente
+    body_name = "Security_Cam_Stradina_Body"
+    _remove_object_if_exists(body_name)
+    body_w = 0.195
+    body_h = 0.103
+    body_d = 0.056
+    body_center = cam_pos - direction * (0.012 + body_d * 0.5)
+
+    body_mesh = bpy.data.meshes.new(body_name)
+    bm = bmesh.new()
+    cam_rot_mat = rot_quat.to_matrix().to_4x4()
+    bmesh.ops.create_cube(
+        bm,
+        size=1.0,
+        matrix=(
+            mathutils.Matrix.Translation(body_center)
+            @ cam_rot_mat
+            @ mathutils.Matrix.Diagonal((body_w, body_h, body_d, 1.0))
+        ),
+    )
+    bm.to_mesh(body_mesh)
+    bm.free()
+
+    body_obj = bpy.data.objects.new(body_name, body_mesh)
+    body_obj.data.materials.append(mat_white)
+    col_cameras.objects.link(body_obj)
+
+    body_obj["ha_entity"] = "camera.stradina"
+    body_obj["ha_action"] = "modal"
+    body_obj["ha_ui_type"] = "camera"
+    body_obj["ha_name"] = "Stradina"
+
+    # 2. Mesh staffa integrata a snodo + piastra a muro (dal retro corpo alla facciata nord Y = 0.00)
+    mount_name = "Security_Cam_Stradina_Mount"
+    _remove_object_if_exists(mount_name)
+    rear_pt = cam_pos - direction * (0.012 + body_d)
+    wall_pt = mathutils.Vector((rear_pt.x, 0.005, rear_pt.z + 0.01))
+    arm_vec = wall_pt - rear_pt
+    arm_len = max(arm_vec.length, 0.035)
+    arm_mid = (rear_pt + wall_pt) * 0.5
+    arm_quat = arm_vec.normalized().to_track_quat("Z", "Y")
+
+    mount_mesh = bpy.data.meshes.new(mount_name)
+    bm = bmesh.new()
+    bmesh.ops.create_cone(
+        bm,
+        cap_ends=True,
+        cap_tris=False,
+        segments=16,
+        radius1=0.016,
+        radius2=0.016,
+        depth=arm_len,
+        matrix=mathutils.Matrix.Translation(arm_mid) @ arm_quat.to_matrix().to_4x4(),
+    )
+    # Piastra a parete (normale +Y)
+    plate_quat = mathutils.Vector((0.0, 1.0, 0.0)).to_track_quat("Z", "Y")
+    bmesh.ops.create_cone(
+        bm,
+        cap_ends=True,
+        cap_tris=False,
+        segments=20,
+        radius1=0.042,
+        radius2=0.038,
+        depth=0.014,
+        matrix=mathutils.Matrix.Translation(wall_pt) @ plate_quat.to_matrix().to_4x4(),
+    )
+    bm.to_mesh(mount_mesh)
+    bm.free()
+
+    mount_obj = bpy.data.objects.new(mount_name, mount_mesh)
+    mount_obj.data.materials.append(mat_dark)
+    col_cameras.objects.link(mount_obj)
+
+    mount_obj["ha_entity"] = "camera.stradina"
+    mount_obj["ha_action"] = "modal"
+    mount_obj["ha_ui_type"] = "camera"
+    mount_obj["ha_name"] = "Stradina"
+
+    # 3. Oggetto Camera ottica SSoT "Cam_Stradina"
+    cam_name = "Cam_Stradina"
+    cam_obj = bpy.data.objects.get(cam_name)
+    if not cam_obj:
+        cam_data = bpy.data.cameras.new(cam_name)
+        cam_obj = bpy.data.objects.new(cam_name, cam_data)
+        col_cameras.objects.link(cam_obj)
+
+    cam_obj.location = cam_pos
+    cam_obj.rotation_mode = "XYZ"
+    cam_obj.rotation_euler = rot_euler
+
+    cam_obj.data.sensor_fit = "HORIZONTAL"
+    cam_obj.data.lens = 2.8
+    cam_obj.data.sensor_width = 16.0
+    cam_obj.data.sensor_height = round(2.0 * 2.8 * math.tan(math.radians(55.0 / 2.0)), 4)
+    cam_obj.data.clip_start = 0.1
+    cam_obj.data.clip_end = 250.0
+
+    # Custom Properties SSoT (Reolink Duo 3 PoE 180° panoramica)
+    cam_obj["ha_camera_entity"] = "camera.stradina"
+    cam_obj["ha_entity"] = "camera.stradina"
+    cam_obj["ha_name"] = "Stradina"
+    cam_obj["ha_action"] = "modal"
+    cam_obj["ha_ui_type"] = "camera"
+    cam_obj["ha_label"] = "Stradina (Reolink Duo 3 PoE)"
+    cam_obj["camera_model"] = "Reolink Duo 3 PoE"
+    cam_obj["coverage_zone"] = "zona nord della casa"
+    cam_obj["optical_model"] = "equirectangular_180"
+    cam_obj["is_panoramic_180"] = True
+    cam_obj["fov_h_deg"] = 180.0
+    cam_obj["fov_v_deg"] = 55.0
+    cam_obj["aspect_ratio"] = round(7680.0 / 2160.0, 4)
+    cam_obj["distortion_coeffs"] = [0.0, 0.0, 0.0, 0.0, 0.0]
+    cam_obj["stream_id"] = "stradina_main"
+    cam_obj["sub_stream_id"] = "stradina_sub"
+    cam_obj["main_stream_label"] = "Main 16MP 180°"
+    cam_obj["sub_stream_label"] = "Sub 1536×576"
+    cam_obj["camera_ip"] = "192.168.86.55"
+
+    euler_deg = [round(math.degrees(a), 2) for a in rot_euler]
+    print(f"  [OK] Telecamera reale configurata: {cam_name} a loc={tuple(round(c, 3) for c in cam_pos)} rot={euler_deg}")
+
+
 def setup_real_security_cameras():
     """
     Configura in modo idempotente tutte le telecamere di sicurezza reali censite
-    (Cam_Carraio, Cam_Portico, Cam_Ingresso) preservando tutte le proprietà SSoT.
+    (Cam_Carraio, Cam_Portico, Cam_Ingresso, Cam_Stradina) preservando tutte le proprietà SSoT.
     """
     col_cameras = bpy.data.collections.get("08_Luci_e_Camere")
     if not col_cameras:
@@ -835,6 +997,7 @@ def setup_real_security_cameras():
     _setup_cam_carraio(col_cameras)
     _setup_cam_portico(col_cameras)
     _setup_cam_ingresso(col_cameras)
+    _setup_cam_stradina(col_cameras)
     bpy.context.view_layer.update()
 
 
