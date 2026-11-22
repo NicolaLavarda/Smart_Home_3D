@@ -86,8 +86,8 @@ export class SecurityCameraModal {
     this.isSyntheticActive = serverMode === 'synthetic';
 
     container.innerHTML = `
-      <div class="camera-preview-stream" id="cam-preview-wrapper">
-        <video id="cam-modal-video" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+      <div class="camera-preview-stream${isPano180 ? ' is-panoramic' : ''}" id="cam-preview-wrapper">
+        <video id="cam-modal-video" autoplay muted playsinline style="width:100%;height:100%;object-fit:${isPano180 ? 'contain' : 'cover'};display:block;"></video>
         <span class="live-badge" id="cam-stream-badge">CONNESSIONE...</span>
         <span class="cam-latency-badge" id="cam-latency-badge">-- ms</span>
       </div>

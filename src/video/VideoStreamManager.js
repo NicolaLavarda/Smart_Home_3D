@@ -125,6 +125,8 @@ export class VideoStreamManager {
       cameraName: extraOptions.cameraName || catalogEntry?.id || 'Cam_Carraio',
       cameraLabel: extraOptions.cameraLabel || catalogEntry?.cameraModel || catalogEntry?.name || 'REOLINK RLC-540A',
       cameraIp: extraOptions.cameraIp || catalogEntry?.cameraIp || '192.168.86.47',
+      aspectRatio: extraOptions.aspectRatio || catalogEntry?.aspectRatio || (16 / 9),
+      isPanoramic180: Boolean(extraOptions.isPanoramic180 ?? catalogEntry?.isPanoramic180),
       ...(timeoutMs ? { timeoutMs } : {}),
     };
 

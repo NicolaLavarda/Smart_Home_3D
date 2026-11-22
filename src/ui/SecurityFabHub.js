@@ -84,6 +84,8 @@ export class SecurityFabHub {
     this.panelState = 'closed';
     // Modalità: 'live' | 'replay'
     this.mode = 'live';
+    // Layout griglia: 'proportional' (default: 2 normali affiancate + 180° a tutta larghezza una sotto l'altra) | 'compact' (2×2)
+    this.gridLayoutMode = this._loadSavedGridLayoutMode();
 
     // Stato Playback & Cronologia
     this.entitiesVisible = false;
@@ -149,6 +151,46 @@ export class SecurityFabHub {
     return this.panelState === 'strip';
   }
 
+  _loadSavedGridLayoutMode() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem('sh3d_sec_grid_layout');
+        if (saved === 'compact' || saved === 'proportional') {
+          return saved;
+        }
+      }
+    } catch {}
+    return 'proportional';
+  }
+
+  setGridLayoutMode(nextMode, { persist = true } = {}) {
+    const mode = nextMode === 'compact' ? 'compact' : 'proportional';
+    this.gridLayoutMode = mode;
+    const isCompact = mode === 'compact';
+
+    if (this.camerasTrackEl) {
+      this.camerasTrackEl.classList.toggle('layout-compact', isCompact);
+      this.camerasTrackEl.dataset.layoutMode = mode;
+    }
+
+    if (this.layoutToggleBtn) {
+      this.layoutToggleBtn.classList.toggle('active', isCompact);
+      this.layoutToggleBtn.setAttribute('aria-checked', String(isCompact));
+      this.layoutToggleBtn.dataset.layoutMode = mode;
+      this.layoutToggleBtn.title = isCompact
+        ? 'Vista compatta 2×2 attiva • Clicca per vista proporzionata (2 + 180° intere)'
+        : 'Vista proporzionata (2 normali + 180° intere) • Clicca per vista compatta 2×2';
+    }
+
+    if (persist) {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('sh3d_sec_grid_layout', mode);
+        }
+      } catch {}
+    }
+  }
+
   onModeChange(listener) {
     if (typeof listener !== 'function') return () => {};
     this._modeListeners.add(listener);
@@ -198,6 +240,18 @@ export class SecurityFabHub {
           </div>
 
           <div class="m3-sec-header-actions">
+            <button
+              type="button"
+              class="m3-icon-btn m3-layout-toggle-btn"
+              id="btn-sec-layout-toggle"
+              role="switch"
+              aria-checked="false"
+              title="Vista proporzionata (2 normali + 180° intere) • Clicca per vista compatta 2×2"
+              aria-label="Alterna vista proporzionata e vista compatta 2×2"
+            >
+              ${icon('layout-grid', { size: 15 })}
+              <span class="m3-layout-toggle-label">2×2</span>
+            </button>
             <button type="button" class="m3-icon-btn m3-strip-toggle-btn" id="btn-sec-strip-toggle" title="Riduci a striscia in basso per vedere tutto il 3D" aria-label="Riduci a striscia in basso">
               ${icon('panel-bottom-close', { size: 17 })}
             </button>
@@ -332,6 +386,7 @@ export class SecurityFabHub {
 
     this.liveBtn = this.container.querySelector('#btn-sec-mode-live');
     this.replayBtn = this.container.querySelector('#btn-sec-mode-replay');
+    this.layoutToggleBtn = this.container.querySelector('#btn-sec-layout-toggle');
     this.stripToggleBtn = this.container.querySelector('#btn-sec-strip-toggle');
     this.closeBtn = this.container.querySelector('#btn-sec-close');
 
@@ -384,6 +439,10 @@ export class SecurityFabHub {
     this.stripToggleBtn?.addEventListener('click', () => {
       if (this.panelState === 'strip') this.openExpanded();
       else this.minimizeToStrip();
+    });
+
+    this.layoutToggleBtn?.addEventListener('click', () => {
+      this.setGridLayoutMode(this.gridLayoutMode === 'compact' ? 'proportional' : 'compact');
     });
 
     this.stripExpandBtn?.addEventListener('click', () => this.openExpanded());
@@ -549,12 +608,17 @@ export class SecurityFabHub {
 
   /**
    * Crea o aggiorna i riquadri video per tutte le telecamere nel CameraCatalog.
-   * Ogni riquadro mantiene il proprio aspect-ratio nativo (es. 16:9 o 180° panoramico).
+   * Ordina sempre prima le telecamere standard (affiancate in riga 1) e poi le panoramiche 180°
+   * (una sotto l'altra a tutta larghezza in modalità proporzionata, o in 2×2 in modalità compatta).
    */
   syncCameraTiles() {
     if (!this.camerasTrackEl || !this.cameraCatalog) return;
 
-    const cameras = this.cameraCatalog.getCameras();
+    const cameras = this.cameraCatalog.getCameras().slice().sort((a, b) => {
+      const pa = a.isPanoramic180 ? 1 : 0;
+      const pb = b.isPanoramic180 ? 1 : 0;
+      return pa - pb;
+    });
     if (this.fabCountEl) {
       this.fabCountEl.textContent = String(cameras.length);
     }
@@ -570,13 +634,16 @@ export class SecurityFabHub {
       }
     }
 
-    // Aggiungi o aggiorna card per ogni telecamera
-    cameras.forEach((cam) => {
+    // Aggiungi o aggiorna card per ogni telecamera rispettando l'ordine (standard prima, 180° poi)
+    cameras.forEach((cam, targetIdx) => {
       if (this.tileElements.has(cam.id)) {
         const existing = this.tileElements.get(cam.id);
         existing.cam = cam;
         existing.card.style.setProperty('--cam-aspect', String(cam.aspectRatio));
-        existing.card.classList.toggle('is-panoramic', cam.isPanoramic180);
+        existing.card.classList.toggle('is-panoramic', Boolean(cam.isPanoramic180));
+        if (this.camerasTrackEl.children[targetIdx] !== existing.card) {
+          this.camerasTrackEl.insertBefore(existing.card, this.camerasTrackEl.children[targetIdx] || null);
+        }
         return;
       }
 
@@ -612,35 +679,7 @@ export class SecurityFabHub {
       const darkTimeEl = card.querySelector('.m3-dark-time');
       const darkTitleEl = card.querySelector('.m3-dark-title');
 
-      // Aggiorna dinamicamente il rapporto d'aspetto reale appena il browser decodifica i metadati video
-      // (garantisce 0 tagli sia per 16:9 sia per 180° panoramici 32:9 / 3.2:1!)
-      videoEl.addEventListener('loadedmetadata', () => {
-        if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-          const naturalAspect = videoEl.videoWidth / videoEl.videoHeight;
-          if (Number.isFinite(naturalAspect) && naturalAspect > 0.4 && naturalAspect < 6.0) {
-            card.style.setProperty('--cam-aspect', naturalAspect.toFixed(4));
-            card.classList.toggle('is-panoramic', naturalAspect >= 2.2);
-          }
-        }
-      });
-
-      card.querySelector('[data-cam-action="pov"]')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._flyToCamera3D(cam);
-      });
-
-      card.querySelector('[data-cam-action="details"]')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (cam.entityId && this.deviceModals?.open) {
-          if (this.panelState === 'expanded' && window.innerWidth <= 1024) {
-            this.minimizeToStrip();
-          }
-          this.deviceModals.open(cam.entityId);
-        }
-      });
-
-      this.camerasTrackEl.appendChild(card);
-      this.tileElements.set(cam.id, {
+      const tileEntry = {
         cam,
         card,
         videoEl,
@@ -649,10 +688,51 @@ export class SecurityFabHub {
         darkTimeEl,
         darkTitleEl,
         lastReplayState: null,
+      };
+
+      // Aggiorna dinamicamente il rapporto d'aspetto reale appena il browser decodifica/ridimensiona il video,
+      // senza mai declassare a 16:9 una telecamera 180° nota dal manifest (es. su frame fallback temporanei).
+      const syncAspectFromVideo = () => {
+        if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+          const naturalAspect = videoEl.videoWidth / videoEl.videoHeight;
+          if (Number.isFinite(naturalAspect) && naturalAspect > 0.4 && naturalAspect < 6.0) {
+            const isKnownPano = Boolean(tileEntry.cam?.isPanoramic180);
+            const effectiveAspect = isKnownPano && naturalAspect < 2.2
+              ? tileEntry.cam.aspectRatio
+              : naturalAspect;
+            card.style.setProperty('--cam-aspect', effectiveAspect.toFixed(4));
+            card.classList.toggle('is-panoramic', Boolean(isKnownPano || naturalAspect >= 2.2));
+          }
+        }
+      };
+      videoEl.addEventListener('loadedmetadata', syncAspectFromVideo);
+      videoEl.addEventListener('resize', syncAspectFromVideo);
+
+      card.querySelector('[data-cam-action="pov"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._flyToCamera3D(tileEntry.cam);
       });
+
+      card.querySelector('[data-cam-action="details"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (tileEntry.cam.entityId && this.deviceModals?.open) {
+          if (this.panelState === 'expanded' && window.innerWidth <= 1024) {
+            this.minimizeToStrip();
+          }
+          this.deviceModals.open(tileEntry.cam.entityId);
+        }
+      });
+
+      if (this.camerasTrackEl.children[targetIdx]) {
+        this.camerasTrackEl.insertBefore(card, this.camerasTrackEl.children[targetIdx]);
+      } else {
+        this.camerasTrackEl.appendChild(card);
+      }
+      this.tileElements.set(cam.id, tileEntry);
     });
 
     this.camerasTrackEl.dataset.camCount = String(cameras.length);
+    this.setGridLayoutMode(this.gridLayoutMode, { persist: false });
   }
 
   _flyToCamera3D(cam) {

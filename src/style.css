@@ -700,6 +700,13 @@ body, html {
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.camera-preview-stream.is-panoramic {
+  height: auto;
+  aspect-ratio: 32 / 9;
+  min-height: 112px;
+  max-height: 190px;
+}
+
 .camera-preview-stream .live-badge {
   position: absolute;
   top: 10px;
@@ -3913,7 +3920,7 @@ body, html {
     max-height: none;
   }
 
-  .camera-preview-stream {
+  .camera-preview-stream:not(.is-panoramic) {
     height: auto;
     aspect-ratio: 16 / 9;
     max-height: 210px;
@@ -4937,6 +4944,27 @@ body, html {
   flex-shrink: 0;
 }
 
+.m3-layout-toggle-btn {
+  width: auto;
+  padding: 0 10px;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.m3-layout-toggle-btn.active {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: rgba(56, 189, 248, 0.55);
+  color: #bae6fd;
+}
+
+.m3-layout-toggle-label {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 /* Strip Toolbar (nascosta in modalità espansa) */
 .m3-strip-toolbar {
   display: none;
@@ -5045,10 +5073,22 @@ body, html {
   justify-content: center;
 }
 
-/* Telecamera panoramica 180°: occupa tutta la larghezza in griglia per preservare le proporzioni */
+/* Telecamera panoramica 180°: occupa tutta la larghezza in griglia proporzionata (riga intera) */
 .m3-cam-tile.is-panoramic {
   grid-column: 1 / -1;
-  max-height: 220px;
+  max-height: 240px;
+}
+
+/* Modalità compatta 2×2 (attivabile tramite switch header solo in vista espansa): 2 colonne × 2 righe, proporzioni preservate via object-fit:contain */
+.m3-security-panel:not(.mode-strip) .m3-sec-cameras-track.layout-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.m3-security-panel:not(.mode-strip) .m3-sec-cameras-track.layout-compact .m3-cam-tile,
+.m3-security-panel:not(.mode-strip) .m3-sec-cameras-track.layout-compact .m3-cam-tile.is-panoramic {
+  grid-column: auto;
+  aspect-ratio: 16 / 9;
+  max-height: 210px;
 }
 
 .m3-cam-video {
@@ -6435,8 +6475,12 @@ body, html {
   }
 
   .m3-sec-cameras-track {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  .m3-sec-cameras-track[data-cam-count="1"] {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .m3-cam-tile {

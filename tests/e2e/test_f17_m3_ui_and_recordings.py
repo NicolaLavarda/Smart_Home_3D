@@ -1756,3 +1756,160 @@ def test_f17_stradina_180_panoramic_frustum_overlay_and_4cam_ui():
     assert d["pnpDisabledForPano"] is True
     assert set(d["calibPills"]) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"}
     assert d["resolvedStradina"] == "camera.stradina"
+
+
+def test_f17_panoramic_aspect_preservation_ordering_and_layout_switch():
+    import json
+
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo_root / "public" / "models" / "scene_manifest.json").read_text(encoding="utf-8"))
+    manifest_subset = {
+        "cameras": {
+            k: v
+            for k, v in manifest.get("cameras", {}).items()
+            if v.get("is_real_security_camera")
+        },
+    }
+    manifest_json = json.dumps(manifest_subset)
+
+    code = f"""
+      const manifest = {manifest_json};
+      const {{ CameraCatalog }} = await loadModule('/src/video/CameraCatalog.js');
+      const {{ HaSnapshotFallbackStream }} = await loadModule('/src/video/HaSnapshotFallbackStream.js');
+      const {{ SecurityFabHub }} = await loadModule('/src/ui/SecurityFabHub.js');
+
+      const catalog = new CameraCatalog();
+      catalog.syncFromManifest(manifest);
+
+      // 1. Verifica che HaSnapshotFallbackStream non schiacci mai il 180° in 640x360:
+      //    parte a 1280x360 (32:9) per Duo 3 PoE e si ridimensiona dinamicamente a 960x360 su frame 1536x576 (8:3)
+      const ingCam = catalog.getCameraById('Cam_Ingresso');
+      const carCam = catalog.getCameraById('Cam_Carraio');
+      const panoStream = new HaSnapshotFallbackStream('ingresso_sub', {{
+        cameraName: ingCam.id,
+        aspectRatio: ingCam.aspectRatio,
+        isPanoramic180: ingCam.isPanoramic180,
+      }});
+      const stdStream = new HaSnapshotFallbackStream('carraio_sub', {{
+        cameraName: carCam.id,
+        aspectRatio: carCam.aspectRatio,
+        isPanoramic180: carCam.isPanoramic180,
+      }});
+      const panoVideo = ctx.document.createElement('video');
+      const stdVideo = ctx.document.createElement('video');
+      await panoStream.connect(panoVideo);
+      await stdStream.connect(stdVideo);
+      const panoInitSize = {{ w: panoStream.canvas.width, h: panoStream.canvas.height }};
+      const stdInitSize = {{ w: stdStream.canvas.width, h: stdStream.canvas.height }};
+
+      // Simula arrivo di snapshot 1536x576 (8:3 sub-stream Reolink Duo 3 PoE) -> canvas 960x360
+      panoStream._syncCanvasDimensionsToImage({{ width: 1536, height: 576 }});
+      const panoAfterSubSize = {{ w: panoStream.canvas.width, h: panoStream.canvas.height }};
+      // Simula arrivo di snapshot 7680x2160 (32:9 main-stream Reolink Duo 3 PoE) -> canvas 1280x360
+      panoStream._syncCanvasDimensionsToImage({{ width: 7680, height: 2160 }});
+      const panoAfterMainSize = {{ w: panoStream.canvas.width, h: panoStream.canvas.height }};
+      panoStream.disconnect();
+      stdStream.disconnect();
+
+      // 2. Verifica ordine DOM in SecurityFabHub: prima le 2 normali (Carraio, Portico), poi le 2 180° (Ingresso, Stradina)
+      const hubRoot = ctx.document.createElement('div');
+      ctx.document.body.appendChild(hubRoot);
+      const hub = new SecurityFabHub(hubRoot, {{
+        cameraCatalog: catalog,
+        videoStreamManager: {{
+          attachToVideoElement: async () => ({{ mode: 'webrtc', getStatus: () => ({{ mode: 'webrtc', connected: true }}), onStatusChange: () => () => {{}} }}),
+          detachFromVideoElement: () => {{}},
+        }},
+        recordingManager: {{
+          registerSlot: () => {{}},
+          setPlaybackRate: () => {{}},
+          setPlaying: () => {{}},
+          seekAllToTimestamp: async () => {{}},
+          queryAllSegments: async () => new Map(),
+          detachAll: () => {{}},
+          getStorageSummary: async () => ({{ configured: false }}),
+        }},
+        trajectoryRenderer: {{ setLiveMode() {{}}, setEntitiesVisible() {{}}, loadDetections() {{}}, clearHistorical() {{}}, updateAtTime() {{}}, interpolateLive() {{}} }},
+        spatialStreamClient: {{ connected: false, onStatusChange: () => () => {{}}, onFrame: () => () => {{}} }},
+        cameraController: {{ flyToPreset: () => {{}}, flyToCameraPOV: () => {{}} }},
+        assetLoader: {{ cameras: new Map(), manifest }},
+        deviceModals: {{ open: () => {{}} }},
+      }});
+
+      const orderedIds = hubRoot.querySelectorAll('.m3-cam-tile').map((t) => t.dataset.cameraId);
+      const trackEl = hubRoot.querySelector('#sec-cameras-track');
+      const toggleBtn = hubRoot.querySelector('#btn-sec-layout-toggle');
+
+      // Default: modalità proporzionata (2 normali affiancate + 180° una sotto l'altra = 3 righe)
+      const defaultLayout = hub.gridLayoutMode;
+      const defaultHasCompact = trackEl.classList.contains('layout-compact');
+      const defaultAriaChecked = toggleBtn.getAttribute('aria-checked');
+
+      // Click switch -> modalità compatta 2x2
+      toggleBtn.click();
+      const afterToggleLayout = hub.gridLayoutMode;
+      const afterToggleHasCompact = trackEl.classList.contains('layout-compact');
+      const afterToggleAriaChecked = toggleBtn.getAttribute('aria-checked');
+
+      // Click di nuovo -> torna proporzionata
+      toggleBtn.click();
+      const restoredLayout = hub.gridLayoutMode;
+      const restoredHasCompact = trackEl.classList.contains('layout-compact');
+
+      // 3. Verifica che un evento loadedmetadata temporaneo 640x360 NON tolga is-panoramic a Cam_Ingresso,
+      //    e che un successivo resize 1536x576 aggiorni --cam-aspect a 2.6667 mantenendo is-panoramic
+      const ingTile = hubRoot.querySelector('.m3-cam-tile[data-camera-id="Cam_Ingresso"]');
+      const ingVideo = ingTile.querySelector('video');
+      ingVideo.videoWidth = 640;
+      ingVideo.videoHeight = 360;
+      ingVideo.dispatchEvent({{ type: 'loadedmetadata' }});
+      const ingStillPanoAfter16x9 = ingTile.classList.contains('is-panoramic');
+      const ingAspectAfter16x9 = parseFloat(ingTile.style.getPropertyValue('--cam-aspect'));
+
+      ingVideo.videoWidth = 1536;
+      ingVideo.videoHeight = 576;
+      ingVideo.dispatchEvent({{ type: 'resize' }});
+      const ingStillPanoAfterSub = ingTile.classList.contains('is-panoramic');
+      const ingAspectAfterSub = parseFloat(ingTile.style.getPropertyValue('--cam-aspect'));
+
+      hub.dispose();
+      return {{
+        panoInitSize,
+        stdInitSize,
+        panoAfterSubSize,
+        panoAfterMainSize,
+        orderedIds,
+        defaultLayout,
+        defaultHasCompact,
+        defaultAriaChecked,
+        afterToggleLayout,
+        afterToggleHasCompact,
+        afterToggleAriaChecked,
+        restoredLayout,
+        restoredHasCompact,
+        ingStillPanoAfter16x9,
+        ingAspectAfter16x9,
+        ingStillPanoAfterSub,
+        ingAspectAfterSub,
+      }};
+    """
+    res = run_js_scenario({"code": code})
+    assert res["ok"] is True, res
+    d = res["data"]
+    assert d["panoInitSize"] == {"w": 1280, "h": 360}
+    assert d["stdInitSize"] == {"w": 640, "h": 360}
+    assert d["panoAfterSubSize"] == {"w": 960, "h": 360}
+    assert d["panoAfterMainSize"] == {"w": 1280, "h": 360}
+    assert d["orderedIds"] == ["Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"]
+    assert d["defaultLayout"] == "proportional"
+    assert d["defaultHasCompact"] is False
+    assert d["defaultAriaChecked"] == "false"
+    assert d["afterToggleLayout"] == "compact"
+    assert d["afterToggleHasCompact"] is True
+    assert d["afterToggleAriaChecked"] == "true"
+    assert d["restoredLayout"] == "proportional"
+    assert d["restoredHasCompact"] is False
+    assert d["ingStillPanoAfter16x9"] is True
+    assert abs(d["ingAspectAfter16x9"] - (32.0 / 9.0)) < 0.01
+    assert d["ingStillPanoAfterSub"] is True
+    assert abs(d["ingAspectAfterSub"] - (8.0 / 3.0)) < 0.01

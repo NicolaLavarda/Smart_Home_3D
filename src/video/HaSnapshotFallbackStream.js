@@ -29,6 +29,11 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     this.cameraName = String(options.cameraName || 'Cam_Carraio');
     this.cameraLabel = String(options.cameraLabel || 'REOLINK RLC-540A');
     this.cameraIp = String(options.cameraIp || '192.168.86.47');
+    this.isPanoramic180 = Boolean(options.isPanoramic180);
+    const rawAspect = Number(options.aspectRatio);
+    this.aspectRatio = Number.isFinite(rawAspect) && rawAspect > 0.4 && rawAspect < 6.0
+      ? rawAspect
+      : (this.isPanoramic180 ? 32 / 9 : 16 / 9);
     const prodSameOrigin = isProdSameOriginMode();
     const defaultHost = typeof window !== 'undefined' && window.location?.hostname ? window.location.hostname : '127.0.0.1';
 
@@ -70,15 +75,58 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     };
   }
 
+  _computeCanvasSize(aspectRatio) {
+    const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0.4 && aspectRatio < 6.0
+      ? aspectRatio
+      : (16 / 9);
+    const height = 360;
+    const rawW = Math.round(height * safeAspect);
+    const clampedW = Math.max(360, Math.min(1440, rawW));
+    const width = clampedW % 2 === 0 ? clampedW : clampedW + 1;
+    return { width, height };
+  }
+
+  _syncCanvasDimensionsToImage(img) {
+    if (!this.canvas || !img) return;
+    const imgW = Number(img.width || img.naturalWidth || 0);
+    const imgH = Number(img.height || img.naturalHeight || 0);
+    if (imgW <= 0 || imgH <= 0) return;
+
+    const imgAspect = imgW / imgH;
+    if (!Number.isFinite(imgAspect) || imgAspect <= 0.4 || imgAspect >= 6.0) return;
+
+    const { width: nextW, height: nextH } = this._computeCanvasSize(imgAspect);
+    if (Math.abs(this.canvas.width - nextW) <= 4 && Math.abs(this.canvas.height - nextH) <= 4) {
+      return;
+    }
+
+    this.aspectRatio = imgAspect;
+    this.canvas.width = nextW;
+    this.canvas.height = nextH;
+    this.drawDiagnosticFrame();
+
+    // Riaggancia la stream capture se le dimensioni cambiano (es. 16:9 -> 32:9 o 8:3)
+    // così anche Safari/WebKit aggiorna immediatamente videoWidth/videoHeight senza schiacciare il frame
+    if (this.videoElement && typeof this.canvas.captureStream === 'function') {
+      if (this.capturedStream) {
+        this.capturedStream.getTracks().forEach((t) => t.stop());
+      }
+      this.capturedStream = this.canvas.captureStream(15);
+      this.videoElement.srcObject = this.capturedStream;
+      this.videoElement.play?.().catch(() => {});
+    }
+  }
+
   async connect(videoElement) {
     if (!videoElement) throw new Error('HTMLVideoElement richiesto');
     this.disconnect();
     this._aborted = false;
     this.videoElement = videoElement;
 
+    const { width, height } = this._computeCanvasSize(this.aspectRatio);
     this.canvas = document.createElement('canvas');
-    this.canvas.width = 640;
-    this.canvas.height = 360;
+    this.canvas.width = width;
+    this.canvas.height = height;
     this.ctx = this.canvas.getContext('2d');
 
     this.drawDiagnosticFrame();
@@ -218,6 +266,7 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
             const prevImg = this.lastImage;
             this.lastImage = nextImg;
             this._releaseImage(prevImg);
+            this._syncCanvasDimensionsToImage(nextImg);
 
             const wasLive = this.hasLiveHaFrames;
             this.hasLiveHaFrames = true;
