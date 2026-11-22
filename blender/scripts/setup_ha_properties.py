@@ -1006,12 +1006,220 @@ def setup_real_security_camera():
     setup_real_security_cameras()
 
 
+def _set_axis_box_vertices(obj_name, xmin, xmax, ymin, ymax, zmin, zmax):
+    """Ridimensiona un prisma rettangolare da 8 vertici preservando UV/materiali e normali uscenti."""
+    obj = bpy.data.objects.get(obj_name)
+    if obj is None or obj.type != "MESH" or len(obj.data.vertices) != 8:
+        print(f"  [WARN] Oggetto prisma 8-vertici non valido o mancante: {obj_name}")
+        return False
+
+    obj.parent = None
+    obj.location = mathutils.Vector((0.0, 0.0, 0.0))
+    obj.rotation_mode = "XYZ"
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    obj.scale = mathutils.Vector((1.0, 1.0, 1.0))
+
+    coords = [
+        (xmin, ymin, zmin),
+        (xmax, ymin, zmin),
+        (xmax, ymax, zmin),
+        (xmin, ymax, zmin),
+        (xmin, ymin, zmax),
+        (xmax, ymin, zmax),
+        (xmax, ymax, zmax),
+        (xmin, ymax, zmax),
+    ]
+    for i, co in enumerate(coords):
+        obj.data.vertices[i].co = mathutils.Vector(co)
+    obj.data.update()
+    return True
+
+
+def _set_rotated_door_leaf_vertices(obj_name, hinge_x, hinge_y, length_m, thickness_m, angle_rad, zmin, zmax):
+    """Posiziona l'anta aperta a 8 vertici ruotata attorno al cardine sinistro interno."""
+    obj = bpy.data.objects.get(obj_name)
+    if obj is None or obj.type != "MESH" or len(obj.data.vertices) != 8:
+        print(f"  [WARN] Oggetto anta 8-vertici non valido o mancante: {obj_name}")
+        return False
+
+    obj.parent = None
+    obj.location = mathutils.Vector((0.0, 0.0, 0.0))
+    obj.rotation_mode = "XYZ"
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    obj.scale = mathutils.Vector((1.0, 1.0, 1.0))
+
+    ux, uy = math.cos(angle_rad), math.sin(angle_rad)
+    # Normale esterna/interna rispetto all'anta (spessore centrato sul piano dell'anta)
+    nx, ny = math.sin(angle_rad), -math.cos(angle_rad)
+    half_t = thickness_m * 0.5
+
+    p0 = (hinge_x + half_t * nx, hinge_y + half_t * ny)
+    p1 = (hinge_x + length_m * ux + half_t * nx, hinge_y + length_m * uy + half_t * ny)
+    p2 = (hinge_x + length_m * ux - half_t * nx, hinge_y + length_m * uy - half_t * ny)
+    p3 = (hinge_x - half_t * nx, hinge_y - half_t * ny)
+
+    coords = [
+        (p0[0], p0[1], zmin),
+        (p1[0], p1[1], zmin),
+        (p2[0], p2[1], zmin),
+        (p3[0], p3[1], zmin),
+        (p0[0], p0[1], zmax),
+        (p1[0], p1[1], zmax),
+        (p2[0], p2[1], zmax),
+        (p3[0], p3[1], zmax),
+    ]
+    for i, co in enumerate(coords):
+        obj.data.vertices[i].co = mathutils.Vector(co)
+    obj.data.update()
+    return True
+
+
+def setup_dining_south_wall_openings():
+    """
+    Allinea in modo esatto la parete sud di cucina / sala da pranzo (Y = -8.05..-7.75)
+    alle misure reali rilevate dall'utente a partire dallo spigolo est (X = 13.90 m,
+    filo parete est interna & Muro_Cinta_Est):
+      112 cm (muro est -> finestra est) -> X = [12.780, 13.900]
+       87 cm (larghezza finestra est S2) -> X = [11.910, 12.780]
+       63 cm (finestra S2 -> porta)      -> X = [11.280, 11.910]
+      117 cm (larghezza porta)           -> X = [10.110, 11.280]
+      142 cm (porta -> finestra ovest)   -> X = [ 8.690, 10.110]
+       87 cm (larghezza finestra S1)     -> X = [ 7.820,  8.690]
+      145 cm (muro ovest -> Wall_Div_02) -> X = [ 6.370,  7.820]
+    """
+    y_out, y_in = -8.050, -7.750
+    z_floor, z_top = 0.000, 3.000
+    z_sill, z_win_top = 1.000, 2.830
+    z_door_top = 2.130
+
+    # Quote X esatte (metri) da Est (13.90) verso Ovest (6.37)
+    x_east = 13.900
+    x_s2_max = x_east - 1.120       # 12.780 (112 cm)
+    x_s2_min = x_s2_max - 0.870     # 11.910 (87 cm)
+    x_door_max = x_s2_min - 0.630   # 11.280 (63 cm)
+    x_door_min = x_door_max - 1.170 # 10.110 (117 cm)
+    x_s1_max = x_door_min - 1.420   #  8.690 (142 cm)
+    x_s1_min = x_s1_max - 0.870     #  7.820 (87 cm)
+    x_west = 6.370                  #  6.370 (Wall_Div_02 filo est -> 145 cm residui)
+
+    frame_w = 0.050
+    win_y0, win_y1 = -7.940, -7.860
+    glass_y0, glass_y1 = -7.910, -7.890
+    door_y0, door_y1 = -7.950, -7.850
+
+    # 1. Tratti murari a tutt'altezza, davanzali e architravi
+    _set_axis_box_vertices("Wall_Dining_South_01", x_west, x_s1_min, y_out, y_in, z_floor, z_top)
+    _set_axis_box_vertices("Wall_Dining_South_02", x_s1_max, x_door_min, y_out, y_in, z_floor, z_top)
+    _set_axis_box_vertices("Wall_Dining_South_03", x_door_max, x_s2_min, y_out, y_in, z_floor, z_top)
+    _set_axis_box_vertices("Wall_Dining_South_04", x_s2_max, x_east, y_out, y_in, z_floor, z_top)
+
+    _set_axis_box_vertices("Wall_Dining_South_Sill_1", x_s1_min, x_s1_max, y_out, y_in, z_floor, z_sill)
+    _set_axis_box_vertices("Wall_Dining_South_Lintel_1", x_s1_min, x_s1_max, y_out, y_in, z_win_top, z_top)
+    _set_axis_box_vertices("Wall_Dining_South_Door_Lintel", x_door_min, x_door_max, y_out, y_in, z_door_top, z_top)
+    _set_axis_box_vertices("Wall_Dining_South_Sill_2", x_s2_min, x_s2_max, y_out, y_in, z_floor, z_sill)
+    _set_axis_box_vertices("Wall_Dining_South_Lintel_2", x_s2_min, x_s2_max, y_out, y_in, z_win_top, z_top)
+
+    # 2. Finestra S1 e Finestra S2 (87 cm ciascuna)
+    for prefix, w0, w1 in [("Win_Dining_S1", x_s1_min, x_s1_max), ("Win_Dining_S2", x_s2_min, x_s2_max)]:
+        w_mid = 0.5 * (w0 + w1)
+        _set_axis_box_vertices(f"{prefix}_Frame_Bottom", w0, w1, win_y0, win_y1, z_sill, z_sill + frame_w)
+        _set_axis_box_vertices(f"{prefix}_Frame_Top", w0, w1, win_y0, win_y1, z_win_top - frame_w, z_win_top)
+        _set_axis_box_vertices(f"{prefix}_Frame_Left", w0, w0 + frame_w, win_y0, win_y1, z_sill + frame_w, z_win_top - frame_w)
+        _set_axis_box_vertices(f"{prefix}_Frame_Right", w1 - frame_w, w1, win_y0, win_y1, z_sill + frame_w, z_win_top - frame_w)
+        _set_axis_box_vertices(f"{prefix}_Glass", w0 + frame_w, w1 - frame_w, glass_y0, glass_y1, z_sill + frame_w, z_win_top - frame_w)
+        _set_axis_box_vertices(f"{prefix}_Mullion", w_mid - frame_w * 0.5, w_mid + frame_w * 0.5, win_y0, win_y1, z_sill + frame_w, z_win_top - frame_w)
+
+    # 3. Porta finestra / ingresso sala da pranzo (117 cm) con anta aperta a 50° verso l'interno
+    _set_axis_box_vertices("Door_Dining_Main_Frame_Left", x_door_min, x_door_min + frame_w, door_y0, door_y1, z_floor, z_door_top - frame_w)
+    _set_axis_box_vertices("Door_Dining_Main_Frame_Right", x_door_max - frame_w, x_door_max, door_y0, door_y1, z_floor, z_door_top - frame_w)
+    _set_axis_box_vertices("Door_Dining_Main_Frame_Top", x_door_min, x_door_max, door_y0, door_y1, z_door_top - frame_w, z_door_top)
+
+    hinge_x = x_door_min + frame_w
+    hinge_y = 0.5 * (door_y0 + door_y1)
+    leaf_len = (x_door_max - frame_w) - hinge_x
+    open_angle_rad = math.radians(50.0)
+    _set_rotated_door_leaf_vertices(
+        "Door_Dining_Main_Panel",
+        hinge_x=hinge_x,
+        hinge_y=hinge_y,
+        length_m=leaf_len,
+        thickness_m=0.040,
+        angle_rad=open_angle_rad,
+        zmin=z_floor,
+        zmax=z_door_top - frame_w,
+    )
+
+    handle_dist = max(0.20, leaf_len - 0.080)
+    hx = hinge_x + handle_dist * math.cos(open_angle_rad)
+    hy = hinge_y + handle_dist * math.sin(open_angle_rad)
+    _set_axis_box_vertices("Door_Dining_Main_Handle", hx - 0.060, hx + 0.060, hy - 0.020, hy + 0.020, 0.980, 1.020)
+
+    print(
+        f"  [OK] Parete Sud Sala da Pranzo aggiornata da Est (13.90m): "
+        f"S1=[{x_s1_min:.2f},{x_s1_max:.2f}] Porta=[{x_door_min:.2f},{x_door_max:.2f}] S2=[{x_s2_min:.2f},{x_s2_max:.2f}]"
+    )
+
+
+def setup_salotto_south_door():
+    """
+    Aggiorna la porta sud del Salotto (verso il portico, Y = -7.11..-6.81) portandone
+    la larghezza a 117 cm (1.170 m, identica alla porta della sala da pranzo) e
+    mantenendo invariato il centro originale X = 3.960 m -> [3.375, 4.545].
+    """
+    y_out, y_in = -7.110, -6.810
+    z_floor, z_top, z_door_top = 0.000, 3.000, 2.130
+    frame_w = 0.050
+    door_y0, door_y1 = -7.010, -6.910
+
+    x_center = 3.960
+    door_width = 1.170
+    x_door_min = round(x_center - door_width * 0.5, 4)  # 3.375
+    x_door_max = round(x_center + door_width * 0.5, 4)  # 4.545
+
+    _set_axis_box_vertices("Wall_South_West_02", 2.360, x_door_min, y_out, y_in, z_floor, z_top)
+    _set_axis_box_vertices("Wall_South_West_03", x_door_max, 6.070, y_out, y_in, z_floor, z_top)
+    _set_axis_box_vertices("Wall_South_West_Door_Lintel", x_door_min, x_door_max, y_out, y_in, z_door_top, z_top)
+
+    _set_axis_box_vertices("Door_Salotto_Sud_Frame_Left", x_door_min, x_door_min + frame_w, door_y0, door_y1, z_floor, z_door_top - frame_w)
+    _set_axis_box_vertices("Door_Salotto_Sud_Frame_Right", x_door_max - frame_w, x_door_max, door_y0, door_y1, z_floor, z_door_top - frame_w)
+    _set_axis_box_vertices("Door_Salotto_Sud_Frame_Top", x_door_min, x_door_max, door_y0, door_y1, z_door_top - frame_w, z_door_top)
+
+    hinge_x = x_door_min + frame_w
+    hinge_y = 0.5 * (door_y0 + door_y1)
+    leaf_len = (x_door_max - frame_w) - hinge_x  # 1.070 m
+    open_angle_rad = math.radians(45.0)
+    _set_rotated_door_leaf_vertices(
+        "Door_Salotto_Sud_Panel",
+        hinge_x=hinge_x,
+        hinge_y=hinge_y,
+        length_m=leaf_len,
+        thickness_m=0.040,
+        angle_rad=open_angle_rad,
+        zmin=z_floor,
+        zmax=z_door_top - frame_w,
+    )
+
+    handle_dist = max(0.20, leaf_len - 0.080)
+    hx = hinge_x + handle_dist * math.cos(open_angle_rad)
+    hy = hinge_y + handle_dist * math.sin(open_angle_rad)
+    _set_axis_box_vertices("Door_Salotto_Sud_Handle", hx - 0.060, hx + 0.060, hy - 0.020, hy + 0.020, 0.980, 1.020)
+
+    print(
+        f"  [OK] Porta Sud Salotto aggiornata (centro={x_center:.3f}m, larghezza=1.17m): "
+        f"[{x_door_min:.3f},{x_door_max:.3f}]"
+    )
+
+
 def apply_all():
     print("\n" + "=" * 65)
     print("AGGIORNAMENTO PROPRIETÀ REALI HOME ASSISTANT & VERA TELECAMERA")
     print("=" * 65)
 
-    # 1. Ground Colliders
+    # 1. Allineamento aperture parete sud sala da pranzo/cucina e porta sud salotto alle quote reali
+    setup_dining_south_wall_openings()
+    setup_salotto_south_door()
+
+    # 2. Ground Colliders
     for name in GROUND_COLLIDERS:
         obj = bpy.data.objects.get(name)
         if obj:
