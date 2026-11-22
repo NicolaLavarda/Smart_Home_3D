@@ -688,6 +688,115 @@ export class HAClient {
         attributes: { unit_of_measurement: '%', friendly_name: 'Deebot Unit care lifespan' },
       },
     };
+
+    // Entità Reolink complete per i 4 varchi telecamere (faretto, sirena, AI, controlli rapidi)
+    for (const [slug, camLabel] of [
+      ['carraio', 'Carraio'],
+      ['portico', 'Portico'],
+      ['ingresso', 'Ingresso'],
+      ['stradina', 'Stradina'],
+    ]) {
+      const haPrefix = slug === 'carraio' ? 'carraio' : `giardino_${slug}`;
+      if (slug !== 'carraio') {
+        this.mockEntities[`camera.${haPrefix}_scorrevole`] = {
+          entity_id: `camera.${haPrefix}_scorrevole`,
+          state: 'idle',
+          attributes: { friendly_name: `${camLabel} Scorrevole` },
+        };
+      }
+      this.mockEntities[`light.${slug}_faretto`] = {
+        entity_id: `light.${slug}_faretto`,
+        state: 'off',
+        attributes: { friendly_name: `${camLabel} Faretto`, brightness: 179 },
+      };
+      this.mockEntities[`number.${slug}_accendi_la_luminosita_del_faretto`] = {
+        entity_id: `number.${slug}_accendi_la_luminosita_del_faretto`,
+        state: '70',
+        attributes: {
+          friendly_name: `${camLabel} Luminosità Faretto`,
+          min: 0,
+          max: 100,
+          step: 1,
+          unit_of_measurement: '%',
+        },
+      };
+      this.mockEntities[`select.${slug}_modalita_faretto`] = {
+        entity_id: `select.${slug}_modalita_faretto`,
+        state: 'auto',
+        attributes: {
+          friendly_name: `${camLabel} Modalità faretto`,
+          options: ['off', 'auto', 'schedule'],
+        },
+      };
+      this.mockEntities[`siren.${slug}_sirena`] = {
+        entity_id: `siren.${slug}_sirena`,
+        state: 'off',
+        attributes: { friendly_name: `${camLabel} Sirena` },
+      };
+      this.mockEntities[`switch.${slug}_sirena_su_evento`] = {
+        entity_id: `switch.${slug}_sirena_su_evento`,
+        state: 'off',
+        attributes: { friendly_name: `${camLabel} Sirena su evento` },
+      };
+      this.mockEntities[`switch.${slug}_infrared_lights_in_night_mode`] = {
+        entity_id: `switch.${slug}_infrared_lights_in_night_mode`,
+        state: 'on',
+        attributes: { friendly_name: `${camLabel} Infrarossi notturni` },
+      };
+      this.mockEntities[`select.${slug}_modalita_giorno_notte`] = {
+        entity_id: `select.${slug}_modalita_giorno_notte`,
+        state: 'auto',
+        attributes: {
+          friendly_name: `${camLabel} Modalità giorno-notte`,
+          options: ['auto', 'color', 'black_and_white'],
+        },
+      };
+      this.mockEntities[`sensor.${slug}_day_night_state`] = {
+        entity_id: `sensor.${slug}_day_night_state`,
+        state: 'night',
+        attributes: { friendly_name: `${camLabel} Stato giorno-notte` },
+      };
+      this.mockEntities[`switch.${slug}_notifiche_push`] = {
+        entity_id: `switch.${slug}_notifiche_push`,
+        state: 'on',
+        attributes: { friendly_name: `${camLabel} Notifiche push` },
+      };
+      this.mockEntities[`switch.${slug}_registra`] = {
+        entity_id: `switch.${slug}_registra`,
+        state: 'on',
+        attributes: { friendly_name: `${camLabel} Registra` },
+      };
+      this.mockEntities[`switch.${slug}_registra_audio`] = {
+        entity_id: `switch.${slug}_registra_audio`,
+        state: 'on',
+        attributes: { friendly_name: `${camLabel} Registra audio` },
+      };
+      this.mockEntities[`binary_sensor.${slug}_persona`] = {
+        entity_id: `binary_sensor.${slug}_persona`,
+        state: 'off',
+        attributes: { friendly_name: `${camLabel} Persona`, device_class: 'occupancy' },
+      };
+      this.mockEntities[`binary_sensor.${slug}_veicolo`] = {
+        entity_id: `binary_sensor.${slug}_veicolo`,
+        state: 'off',
+        attributes: { friendly_name: `${camLabel} Veicolo`, device_class: 'occupancy' },
+      };
+      this.mockEntities[`binary_sensor.${slug}_animale`] = {
+        entity_id: `binary_sensor.${slug}_animale`,
+        state: 'off',
+        attributes: { friendly_name: `${camLabel} Animale`, device_class: 'occupancy' },
+      };
+      this.mockEntities[`binary_sensor.${slug}_movimento`] = {
+        entity_id: `binary_sensor.${slug}_movimento`,
+        state: 'off',
+        attributes: { friendly_name: `${camLabel} Movimento`, device_class: 'motion' },
+      };
+      this.mockEntities[`button.${slug}_riavvia`] = {
+        entity_id: `button.${slug}_riavvia`,
+        state: 'idle',
+        attributes: { friendly_name: `${camLabel} Riavvia` },
+      };
+    }
   }
 
   _isProdMode() {
@@ -1418,6 +1527,18 @@ export class HAClient {
           ent.attributes.media_channel = 'Rai 1 HD';
         }
       }
+    } else if (domain === 'siren') {
+      if (service === 'toggle') {
+        ent.state = ent.state === 'on' ? 'off' : 'on';
+      } else if (service === 'turn_on') {
+        ent.state = 'on';
+      } else if (service === 'turn_off') {
+        ent.state = 'off';
+      }
+    } else if (domain === 'number') {
+      if (service === 'set_value' && serviceData.value !== undefined) {
+        ent.state = String(serviceData.value);
+      }
     } else if (domain === 'select') {
       if (service === 'select_option' && serviceData.option) {
         ent.state = serviceData.option;
@@ -1485,9 +1606,24 @@ export class HAClient {
     return this.activeUrl || this.publicUrl || this.tailscaleUrl || this.localUrl || this.url || '';
   }
 
-  resolveCameraEntityId(preferredId = 'camera.carraio_scorrevole') {
+  resolveCameraEntityId(preferredId = 'camera.carraio_scorrevole', streamQuality = null) {
     const entities = this.entities || {};
+    const prefLower = String(preferredId || '').toLowerCase();
+    const rawSlug = prefLower.replace(/^camera\./, '');
+    const baseSlug = rawSlug.replace(/_(scorrevole|fluente|trasparente|chiaro|fluent|clear|main|sub)$/i, '');
+
     if (preferredId && entities[preferredId]) {
+      // Se è stato richiesto esplicitamente lo stream Main ('main') e il manifesto punta a _scorrevole/_fluente,
+      // preferisce l'eventuale entità gemella _trasparente/_clear in Home Assistant (alta risoluzione).
+      if (streamQuality === 'main' && /_(scorrevole|fluente|fluent|sub)$/i.test(prefLower)) {
+        const mainRe = /(trasparent|chiaro|clear|main)/i;
+        const siblingMain = Object.keys(entities).find((id) => {
+          if (!id.startsWith('camera.') || /(istantane|analisi|annotat)/i.test(id)) return false;
+          const lower = id.toLowerCase();
+          return (baseSlug ? lower.includes(baseSlug) : true) && mainRe.test(lower);
+        });
+        if (siblingMain) return siblingMain;
+      }
       return preferredId;
     }
 
@@ -1496,10 +1632,6 @@ export class HAClient {
       return preferredId;
     }
 
-    const prefLower = String(preferredId || '').toLowerCase();
-    const rawSlug = prefLower.replace(/^camera\./, '');
-    const baseSlug = rawSlug.replace(/_(scorrevole|trasparente|fluente|main|sub)$/i, '');
-
     if (baseSlug) {
       const slugMatches = cameraIds.filter((id) => {
         const lowerId = id.toLowerCase();
@@ -1507,10 +1639,15 @@ export class HAClient {
         return lowerId.includes(baseSlug) || friendly.includes(baseSlug);
       });
       if (slugMatches.length > 0) {
-        const preferredStream = slugMatches.find(
-          (id) => !/(istantane|analisi|annotat)/i.test(id)
-        );
-        return preferredStream || slugMatches[0];
+        const nonSnapshot = slugMatches.filter((id) => !/(istantane|analisi|annotat)/i.test(id));
+        if (streamQuality === 'main') {
+          const hdMatch = nonSnapshot.find((id) => /(trasparent|chiaro|clear|main)/i.test(id));
+          if (hdMatch) return hdMatch;
+        } else if (streamQuality === 'sub') {
+          const subMatch = nonSnapshot.find((id) => /(scorrevole|fluente|fluent|sub)/i.test(id));
+          if (subMatch) return subMatch;
+        }
+        return nonSnapshot[0] || slugMatches[0];
       }
       // Se è stata chiesta una camera specifica diversa da Carraio non ancora presente in HA,
       // mantieni l'entityId richiesto per evitare di mostrare lo snapshot di un'altra camera.

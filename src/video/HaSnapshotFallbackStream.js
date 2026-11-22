@@ -30,6 +30,7 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     this.cameraLabel = String(options.cameraLabel || 'REOLINK RLC-540A');
     this.cameraIp = String(options.cameraIp || '192.168.86.47');
     this.isPanoramic180 = Boolean(options.isPanoramic180);
+    this.streamQuality = options.streamQuality || (/_sub$/i.test(streamName) ? 'sub' : 'main');
     const rawAspect = Number(options.aspectRatio);
     this.aspectRatio = Number.isFinite(rawAspect) && rawAspect > 0.4 && rawAspect < 6.0
       ? rawAspect
@@ -75,13 +76,15 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     };
   }
 
-  _computeCanvasSize(aspectRatio) {
+  _computeCanvasSize(aspectRatio, imgWidth = 0, imgHeight = 0) {
     const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0.4 && aspectRatio < 6.0
       ? aspectRatio
       : (16 / 9);
-    const height = 360;
+    const wantHd = this.streamQuality === 'main' && imgWidth > 800 && imgHeight > 400;
+    const height = wantHd ? Math.min(720, Math.max(360, imgHeight)) : 360;
+    const maxW = wantHd ? 2560 : 1440;
     const rawW = Math.round(height * safeAspect);
-    const clampedW = Math.max(360, Math.min(1440, rawW));
+    const clampedW = Math.max(360, Math.min(maxW, rawW));
     const width = clampedW % 2 === 0 ? clampedW : clampedW + 1;
     return { width, height };
   }
@@ -95,7 +98,7 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
     const imgAspect = imgW / imgH;
     if (!Number.isFinite(imgAspect) || imgAspect <= 0.4 || imgAspect >= 6.0) return;
 
-    const { width: nextW, height: nextH } = this._computeCanvasSize(imgAspect);
+    const { width: nextW, height: nextH } = this._computeCanvasSize(imgAspect, imgW, imgH);
     if (Math.abs(this.canvas.width - nextW) <= 4 && Math.abs(this.canvas.height - nextH) <= 4) {
       return;
     }
@@ -184,7 +187,7 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
       if (!this.haClient || this.haClient.isMockMode) return;
 
       const entityId = typeof this.haClient.resolveCameraEntityId === 'function'
-        ? this.haClient.resolveCameraEntityId(this.cameraEntityId)
+        ? this.haClient.resolveCameraEntityId(this.cameraEntityId, this.streamQuality)
         : this.cameraEntityId;
       this.resolvedEntityId = entityId;
 
@@ -364,18 +367,6 @@ export class HaSnapshotFallbackStream extends IVideoStreamProvider {
         ctx.fillText('Abilita RTSP/FLV su Reolink & inserisci password in .env per video live', w / 2, h / 2 + 86);
       }
     }
-
-    // Timestamp OSD in alto
-    const nowStr = new Date().toLocaleTimeString('it-IT', { hour12: false });
-    const modeTag = this.hasLiveHaFrames
-      ? (this.haClient?.isTailscale ? 'HA TAILSCALE' : 'HA BRIDGE')
-      : 'STANDBY';
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-    ctx.fillRect(14, 14, 290, 26);
-    ctx.fillStyle = this.hasLiveHaFrames ? '#34d399' : '#38bdf8';
-    ctx.font = 'bold 12px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`${this.cameraName.toUpperCase()} • ${modeTag} • ${nowStr}`, 22, 31);
   }
 
   disconnect() {

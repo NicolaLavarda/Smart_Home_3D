@@ -661,7 +661,6 @@ export class SecurityFabHub {
         </div>
         <div class="m3-cam-overlay-top">
           <span class="m3-cam-name">${cam.shortName}${cam.isPanoramic180 ? ' 180°' : ''}</span>
-          <span class="m3-cam-badge live">STANDBY</span>
         </div>
         <div class="m3-cam-overlay-actions">
           <button type="button" class="m3-cam-action-btn" data-cam-action="pov" title="Inquadra visuale 3D di ${cam.shortName}" aria-label="Vista 3D ${cam.shortName}">

@@ -12,7 +12,7 @@ export class SecurityCameraController extends BaseDeviceController {
   constructor(options = {}) {
     super('security_camera', {
       name: 'Telecamera Carraio (Reolink RLC-540A)',
-      subtitle: 'Esterno Carraio • Live & Calibrazione',
+      subtitle: 'Esterno Carraio • Controllo & Sicurezza',
       primaryEntityId: options.primaryEntityId || 'camera.carraio_scorrevole',
       associatedEntityIds: [
         'camera.carraio_scorrevole',
@@ -167,7 +167,7 @@ export class SecurityCameraController extends BaseDeviceController {
 
     return {
       title,
-      subtitle: `${zoneLabel} • Live & Calibrazione`,
+      subtitle: `${zoneLabel} • Controllo & Sicurezza`,
     };
   }
 

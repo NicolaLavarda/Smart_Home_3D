@@ -90,14 +90,6 @@ export class CameraPovOverlayController {
         })
       );
     }
-
-    if (typeof this.haClient?.onAuthChange === 'function') {
-      this._unsubs.push(
-        this.haClient.onAuthChange(() => {
-          this._syncHudAdminVisibility();
-        })
-      );
-    }
   }
 
   _isCalibrationActive() {
@@ -464,10 +456,6 @@ export class CameraPovOverlayController {
         <button type="button" class="pov-hud-btn pov-hud-quality-btn" id="btn-pov-quality" title="Alterna qualità flusso live (Fluido Sub / HD Main)">
           <span id="pov-hud-quality-label">HD</span>
         </button>
-        <button type="button" class="pov-hud-btn" id="btn-pov-calibrate" title="Calibra ottica di questa telecamera" hidden disabled style="display:none;">
-          ${icon('sliders-horizontal', { size: 13 })}
-          <span>Calibra</span>
-        </button>
         <button type="button" class="pov-hud-btn exit" id="btn-pov-exit" title="Esci dalla vista POV">
           ${icon('x', { size: 14 })}
           <span>Esci</span>
@@ -491,12 +479,6 @@ export class CameraPovOverlayController {
       this._activateOverlayForCamera(this.activeCameraName, 'live', { docked: true });
     });
 
-    hud.querySelector('#btn-pov-calibrate')?.addEventListener('click', () => {
-      if (!this.haClient?.isAdmin || !this.calibrationAssistant || !this.activeCameraName) return;
-      const targetCam = this.activeCameraName;
-      this.calibrationAssistant.open(targetCam);
-    });
-
     hud.querySelector('#btn-pov-exit')?.addEventListener('click', () => {
       this.cameraController?.exitCameraPOV?.({ reason: 'hud_exit' });
       this.cameraController?.flyToPreset?.('overview', 0.9);
@@ -504,7 +486,6 @@ export class CameraPovOverlayController {
 
     this.uiLayer.appendChild(hud);
     this.hudEl = hud;
-    this._syncHudAdminVisibility();
     this._syncHudQualityButton();
   }
 
@@ -524,22 +505,11 @@ export class CameraPovOverlayController {
       : 'Flusso HD Main attivo • Clicca per flusso fluido WebRTC (SD)';
   }
 
-  _syncHudAdminVisibility() {
-    if (!this.hudEl) return;
-    const calibBtn = this.hudEl.querySelector('#btn-pov-calibrate');
-    if (!calibBtn) return;
-    const isAdmin = Boolean(this.haClient?.isAdmin && this.calibrationAssistant);
-    calibBtn.hidden = !isAdmin;
-    calibBtn.disabled = !isAdmin;
-    calibBtn.style.display = isAdmin ? '' : 'none';
-  }
-
   _showHud(info, mode, badgeState = 'live') {
     if (!this.hudEl) return;
     const nameEl = this.hudEl.querySelector('#pov-hud-cam-name');
     if (nameEl) nameEl.textContent = info.shortName;
     this._updateHudModeBadge(badgeState, mode === 'replay' ? 'REPLAY' : 'LIVE');
-    this._syncHudAdminVisibility();
     this._syncHudQualityButton();
     this.hudEl.hidden = false;
     this.hudEl.classList.add('visible');

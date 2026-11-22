@@ -80,6 +80,16 @@ import {
   Timer,
   Minus,
   Plus,
+  Lightbulb,
+  Siren,
+  BellRing,
+  Bell,
+  BellOff,
+  ShieldAlert,
+  Mic,
+  RotateCw,
+  Flashlight,
+  Radar,
 } from 'lucide';
 
 const ICON_MAP = {
@@ -163,6 +173,16 @@ const ICON_MAP = {
   timer: Timer,
   minus: Minus,
   plus: Plus,
+  lightbulb: Lightbulb,
+  siren: Siren,
+  'bell-ring': BellRing,
+  bell: Bell,
+  'bell-off': BellOff,
+  'shield-alert': ShieldAlert,
+  mic: Mic,
+  'rotate-cw': RotateCw,
+  flashlight: Flashlight,
+  radar: Radar,
 };
 
 /**

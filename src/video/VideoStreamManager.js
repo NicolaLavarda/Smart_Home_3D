@@ -229,6 +229,7 @@ export class VideoStreamManager {
 
     const forceReconnect = Boolean(extraOptions.forceReconnect);
     const allowSubReuse = extraOptions.allowSubReuse !== false;
+    const allowSubFallback = allowSubReuse && extraOptions.allowSubFallback !== false;
 
     // 0. Se una connessione per lo stesso streamName è GIÀ in corso su questo esatto <video>,
     //    attendi la stessa Promise evitando connessioni duplicate concorrenti sullo stesso elemento!
@@ -278,7 +279,7 @@ export class VideoStreamManager {
     // 3. Connessione diretta sul <video> passato (100% identica a HEAD), deduplicata per elemento
     const connectWork = (async () => {
       const candidates = this.buildProviderChain(streamName, preferredMode, extraOptions);
-      const subStreamName = (preferredMode === 'auto' && this.cameraCatalog)
+      const subStreamName = (allowSubFallback && preferredMode === 'auto' && this.cameraCatalog)
         ? this.getWarmSubStreamName(streamName)
         : null;
 
@@ -378,6 +379,11 @@ export class VideoStreamManager {
       catalogEntry?.entityId ||
       'camera.carraio_scorrevole';
 
+    const streamQuality = /_sub$/i.test(streamName) ? 'sub' : 'main';
+    const mseTimeoutMs = (!timeoutMs && streamQuality === 'main' && extraOptions.forceReconnect)
+      ? 7500
+      : timeoutMs;
+
     const opts = {
       go2rtcUrl: activeGo2RtcUrl,
       haClient: this.haClient,
@@ -388,14 +394,16 @@ export class VideoStreamManager {
       cameraIp: extraOptions.cameraIp || catalogEntry?.cameraIp || '192.168.86.47',
       aspectRatio: extraOptions.aspectRatio || catalogEntry?.aspectRatio || (16 / 9),
       isPanoramic180: Boolean(extraOptions.isPanoramic180 ?? catalogEntry?.isPanoramic180),
+      streamQuality,
       ...(timeoutMs ? { timeoutMs } : {}),
     };
+    const mseOpts = mseTimeoutMs ? { ...opts, timeoutMs: mseTimeoutMs } : opts;
 
     if (preferredMode === 'webrtc') {
       return [new Go2RtcWebRTCStream(streamName, opts), new HaSnapshotFallbackStream(streamName, opts)];
     }
     if (preferredMode === 'mse') {
-      return [new Go2RtcMSEStream(streamName, opts), new HaSnapshotFallbackStream(streamName, opts)];
+      return [new Go2RtcMSEStream(streamName, mseOpts), new HaSnapshotFallbackStream(streamName, opts)];
     }
     if (preferredMode === 'snapshot') {
       return [new HaSnapshotFallbackStream(streamName, opts)];
@@ -403,7 +411,7 @@ export class VideoStreamManager {
 
     return [
       new Go2RtcWebRTCStream(streamName, opts),
-      new Go2RtcMSEStream(streamName, opts),
+      new Go2RtcMSEStream(streamName, mseOpts),
       new HaSnapshotFallbackStream(streamName, opts),
     ];
   }
@@ -426,7 +434,17 @@ export class VideoStreamManager {
       return;
     }
 
-    // 2. Se era il <video> primario, disconnetti il provider e rimuovi la sessione primaria
+    // 2. Se una THREE.VideoTexture (POV / Calibrazione) sta ancora usando questo <video>,
+    //    trasferiscile la proprietà dello stream anziché disconnettere il video sotto la vista POV!
+    let transferredToTexture = false;
+    for (const entry of this.textureEntries.values()) {
+      if (entry.videoElement === videoElement && (entry.refCount > 0 || entry.idleTimer)) {
+        entry.ownsVideoElement = true;
+        transferredToTexture = true;
+      }
+    }
+
+    // 3. Se era il <video> primario, sgancia i cloni e (se non trasferito a una texture) disconnetti il provider
     for (const [key, session] of this.primarySessions.entries()) {
       if (session.videoElement === videoElement) {
         for (const cloneEl of Array.from(session.clones)) {
@@ -443,7 +461,9 @@ export class VideoStreamManager {
 
     const provider = this.activeElementProviders.get(videoElement);
     if (provider) {
-      provider.disconnect();
+      if (!transferredToTexture) {
+        provider.disconnect();
+      }
       this.activeElementProviders.delete(videoElement);
     }
   }

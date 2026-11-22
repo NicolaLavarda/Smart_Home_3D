@@ -1926,9 +1926,17 @@ async function runScenario(scenario) {
 
       if (scenario.target === 'camera_modal') {
         const { SecurityCameraModal } = await loadModule('/src/devices/camera/SecurityCameraModal.js');
+        const mockEntities = {
+          'light.carraio_faretto': { entity_id: 'light.carraio_faretto', state: 'off', attributes: {} },
+          'siren.carraio_sirena': { entity_id: 'siren.carraio_sirena', state: 'off', attributes: {} },
+          'button.carraio_riavvia': { entity_id: 'button.carraio_riavvia', state: 'idle', attributes: {} },
+        };
         const haClientMock = {
           isAdmin: Boolean(scenario.isAdmin),
           isTailscale: false,
+          isMockMode: true,
+          mockEntities,
+          entities: mockEntities,
           currentUser: { id: 'u', name: 'User', is_admin: Boolean(scenario.isAdmin) },
         };
         const controllerMock = {
@@ -1946,16 +1954,20 @@ async function runScenario(scenario) {
         const container = ctx.document.getElementById('device-modal-drawer');
         await modal.render(container, { haClient: haClientMock, assetLoader: { manifest: { cameras: {} }, cameras: new Map() } });
 
+        const rebootBtn = container.querySelector('#btn-cam-reboot');
+        const spotlightBtn = container.querySelector('#btn-cam-spotlight-toggle');
+        const sirenBtn = container.querySelector('#btn-cam-siren-toggle');
         const calibBtn = container.querySelector('#btn-camera-calibrate');
         const simBtn = container.querySelector('#btn-toggle-simulator');
-        const povBtn = container.querySelector('#btn-camera-pov');
         const videoEl = container.querySelector('#cam-modal-video');
         return {
           ok: true,
           data: {
-            calibVisibleAndEnabled: isElementVisibleAndEnabled(calibBtn),
-            simVisibleAndEnabled: isElementVisibleAndEnabled(simBtn),
-            povExists: Boolean(povBtn),
+            rebootVisibleAndEnabled: isElementVisibleAndEnabled(rebootBtn),
+            spotlightExists: Boolean(spotlightBtn),
+            sirenExists: Boolean(sirenBtn),
+            legacyCalibRemoved: !calibBtn,
+            legacySimRemoved: !simBtn,
             videoExists: Boolean(videoEl),
           },
         };

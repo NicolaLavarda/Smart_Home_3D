@@ -940,11 +940,11 @@ def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
         porticoSubtitle,
         porticoMainBtn,
         porticoSubBtn,
-        porticoHasIp: porticoHtml.includes('192.168.86.51'),
-        porticoHasFov: porticoHtml.includes('87°×44°'),
+        porticoHasControls: porticoHtml.includes('cam-ha-controls') && porticoHtml.includes('Faretto LED') && porticoHtml.includes('Attiva Sirena'),
+        porticoNoLegacyDetails: !porticoHtml.includes('btn-camera-pov') && !porticoHtml.includes('Modello & Ottica'),
         carraioTitle,
         carraioSubtitle,
-        carraioHasIp: carraioHtml.includes('192.168.86.47'),
+        carraioHasControls: carraioHtml.includes('cam-ha-controls') && carraioHtml.includes('Faretto LED'),
         attachedStreamNames: attachedStreams.map((s) => s.streamName),
         resolvedPorticoExact,
         resolvedPorticoVariant,
@@ -967,10 +967,10 @@ def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
     assert "." not in d["porticoSubtitle"]
     assert d["porticoMainBtn"] == "Main 4K"
     assert d["porticoSubBtn"] == "Sub 640×360"
-    assert d["porticoHasIp"] is True
-    assert d["porticoHasFov"] is True
+    assert d["porticoHasControls"] is True
+    assert d["porticoNoLegacyDetails"] is True
     assert "." not in d["carraioSubtitle"]
-    assert d["carraioHasIp"] is True
+    assert d["carraioHasControls"] is True
     assert d["attachedStreamNames"] == ["portico_main", "carraio_main"]
     assert d["resolvedPorticoExact"] == "camera.portico"
     assert d["resolvedPorticoVariant"] == "camera.portico_scorrevole"
@@ -1479,8 +1479,8 @@ def test_f17_ingresso_180_panoramic_frustum_overlay_and_modal():
         ingSubtitle,
         ingMainBtn,
         ingSubBtn,
-        ingHasIp: ingHtml.includes('192.168.86.53'),
-        ingHasOptics: ingHtml.includes('180°×55° Panoramica'),
+        ingHasControls: ingHtml.includes('cam-ha-controls') && ingHtml.includes('Faretto LED') && ingHtml.includes('Attiva Sirena'),
+        ingNoLegacyDetails: !ingHtml.includes('btn-camera-pov') && !ingHtml.includes('Modello & Ottica'),
         attachedStreams,
         ingTileIsPanoramic,
         pnpDisabledForPano,
@@ -1511,8 +1511,8 @@ def test_f17_ingresso_180_panoramic_frustum_overlay_and_modal():
     assert "." not in d["ingSubtitle"]
     assert d["ingMainBtn"] == "Main 16MP 180°"
     assert d["ingSubBtn"] == "Sub 1536×576"
-    assert d["ingHasIp"] is True
-    assert d["ingHasOptics"] is True
+    assert d["ingHasControls"] is True
+    assert d["ingNoLegacyDetails"] is True
     assert d["attachedStreams"][0] == "ingresso_main"
     assert set(d["attachedStreams"][1:]) == {"carraio_sub", "portico_sub", "ingresso_sub", "stradina_sub"}
     assert d["ingTileIsPanoramic"] is True
@@ -1715,8 +1715,8 @@ def test_f17_stradina_180_panoramic_frustum_overlay_and_4cam_ui():
         strSubtitle,
         strMainBtn,
         strSubBtn,
-        strHasIp: strHtml.includes('192.168.86.55'),
-        strHasOptics: strHtml.includes('180°×55° Panoramica'),
+        strHasControls: strHtml.includes('cam-ha-controls') && strHtml.includes('Faretto LED') && strHtml.includes('Attiva Sirena'),
+        strNoLegacyDetails: !strHtml.includes('btn-camera-pov') && !strHtml.includes('Modello & Ottica'),
         attachedStreams,
         panoTileIds,
         allTileIds,
@@ -1747,8 +1747,8 @@ def test_f17_stradina_180_panoramic_frustum_overlay_and_4cam_ui():
     assert "." not in d["strSubtitle"]
     assert d["strMainBtn"] == "Main 16MP 180°"
     assert d["strSubBtn"] == "Sub 1536×576"
-    assert d["strHasIp"] is True
-    assert d["strHasOptics"] is True
+    assert d["strHasControls"] is True
+    assert d["strNoLegacyDetails"] is True
     assert d["attachedStreams"][0] == "stradina_main"
     assert set(d["attachedStreams"][1:]) == {"carraio_sub", "portico_sub", "ingresso_sub", "stradina_sub"}
     assert set(d["panoTileIds"]) == {"Cam_Ingresso", "Cam_Stradina"}
@@ -1913,3 +1913,144 @@ def test_f17_panoramic_aspect_preservation_ordering_and_layout_switch():
     assert abs(d["ingAspectAfter16x9"] - (32.0 / 9.0)) < 0.01
     assert d["ingStillPanoAfterSub"] is True
     assert abs(d["ingAspectAfterSub"] - (8.0 / 3.0)) < 0.01
+
+
+def test_f17_camera_modal_ha_controls_and_entity_resolution():
+    code = """
+      const { HAClient } = await loadModule('/src/ha/HAClient.js');
+      const { SecurityCameraModal, resolveCameraControlEntities } = await loadModule('/src/devices/camera/SecurityCameraModal.js');
+      const { SecurityCameraController } = await loadModule('/src/devices/camera/SecurityCameraController.js');
+
+      const ha = new HAClient();
+      const ctrl = new SecurityCameraController({ haClient: ha });
+
+      // 1. Verifica risoluzione prefissi HA reali vs portico lampada principale
+      const liveLikeEntities = {
+        'light.portico': { entity_id: 'light.portico', state: 'on', attributes: {} },
+        'camera.giardino_portico_scorrevole': { entity_id: 'camera.giardino_portico_scorrevole', state: 'idle', attributes: {} },
+        'light.giardino_portico_faretto': { entity_id: 'light.giardino_portico_faretto', state: 'off', attributes: {} },
+        'siren.giardino_portico_sirena': { entity_id: 'siren.giardino_portico_sirena', state: 'off', attributes: {} },
+      };
+      const resolvedPortico = resolveCameraControlEntities(liveLikeEntities, {
+        entityId: 'camera.giardino_portico_scorrevole',
+        camName: 'Cam_Portico',
+        haClient: ha,
+      });
+
+      const resolvedCarraio = resolveCameraControlEntities(ha.mockEntities, {
+        entityId: 'camera.carraio_scorrevole',
+        camName: 'Cam_Carraio',
+        haClient: ha,
+      });
+
+      // 2. Render modale Carraio e interazioni live
+      const serviceCalls = [];
+      const origCall = ha.callService.bind(ha);
+      ha.callService = (domain, service, data) => {
+        serviceCalls.push({ domain, service, data });
+        return origCall(domain, service, data);
+      };
+
+      const vsmStub = {
+        attachToVideoElement: async (streamName) => ({
+          streamName,
+          getStatus: () => ({ mode: 'webrtc', connected: true, latencyMs: 38 }),
+          onStatusChange: () => () => {},
+        }),
+        detachFromVideoElement() {},
+      };
+      ctrl.videoStreamManager = vsmStub;
+
+      const modal = new SecurityCameraModal(ctrl);
+      const container = document.createElement('div');
+      await modal.render(container, {
+        entityId: 'camera.carraio_scorrevole',
+        haClient: ha,
+        assetLoader: { manifest: { cameras: { Cam_Carraio: {} } } },
+      });
+
+      const hasLegacyButtons = Boolean(
+        container.querySelector('#btn-camera-pov') ||
+        container.querySelector('#btn-camera-calibrate') ||
+        container.querySelector('#btn-toggle-simulator')
+      );
+
+      // Toggle Faretto LED
+      const spotlightBtn = container.querySelector('#btn-cam-spotlight-toggle');
+      spotlightBtn.click();
+      const spotlightCheckedAfterClick = spotlightBtn.classList.contains('checked');
+
+      // Slider Luminosità
+      const slider = container.querySelector('#cam-spotlight-brightness');
+      slider.value = '85';
+      slider.dispatchEvent({ type: 'change' });
+
+      // Toggle Sirena Manuale ON -> OFF
+      const sirenBtn = container.querySelector('#btn-cam-siren-toggle');
+      sirenBtn.click();
+      const sirenActiveAfterOn = sirenBtn.classList.contains('is-active');
+      sirenBtn.click();
+      const sirenActiveAfterOff = sirenBtn.classList.contains('is-active');
+
+      // Toggle Notifiche Push + Modalità Faretto
+      const pushTile = container.querySelector('#cam-sw-push');
+      pushTile.click();
+      const spotlightModesEl = container.querySelector('#cam-spotlight-modes');
+      const scheduleChip = spotlightModesEl?.querySelector('[data-option="schedule"]');
+      scheduleChip?.click();
+
+      // Riavvio 2-step Admin confirmation + RBAC
+      const rebootBtn = container.querySelector('#btn-cam-reboot');
+      const rebootDisabledResident = Boolean(rebootBtn.disabled);
+      ha.isAdmin = true;
+      ha._notifyAuthChange();
+      const rebootEnabledAdmin = !rebootBtn.disabled;
+      rebootBtn.click(); // arme
+      const callsAfterFirstRebootClick = serviceCalls.filter((c) => c.domain === 'button').length;
+      rebootBtn.click(); // conferma
+      const callsAfterSecondRebootClick = serviceCalls.filter((c) => c.domain === 'button').length;
+
+      modal.destroy();
+
+      return {
+        resolvedPorticoSpotlight: resolvedPortico.spotlight,
+        resolvedPorticoSiren: resolvedPortico.siren,
+        resolvedCarraioSpotlight: resolvedCarraio.spotlight,
+        resolvedCarraioSiren: resolvedCarraio.siren,
+        hasLegacyButtons,
+        spotlightCheckedAfterClick,
+        sirenActiveAfterOn,
+        sirenActiveAfterOff,
+        rebootDisabledResident,
+        rebootEnabledAdmin,
+        callsAfterFirstRebootClick,
+        callsAfterSecondRebootClick,
+        serviceCalls,
+        latencyText: container.querySelector('#cam-latency-badge')?.textContent,
+      };
+    """
+    res = run_js_scenario({"code": code})
+    assert res["ok"] is True, res
+    d = res["data"]
+    assert d["resolvedPorticoSpotlight"] == "light.giardino_portico_faretto"
+    assert d["resolvedPorticoSiren"] == "siren.giardino_portico_sirena"
+    assert d["resolvedCarraioSpotlight"] == "light.carraio_faretto"
+    assert d["resolvedCarraioSiren"] == "siren.carraio_sirena"
+    assert d["hasLegacyButtons"] is False
+    assert d["spotlightCheckedAfterClick"] is True
+    assert d["sirenActiveAfterOn"] is True
+    assert d["sirenActiveAfterOff"] is False
+    assert d["rebootDisabledResident"] is True
+    assert d["rebootEnabledAdmin"] is True
+    assert d["callsAfterFirstRebootClick"] == 0
+    assert d["callsAfterSecondRebootClick"] == 1
+    assert d["latencyText"] == "38 ms"
+    calls = d["serviceCalls"]
+    assert any(c["domain"] == "light" and c["service"] == "turn_on" and c["data"]["entity_id"] == "light.carraio_faretto" for c in calls)
+    assert any(c["domain"] == "number" and c["service"] == "set_value" and c["data"]["value"] == 85 for c in calls)
+    assert any(c["domain"] == "siren" and c["service"] == "turn_on" and c["data"]["entity_id"] == "siren.carraio_sirena" for c in calls)
+    assert any(c["domain"] == "siren" and c["service"] == "turn_off" and c["data"]["entity_id"] == "siren.carraio_sirena" for c in calls)
+    assert any(c["domain"] == "switch" and c["service"] == "toggle" and c["data"]["entity_id"] == "switch.carraio_notifiche_push" for c in calls)
+    assert any(c["domain"] == "select" and c["service"] == "select_option" and c["data"]["option"] == "schedule" for c in calls)
+    assert any(c["domain"] == "button" and c["service"] == "press" and c["data"]["entity_id"] == "button.carraio_riavvia" for c in calls)
+

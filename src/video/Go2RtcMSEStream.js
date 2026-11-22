@@ -58,8 +58,13 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
     const candidates = [
       'avc1.640029', // H.264 High L4.1
       'avc1.64002A', // H.264 High L4.2
+      'avc1.640032', // H.264 High L5.0
+      'avc1.640033', // H.264 High L5.1 (5MP / 4K)
       'avc1.42E01E', // H.264 Baseline
-      'hvc1.1.6.L153.B0', // H.265 / HEVC
+      'hvc1.1.6.L153.B0', // H.265 / HEVC L5.1 (4K RLC-810A)
+      'hev1.1.6.L153.B0', // H.265 / HEVC L5.1 alt
+      'hvc1.1.6.L180.B0', // H.265 / HEVC L6.0 (16MP Duo 3 PoE)
+      'hev1.1.6.L180.B0', // H.265 / HEVC L6.0 alt
       'mp4a.40.2', // AAC
       'opus',
     ];
@@ -68,7 +73,11 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
         const mime = c.startsWith('mp4a') || c === 'opus'
           ? `audio/mp4; codecs="${c}"`
           : `video/mp4; codecs="${c}"`;
-        return MS.isTypeSupported(mime);
+        try {
+          return MS.isTypeSupported(mime);
+        } catch {
+          return false;
+        }
       })
       .join(',');
   }
@@ -176,6 +185,11 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
           };
         });
 
+        if (this.videoElement.srcObject) {
+          try {
+            this.videoElement.srcObject = null;
+          } catch {}
+        }
         if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
           try {
             this.objectUrl = URL.createObjectURL(ms);

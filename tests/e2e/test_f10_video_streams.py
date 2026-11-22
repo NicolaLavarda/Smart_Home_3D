@@ -442,3 +442,116 @@ def test_f10_t3_standby_snapshot_never_poisons_session_cache():
     assert d["mode2"] == "webrtc"
     assert d["readyAfterRecovery"] is True
 
+
+def test_f10_t3_explicit_main_switch_never_snaps_back_to_sub_and_resolves_ha_trasparente():
+    code = """
+      const { VideoStreamManager } = await loadModule('/src/video/VideoStreamManager.js');
+      const { CameraCatalog } = await loadModule('/src/video/CameraCatalog.js');
+      const { HAClient } = await loadModule('/src/ha/HAClient.js');
+
+      const catalog = new CameraCatalog();
+      catalog.registerCamera({
+        id: 'Cam_Portico',
+        name: 'Portico (Reolink RLC-810A)',
+        shortName: 'Portico',
+        entityId: 'camera.portico',
+        mainStream: 'portico_main',
+        subStream: 'portico_sub',
+      });
+
+      const ha = new HAClient();
+      ha.entities = {
+        'camera.giardino_portico_scorrevole': { entity_id: 'camera.giardino_portico_scorrevole', state: 'streaming', attributes: {} },
+        'camera.giardino_portico_trasparente': { entity_id: 'camera.giardino_portico_trasparente', state: 'streaming', attributes: {} },
+      };
+
+      const mgr = new VideoStreamManager({
+        go2rtcUrl: 'https://home.tailnet.ts.net/go2rtc',
+        cameraCatalog: catalog,
+        haClient: ha,
+      });
+
+      // 1. Tile hub connesso sul sub stream
+      const hubTileVideo = ctx.document.createElement('video');
+      await mgr.attachToVideoElement('portico_sub', hubTileVideo, 'auto');
+
+      // 2. Simula fallimento WebRTC+MSE su portico_main (es. H.265 non supportato o ambiente dev senza go2rtc):
+      //    con allowSubReuse: false (click esplicito su Main 4K) NON deve tornare su portico_sub, ma usare portico_main!
+      const OrigWS = globalThis.WebSocket;
+      globalThis.WebSocket = class FailingWS extends OrigWS {
+        constructor(url) {
+          super(url);
+          queueMicrotask(() => this._triggerError({}));
+        }
+      };
+
+      const modalVideo = ctx.document.createElement('video');
+      const pInitial = await mgr.attachToVideoElement('portico_main', modalVideo, 'auto', { allowSubReuse: true });
+      const pExplicitMain = await mgr.attachToVideoElement('portico_main', modalVideo, 'auto', {
+        forceReconnect: true,
+        allowSubReuse: false,
+      });
+
+      const resolvedMainEntity = ha.resolveCameraEntityId('camera.portico', 'main');
+      const resolvedSubEntity = ha.resolveCameraEntityId('camera.portico', 'sub');
+
+      // 3. Ownership transfer: POV texture wrappa modalVideo primario su carraio_main -> chiusura modale non uccide la texture POV!
+      const modalMainEl = ctx.document.createElement('video');
+      const pMainPov = await mgr.attachToVideoElement('carraio_main', modalMainEl, 'auto', { allowSubReuse: false });
+      const povTex = await mgr.acquireVideoTexture('carraio_main', 'auto');
+      mgr.detachFromVideoElement(modalMainEl);
+      const povStillConnectedAfterModalDestroy = Boolean(pMainPov.connected && povTex.ownsVideoElement);
+
+      mgr.releaseVideoTexture('carraio_main');
+      mgr.disposeAll();
+      return {
+        initialStream: pInitial.streamName,
+        explicitMainStream: pExplicitMain.streamName,
+        explicitMainMode: pExplicitMain.mode,
+        resolvedMainEntity,
+        resolvedSubEntity,
+        povStillConnectedAfterModalDestroy,
+      };
+    """
+    res = run_js_scenario(
+        {
+            "code": code,
+            "mode": "production",
+            "location": "https://home.tailnet.ts.net/",
+            "fetchRoutes": [
+                {
+                    "match": "/api/webrtc?src=portico_sub",
+                    "status": 200,
+                    "contentType": "application/sdp",
+                    "text": "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n",
+                },
+                {
+                    "match": "/api/webrtc?src=carraio_main",
+                    "status": 200,
+                    "contentType": "application/sdp",
+                    "text": "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n",
+                },
+                {
+                    "match": "/api/webrtc?src=portico_main",
+                    "status": 500,
+                    "text": "codecs not matched",
+                },
+                {
+                    "match": "/api/v1/ha-camera/snapshot/",
+                    "status": 200,
+                    "contentType": "image/jpeg",
+                    "bytes": [255, 216, 255, 217],
+                },
+            ],
+        }
+    )
+    assert res["ok"] is True, res
+    d = res["data"]
+    assert d["initialStream"] == "portico_sub"
+    assert d["explicitMainStream"] == "portico_main"
+    assert d["explicitMainMode"] == "snapshot"
+    assert d["resolvedMainEntity"] == "camera.giardino_portico_trasparente"
+    assert d["resolvedSubEntity"] == "camera.giardino_portico_scorrevole"
+    assert d["povStillConnectedAfterModalDestroy"] is True
+
+

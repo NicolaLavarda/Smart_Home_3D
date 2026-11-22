@@ -51,8 +51,11 @@ def test_f11_t1_camera_modal_admin_shows_calib_and_simulator():
         }
     )
     d = res["data"]
-    assert d["calibVisibleAndEnabled"] is True
-    assert d["simVisibleAndEnabled"] is True
+    assert d["rebootVisibleAndEnabled"] is True
+    assert d["spotlightExists"] is True
+    assert d["sirenExists"] is True
+    assert d["legacyCalibRemoved"] is True
+    assert d["legacySimRemoved"] is True
 
 
 def test_f11_t1_camera_modal_resident_hides_admin_controls():
@@ -64,9 +67,9 @@ def test_f11_t1_camera_modal_resident_hides_admin_controls():
         }
     )
     d = res["data"]
-    assert d["calibVisibleAndEnabled"] is False
-    assert d["simVisibleAndEnabled"] is False
-    assert d["povExists"] is True
+    assert d["rebootVisibleAndEnabled"] is False
+    assert d["spotlightExists"] is True
+    assert d["sirenExists"] is True
     assert d["videoExists"] is True
 
 
