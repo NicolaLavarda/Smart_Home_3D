@@ -440,11 +440,23 @@ def test_f18_admin_hitl_and_whitelist_rbac_ui():
         onFrame: () => () => {},
         onBiometricEvent: () => () => {},
         getBiometricCropUrl: (id) => `/api/v1/biometrics/crops/${encodeURIComponent(id)}`,
+        fetchBiometricsStatus: async () => ({
+          status: 'ok',
+          enabled: true,
+          face_enabled: true,
+          alpr_enabled: true,
+          identities_count: identitiesState.length,
+          plates_count: platesState.length,
+        }),
         fetchTimelineDensity: async () => ({ status: 'ok', bins: [] }),
         fetchTracks: async () => ({ status: 'ok', count: 0, detections: [] }),
         fetchBiometricEvents: async () => ({ status: 'ok', count: eventsState.length, events: eventsState }),
         fetchBiometricIdentities: async () => ({ status: 'ok', count: identitiesState.length, identities: identitiesState }),
         fetchBiometricPlates: async () => ({ status: 'ok', count: platesState.length, plates: platesState }),
+        pruneBiometricCrops: async () => {
+          adminCalls.push({ op: 'pruneCrops' });
+          return { status: 'ok', pruned: 3 };
+        },
         assignBiometricEvent: async (id, payload) => {
           adminCalls.push({ op: 'assign', id, payload });
           eventsState = eventsState.map((ev) => (
@@ -493,11 +505,22 @@ def test_f18_admin_hitl_and_whitelist_rbac_ui():
       await hub.setMode('replay');
       for (let i = 0; i < 6; i++) await Promise.resolve();
 
-      // Resident: admin button hidden/disabled and 0 HITL buttons rendered
+      // Resident: admin button hidden/disabled and 0 HITL buttons rendered in Cronologia
       const resAdminBtnVisible = helpers.isElementVisibleAndEnabled(root.querySelector('#btn-sec-bio-admin'));
       const resHitlCount = root.querySelectorAll('.m3-bio-hitl-btn').length;
 
-      // Switch to Admin dynamically
+      // Resident: clicking 3rd tab "Impostazioni" shows preferences & notice, NEVER Admin panel
+      root.querySelector('#btn-sec-mode-settings').click();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const resModeInSettings = hub.mode;
+      const resSettingsHidden = Boolean(root.querySelector('#sec-settings-section')?.hidden);
+      const resAdminPanelHidden = Boolean(root.querySelector('#sec-bio-admin-panel')?.hidden);
+      const resResidentNoteHidden = Boolean(root.querySelector('#sec-settings-resident-note')?.hidden);
+      const resPlateAddDisabled = Boolean(root.querySelector('#btn-sec-admin-plate-add')?.disabled);
+      const resPruneDisabled = Boolean(root.querySelector('#btn-sec-admin-prune-crops')?.disabled);
+
+      // Return to Cronologia, switch to Admin dynamically
+      await hub.setMode('replay');
       haMock.isAdmin = true;
       authListeners.forEach((cb) => cb({ isAdmin: true, authenticated: true }));
       for (let i = 0; i < 6; i++) await Promise.resolve();
@@ -505,11 +528,30 @@ def test_f18_admin_hitl_and_whitelist_rbac_ui():
       const adminBtnVisible = helpers.isElementVisibleAndEnabled(root.querySelector('#btn-sec-bio-admin'));
       const adminHitlCount = root.querySelectorAll('.m3-bio-hitl-btn').length;
 
-      // Open Admin panel & check whitelist/gallery XSS escaping + mutations
+      // Trigger HITL editor in Cronologia on face event 77 and assign XSS-containing identity
+      root.querySelector('.m3-bio-hitl-btn[data-hitl-event-id="77"]').click();
+      const hitlEditorHiddenOpen = Boolean(root.querySelector('#sec-bio-hitl-editor')?.hidden);
+      root.querySelector('#sec-hitl-identity-input').value = 'Nicola<b>';
+      root.querySelector('#btn-sec-hitl-save').click();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      const eventsHtmlAfterAssign = root.querySelector('#sec-bio-events-list')?.innerHTML || '';
+      const hitlMsgText = root.querySelector('#sec-bio-hitl-msg')?.textContent || '';
+
+      // Click "Gestisci" in Cronologia -> navigates straight to "Impostazioni" tab with Admin controls
       root.querySelector('#btn-sec-bio-admin').click();
-      for (let i = 0; i < 6; i++) await Promise.resolve();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      const adminModeAfterClick = hub.mode;
+      const adminSettingsHidden = Boolean(root.querySelector('#sec-settings-section')?.hidden);
+      const adminHistoryHidden = Boolean(root.querySelector('#sec-history-section')?.hidden);
       const adminPanelHiddenAfterOpen = Boolean(root.querySelector('#sec-bio-admin-panel')?.hidden);
+      const adminResidentNoteHidden = Boolean(root.querySelector('#sec-settings-resident-note')?.hidden);
+      const adminBioStatusText = root.querySelector('#sec-settings-bio-status')?.textContent || '';
       const platesHtml = root.querySelector('#sec-admin-plates-list')?.innerHTML || '';
+
+      // Layout choice inside Impostazioni syncs gridLayoutMode cleanly
+      root.querySelector('#btn-sec-settings-layout-compact').click();
+      const layoutAfterSettingsClick = hub.gridLayoutMode;
+      root.querySelector('#btn-sec-settings-layout-prop').click();
 
       root.querySelector('#sec-admin-plate-input').value = 'fg456hj';
       root.querySelector('#sec-admin-plate-owner').value = 'Ospite';
@@ -526,22 +568,26 @@ def test_f18_admin_hitl_and_whitelist_rbac_ui():
       root.querySelector('[data-del-identity="Mario"]').click();
       for (let i = 0; i < 6; i++) await Promise.resolve();
 
-      // Trigger HITL editor on face event 77 and assign XSS-containing identity
-      root.querySelector('.m3-bio-hitl-btn[data-hitl-event-id="77"]').click();
-      const hitlEditorHiddenOpen = Boolean(root.querySelector('#sec-bio-hitl-editor')?.hidden);
-      root.querySelector('#sec-hitl-identity-input').value = 'Nicola<b>';
-      root.querySelector('#btn-sec-hitl-save').click();
-      for (let i = 0; i < 8; i++) await Promise.resolve();
+      root.querySelector('#btn-sec-admin-prune-crops').click();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
 
-      const eventsHtmlAfterAssign = root.querySelector('#sec-bio-events-list')?.innerHTML || '';
+      // Switch via segmented switcher back to Live and back to Impostazioni
+      root.querySelector('#btn-sec-mode-live').click();
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      const modeAfterLiveTab = hub.mode;
+      const settingsHiddenInLive = Boolean(root.querySelector('#sec-settings-section')?.hidden);
 
-      // Demote back to Resident -> closes admin panel & HITL editor and hides admin button
+      // Demote back to Resident while viewing Impostazioni -> locks down immediately
+      root.querySelector('#btn-sec-mode-settings').click();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
       haMock.isAdmin = false;
       authListeners.forEach((cb) => cb({ isAdmin: false, authenticated: true }));
       for (let i = 0; i < 4; i++) await Promise.resolve();
 
       const demotedAdminBtnVisible = helpers.isElementVisibleAndEnabled(root.querySelector('#btn-sec-bio-admin'));
       const demotedAdminPanelHidden = Boolean(root.querySelector('#sec-bio-admin-panel')?.hidden);
+      const demotedResidentNoteHidden = Boolean(root.querySelector('#sec-settings-resident-note')?.hidden);
+      const demotedPruneDisabled = Boolean(root.querySelector('#btn-sec-admin-prune-crops')?.disabled);
       const demotedHitlEditorHidden = Boolean(root.querySelector('#sec-bio-hitl-editor')?.hidden);
       const demotedHitlCount = root.querySelectorAll('.m3-bio-hitl-btn').length;
 
@@ -551,15 +597,32 @@ def test_f18_admin_hitl_and_whitelist_rbac_ui():
         fetchCalls,
         resAdminBtnVisible,
         resHitlCount,
+        resModeInSettings,
+        resSettingsHidden,
+        resAdminPanelHidden,
+        resResidentNoteHidden,
+        resPlateAddDisabled,
+        resPruneDisabled,
         adminBtnVisible,
         adminHitlCount,
-        adminPanelHiddenAfterOpen,
-        platesHtml,
         hitlEditorHiddenOpen,
         eventsHtmlAfterAssign,
+        hitlMsgText,
+        adminModeAfterClick,
+        adminSettingsHidden,
+        adminHistoryHidden,
+        adminPanelHiddenAfterOpen,
+        adminResidentNoteHidden,
+        adminBioStatusText,
+        platesHtml,
+        layoutAfterSettingsClick,
+        modeAfterLiveTab,
+        settingsHiddenInLive,
         adminCalls,
         demotedAdminBtnVisible,
         demotedAdminPanelHidden,
+        demotedResidentNoteHidden,
+        demotedPruneDisabled,
         demotedHitlEditorHidden,
         demotedHitlCount,
       };
@@ -580,19 +643,43 @@ def test_f18_admin_hitl_and_whitelist_rbac_ui():
 
     assert d["resAdminBtnVisible"] is False
     assert d["resHitlCount"] == 0
+    assert d["resModeInSettings"] == "settings"
+    assert d["resSettingsHidden"] is False
+    assert d["resAdminPanelHidden"] is True
+    assert d["resResidentNoteHidden"] is False
+    assert d["resPlateAddDisabled"] is True
+    assert d["resPruneDisabled"] is True
 
     assert d["adminBtnVisible"] is True
     assert d["adminHitlCount"] == 2
-    assert d["adminPanelHiddenAfterOpen"] is False
-    assert "<script>" not in d["platesHtml"] and "&lt;script&gt;X&lt;/script&gt;" in d["platesHtml"]
     assert d["hitlEditorHiddenOpen"] is False
     assert "<b>" not in d["eventsHtmlAfterAssign"] and "Nicola&lt;b&gt;" in d["eventsHtmlAfterAssign"]
     assert "Verificato" in d["eventsHtmlAfterAssign"]
+    assert "Evento biometrico aggiornato" in d["hitlMsgText"]
+
+    assert d["adminModeAfterClick"] == "settings"
+    assert d["adminSettingsHidden"] is False
+    assert d["adminHistoryHidden"] is True
+    assert d["adminPanelHiddenAfterOpen"] is False
+    assert d["adminResidentNoteHidden"] is True
+    assert "Attivo" in d["adminBioStatusText"]
+    assert "<script>" not in d["platesHtml"] and "&lt;script&gt;X&lt;/script&gt;" in d["platesHtml"]
+    assert d["layoutAfterSettingsClick"] == "compact"
+    assert d["modeAfterLiveTab"] == "live"
+    assert d["settingsHiddenInLive"] is True
 
     ops = [c["op"] for c in d["adminCalls"]]
-    assert ops == ["upsertPlate", "deletePlate", "reloadIdentities", "deleteIdentity", "assign"]
+    assert ops == ["assign", "upsertPlate", "deletePlate", "reloadIdentities", "deleteIdentity", "pruneCrops"]
 
     assert d["demotedAdminBtnVisible"] is False
     assert d["demotedAdminPanelHidden"] is True
+    assert d["demotedResidentNoteHidden"] is False
+    assert d["demotedPruneDisabled"] is True
     assert d["demotedHitlEditorHidden"] is True
     assert d["demotedHitlCount"] == 0
+
+    css_src = (Path(__file__).resolve().parents[2] / "src" / "style.css").read_text(encoding="utf-8")
+    assert ".m3-security-panel:not(.mode-strip) .m3-sec-body" in css_src
+    assert ".m3-security-panel.mode-settings .m3-sec-cameras-viewport" in css_src
+    assert "overflow-y: auto" in css_src
+    assert "-webkit-overflow-scrolling: touch" in css_src

@@ -93,7 +93,7 @@ export class SecurityFabHub {
 
     // Stato UI: 'closed' | 'expanded' | 'strip'
     this.panelState = 'closed';
-    // Modalità: 'live' | 'replay'
+    // Modalità: 'live' | 'replay' | 'settings'
     this.mode = 'live';
     // Layout griglia: 'proportional' (default: 2 normali affiancate + 180° a tutta larghezza una sotto l'altra) | 'compact' (2×2)
     this.gridLayoutMode = this._loadSavedGridLayoutMode();
@@ -133,7 +133,7 @@ export class SecurityFabHub {
     this.historyBioEvents = [];
     this.bioIdentitiesList = [];
     this.bioPlatesList = [];
-    this._adminPanelOpen = false;
+    this._biometricsStatus = null;
     this._activeHitlEvent = null;
     this._bioPlateTimer = null;
     this._unsubBioEvents = null;
@@ -162,7 +162,7 @@ export class SecurityFabHub {
         this.syncCameraTiles();
         if (this.panelState !== 'closed') {
           if (this.mode === 'live') this.connectAllLiveStreams();
-          else this.bindAllHistoricalSlotsAndSeek(true);
+          else if (this.mode === 'replay') this.bindAllHistoricalSlotsAndSeek(true);
         }
       });
     }
@@ -211,6 +211,15 @@ export class SecurityFabHub {
         : 'Vista proporzionata (2 normali + 180° intere) • Clicca per vista compatta 2×2';
     }
 
+    if (this.settingsLayoutPropBtn) {
+      this.settingsLayoutPropBtn.classList.toggle('active', !isCompact);
+      this.settingsLayoutPropBtn.setAttribute('aria-pressed', String(!isCompact));
+    }
+    if (this.settingsLayoutCompactBtn) {
+      this.settingsLayoutCompactBtn.classList.toggle('active', isCompact);
+      this.settingsLayoutCompactBtn.setAttribute('aria-pressed', String(isCompact));
+    }
+
     if (persist) {
       try {
         if (typeof localStorage !== 'undefined') {
@@ -257,14 +266,18 @@ export class SecurityFabHub {
             </div>
           </div>
 
-          <div class="m3-segmented" role="tablist" aria-label="Modalità telecamere e 3D">
-            <button type="button" class="m3-seg-btn active" id="btn-sec-mode-live" role="tab" aria-selected="true">
+          <div class="m3-segmented" role="tablist" aria-label="Modalità telecamere, cronologia e impostazioni">
+            <button type="button" class="m3-seg-btn active" id="btn-sec-mode-live" role="tab" aria-selected="true" aria-controls="sec-cameras-viewport">
               <span class="m3-live-dot" aria-hidden="true"></span>
               <span>Live</span>
             </button>
-            <button type="button" class="m3-seg-btn" id="btn-sec-mode-replay" role="tab" aria-selected="false">
+            <button type="button" class="m3-seg-btn" id="btn-sec-mode-replay" role="tab" aria-selected="false" aria-controls="sec-history-section">
               ${icon('history', { size: 14 })}
               <span>Cronologia</span>
+            </button>
+            <button type="button" class="m3-seg-btn" id="btn-sec-mode-settings" role="tab" aria-selected="false" aria-controls="sec-settings-section">
+              ${icon('settings', { size: 14 })}
+              <span>Impostazioni</span>
             </button>
           </div>
 
@@ -316,16 +329,18 @@ export class SecurityFabHub {
           </div>
         </div>
 
-        <!-- Sezione Video Multi-Camera (rimane montata e fluida tra espanso e striscia!) -->
-        <div class="m3-sec-cameras-viewport" id="sec-cameras-viewport">
-          <div class="m3-sec-cameras-track" id="sec-cameras-track"></div>
-        </div>
+        <!-- Corpo unificato scorrevole (Live + Cronologia + Impostazioni; trasparente in modalità striscia) -->
+        <div class="m3-sec-body" id="sec-panel-body">
+          <!-- Sezione Video Multi-Camera (rimane montata e fluida tra espanso e striscia!) -->
+          <div class="m3-sec-cameras-viewport" id="sec-cameras-viewport">
+            <div class="m3-sec-cameras-track" id="sec-cameras-track"></div>
+          </div>
 
-        <!-- Striscia Live Riconoscimenti Biometrici (nascosta se vuota o in modalità Cronologia) -->
-        <div class="m3-sec-bio-live-strip" id="sec-bio-live-strip" hidden aria-label="Ultimi riconoscimenti biometrici"></div>
+          <!-- Striscia Live Riconoscimenti Biometrici (nascosta se vuota o fuori da Live) -->
+          <div class="m3-sec-bio-live-strip" id="sec-bio-live-strip" hidden aria-label="Ultimi riconoscimenti biometrici"></div>
 
-        <!-- Sezione Cronologia & Ricostruzione 3D (visibile solo in modalità Cronologia) -->
-        <div class="m3-sec-history-section" id="sec-history-section" hidden>
+          <!-- Sezione Cronologia & Ricostruzione 3D (visibile solo in modalità Cronologia) -->
+          <div class="m3-sec-history-section" id="sec-history-section" role="tabpanel" hidden>
           <div class="m3-history-top-row">
             <div class="m3-day-chips" role="group" aria-label="Selezione giorno rapida">
               <button type="button" class="m3-chip active" data-day-offset="0">Oggi</button>
@@ -407,7 +422,7 @@ export class SecurityFabHub {
 
           <div class="m3-bio-events-wrap" id="sec-bio-events-wrap" hidden>
             <div class="m3-bio-events-header">
-              <span class="m3-bio-events-title">${icon('shield-check', { size: 13 })} <span>Eventi riconosciuti</span></span>
+              <span class="m3-bio-events-title">${icon('shield-check', { size: 14 })} <span>Eventi riconosciuti</span></span>
               <div class="m3-bio-events-header-actions">
                 <span class="m3-bio-events-count" id="sec-bio-events-count">0</span>
                 <button
@@ -417,47 +432,17 @@ export class SecurityFabHub {
                   hidden
                   disabled
                   style="display: none;"
-                  title="Gestione volti e whitelist targhe (solo Admin)"
-                  aria-label="Gestisci biometria e whitelist targhe"
+                  title="Apri impostazioni whitelist targhe e galleria volti (solo Admin)"
+                  aria-label="Gestisci biometria e whitelist in Impostazioni"
                 >
-                  ${icon('sliders-horizontal', { size: 12 })}
+                  ${icon('sliders-horizontal', { size: 13 })}
                   <span>Gestisci</span>
                 </button>
               </div>
             </div>
+            <div class="m3-admin-status-msg" id="sec-bio-hitl-msg" hidden></div>
             <div class="m3-bio-hitl-editor" id="sec-bio-hitl-editor" hidden></div>
             <div class="m3-bio-events-list" id="sec-bio-events-list"></div>
-          </div>
-
-          <div class="m3-bio-admin-panel" id="sec-bio-admin-panel" hidden style="display: none;">
-            <div class="m3-admin-status-msg" id="sec-admin-bio-msg" hidden></div>
-
-            <div class="m3-admin-section">
-              <div class="m3-admin-section-head">
-                <span>${icon('car', { size: 13 })} Whitelist targhe autorizzate</span>
-              </div>
-              <div class="m3-admin-form-row">
-                <input type="text" id="sec-admin-plate-input" placeholder="Targa (AB123CD)" maxlength="12" aria-label="Nuova targa whitelist" />
-                <input type="text" id="sec-admin-plate-owner" placeholder="Proprietario" maxlength="64" aria-label="Proprietario targa" />
-                <input type="text" id="sec-admin-plate-vehicle" placeholder="Auto (opzionale)" maxlength="48" aria-label="Modello veicolo" />
-                <button type="button" class="m3-admin-btn primary" id="btn-sec-admin-plate-add" title="Aggiungi o aggiorna targa in whitelist">
-                  ${icon('plus', { size: 13 })}
-                  <span>Salva</span>
-                </button>
-              </div>
-              <div class="m3-admin-list" id="sec-admin-plates-list"></div>
-            </div>
-
-            <div class="m3-admin-section">
-              <div class="m3-admin-section-head">
-                <span>${icon('user-check', { size: 13 })} Galleria volti registrati</span>
-                <button type="button" class="m3-admin-btn" id="btn-sec-admin-reload-gallery" title="Ricarica indice volti da disco">
-                  ${icon('refresh-cw', { size: 12 })}
-                  <span>Ricarica</span>
-                </button>
-              </div>
-              <div class="m3-admin-list" id="sec-admin-identities-list"></div>
-            </div>
           </div>
 
           <div class="m3-storage-footer" id="sec-storage-footer">
@@ -465,6 +450,117 @@ export class SecurityFabHub {
             <span id="sec-storage-label">Archivio NVR predisposto • Pronto per HDD PC o SD camera</span>
           </div>
         </div>
+
+        <!-- Sezione Impostazioni modulare ed estensibile (visibile in modalità Impostazioni) -->
+        <div class="m3-sec-settings-section" id="sec-settings-section" role="tabpanel" hidden>
+          <div class="m3-settings-stack" id="sec-settings-stack">
+            <div class="m3-admin-status-msg" id="sec-admin-bio-msg" hidden></div>
+
+            <section class="m3-settings-group" aria-labelledby="sec-settings-view-title">
+              <div class="m3-settings-group-head">
+                <span class="m3-settings-group-icon">${icon('layout-grid', { size: 15 })}</span>
+                <div class="m3-settings-group-copy">
+                  <h3 class="m3-settings-group-title" id="sec-settings-view-title">Visualizzazione e sistema</h3>
+                  <p class="m3-settings-group-sub">Preferenze griglia multi-camera e stato moduli sicurezza</p>
+                </div>
+              </div>
+
+              <div class="m3-settings-row">
+                <div class="m3-settings-row-copy">
+                  <span class="m3-settings-row-label">Disposizione griglia video</span>
+                  <span class="m3-settings-row-hint">Formato panoramico intero oppure griglia 2×2 compatta</span>
+                </div>
+                <div class="m3-settings-choice" role="group" aria-label="Disposizione griglia telecamere">
+                  <button type="button" class="m3-settings-choice-btn active" id="btn-sec-settings-layout-prop" data-settings-layout="proportional" aria-pressed="true">
+                    Proporzionata
+                  </button>
+                  <button type="button" class="m3-settings-choice-btn" id="btn-sec-settings-layout-compact" data-settings-layout="compact" aria-pressed="false">
+                    Compatta 2×2
+                  </button>
+                </div>
+              </div>
+
+              <div class="m3-settings-status-grid">
+                <div class="m3-settings-status-item">
+                  <span class="m3-settings-status-label">${icon('hard-drive', { size: 13 })} <span>Archivio NVR</span></span>
+                  <span class="m3-settings-status-val" id="sec-settings-nvr-status">In verifica...</span>
+                </div>
+                <div class="m3-settings-status-item">
+                  <span class="m3-settings-status-label">${icon('activity', { size: 13 })} <span>Biometria 3D</span></span>
+                  <span class="m3-settings-status-val" id="sec-settings-bio-status">In verifica...</span>
+                </div>
+              </div>
+            </section>
+
+            <div class="m3-settings-resident-note" id="sec-settings-resident-note" role="note">
+              ${icon('info', { size: 15 })}
+              <span>La gestione di whitelist targhe, galleria volti e manutenzione archivio è riservata agli amministratori.</span>
+            </div>
+
+            <div class="m3-bio-admin-panel" id="sec-bio-admin-panel" hidden style="display: none;">
+              <section class="m3-settings-group" aria-labelledby="sec-settings-plates-title">
+                <div class="m3-settings-group-head">
+                  <span class="m3-settings-group-icon">${icon('car', { size: 15 })}</span>
+                  <div class="m3-settings-group-copy">
+                    <h3 class="m3-settings-group-title" id="sec-settings-plates-title">Whitelist targhe autorizzate</h3>
+                    <p class="m3-settings-group-sub">I veicoli autorizzati vengono evidenziati automaticamente in verde</p>
+                  </div>
+                  <span class="m3-settings-count-pill" id="sec-admin-plates-count">0</span>
+                </div>
+
+                <div class="m3-admin-plate-form">
+                  <input type="text" id="sec-admin-plate-input" placeholder="Targa (AB123CD)" maxlength="12" aria-label="Nuova targa whitelist" />
+                  <input type="text" id="sec-admin-plate-owner" placeholder="Proprietario" maxlength="64" aria-label="Proprietario targa" />
+                  <input type="text" id="sec-admin-plate-vehicle" placeholder="Auto (opzionale)" maxlength="48" aria-label="Modello veicolo" />
+                  <button type="button" class="m3-admin-btn primary" id="btn-sec-admin-plate-add" disabled title="Aggiungi o aggiorna targa in whitelist">
+                    ${icon('plus', { size: 14 })}
+                    <span>Salva targa</span>
+                  </button>
+                </div>
+                <div class="m3-admin-list" id="sec-admin-plates-list"></div>
+              </section>
+
+              <section class="m3-settings-group" aria-labelledby="sec-settings-gallery-title">
+                <div class="m3-settings-group-head">
+                  <span class="m3-settings-group-icon">${icon('user-check', { size: 15 })}</span>
+                  <div class="m3-settings-group-copy">
+                    <h3 class="m3-settings-group-title" id="sec-settings-gallery-title">Galleria volti registrati</h3>
+                    <p class="m3-settings-group-sub">Profili biometrici usati per il riconoscimento su Live e Cronologia</p>
+                  </div>
+                  <span class="m3-settings-count-pill" id="sec-admin-identities-count">0</span>
+                  <button type="button" class="m3-admin-btn" id="btn-sec-admin-reload-gallery" disabled title="Ricarica indice volti da disco">
+                    ${icon('refresh-cw', { size: 13 })}
+                    <span>Ricarica</span>
+                  </button>
+                </div>
+                <div class="m3-admin-list" id="sec-admin-identities-list"></div>
+              </section>
+
+              <section class="m3-settings-group" aria-labelledby="sec-settings-maint-title">
+                <div class="m3-settings-group-head">
+                  <span class="m3-settings-group-icon">${icon('hard-drive', { size: 15 })}</span>
+                  <div class="m3-settings-group-copy">
+                    <h3 class="m3-settings-group-title" id="sec-settings-maint-title">Manutenzione archivio crop</h3>
+                    <p class="m3-settings-group-sub">Elimina dal disco i ritagli oltre la finestra di conservazione</p>
+                  </div>
+                </div>
+                <div class="m3-settings-row">
+                  <div class="m3-settings-row-copy">
+                    <span class="m3-settings-row-label">Pulizia crop biometrici scaduti</span>
+                    <span class="m3-settings-row-hint">Operazione sicura: mantiene intatti eventi storici e profili registrati</span>
+                  </div>
+                  <button type="button" class="m3-admin-btn" id="btn-sec-admin-prune-crops" disabled title="Elimina crop scaduti da disco">
+                    ${icon('refresh-cw', { size: 13 })}
+                    <span>Pulisci ora</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+            <!-- Nuove sezioni Impostazioni (es. notifiche, soglie, privacy) possono essere aggiunte qui come .m3-settings-group -->
+          </div>
+        </div>
+        </div>
+
       </section>
 
       <button
@@ -490,6 +586,8 @@ export class SecurityFabHub {
 
     this.liveBtn = this.container.querySelector('#btn-sec-mode-live');
     this.replayBtn = this.container.querySelector('#btn-sec-mode-replay');
+    this.settingsBtn = this.container.querySelector('#btn-sec-mode-settings');
+    this.panelBodyEl = this.container.querySelector('#sec-panel-body');
     this.layoutToggleBtn = this.container.querySelector('#btn-sec-layout-toggle');
     this.stripToggleBtn = this.container.querySelector('#btn-sec-strip-toggle');
     this.closeBtn = this.container.querySelector('#btn-sec-close');
@@ -526,16 +624,28 @@ export class SecurityFabHub {
     this.bioEventsListEl = this.container.querySelector('#sec-bio-events-list');
 
     this.bioAdminToggleBtn = this.container.querySelector('#btn-sec-bio-admin');
+    this.bioHitlMsgEl = this.container.querySelector('#sec-bio-hitl-msg');
     this.bioHitlEditorEl = this.container.querySelector('#sec-bio-hitl-editor');
+
+    // Settings & Admin controls
+    this.settingsSectionEl = this.container.querySelector('#sec-settings-section');
+    this.settingsLayoutPropBtn = this.container.querySelector('#btn-sec-settings-layout-prop');
+    this.settingsLayoutCompactBtn = this.container.querySelector('#btn-sec-settings-layout-compact');
+    this.settingsNvrStatusEl = this.container.querySelector('#sec-settings-nvr-status');
+    this.settingsBioStatusEl = this.container.querySelector('#sec-settings-bio-status');
+    this.settingsResidentNoteEl = this.container.querySelector('#sec-settings-resident-note');
     this.bioAdminPanelEl = this.container.querySelector('#sec-bio-admin-panel');
     this.adminBioMsgEl = this.container.querySelector('#sec-admin-bio-msg');
+    this.adminPlatesCountEl = this.container.querySelector('#sec-admin-plates-count');
     this.adminPlateInput = this.container.querySelector('#sec-admin-plate-input');
     this.adminPlateOwnerInput = this.container.querySelector('#sec-admin-plate-owner');
     this.adminPlateVehicleInput = this.container.querySelector('#sec-admin-plate-vehicle');
     this.adminPlateAddBtn = this.container.querySelector('#btn-sec-admin-plate-add');
     this.adminPlatesListEl = this.container.querySelector('#sec-admin-plates-list');
+    this.adminIdentitiesCountEl = this.container.querySelector('#sec-admin-identities-count');
     this.adminReloadGalleryBtn = this.container.querySelector('#btn-sec-admin-reload-gallery');
     this.adminIdentitiesListEl = this.container.querySelector('#sec-admin-identities-list');
+    this.adminPruneCropsBtn = this.container.querySelector('#btn-sec-admin-prune-crops');
 
     this._syncDateTimeInputsFromUnix(this.currentUnix);
     this._syncSliderBounds();
@@ -573,8 +683,16 @@ export class SecurityFabHub {
 
     this.liveBtn?.addEventListener('click', () => this.setMode('live'));
     this.replayBtn?.addEventListener('click', () => this.setMode('replay'));
+    this.settingsBtn?.addEventListener('click', () => this.setMode('settings'));
     this.stripModeBtn?.addEventListener('click', () => {
       this.setMode(this.mode === 'live' ? 'replay' : 'live');
+    });
+
+    this.settingsLayoutPropBtn?.addEventListener('click', () => {
+      this.setGridLayoutMode('proportional');
+    });
+    this.settingsLayoutCompactBtn?.addEventListener('click', () => {
+      this.setGridLayoutMode('compact');
     });
 
     // Quick Day Chips
@@ -756,10 +874,25 @@ export class SecurityFabHub {
 
     this.bioAdminToggleBtn?.addEventListener('click', async () => {
       if (!this._isAdmin()) return;
-      this._adminPanelOpen = !this._adminPanelOpen;
-      this._syncAdminControls();
-      if (this._adminPanelOpen) {
-        await this._refreshAdminLists();
+      await this.setMode('settings');
+    });
+
+    this.adminPruneCropsBtn?.addEventListener('click', async () => {
+      if (!this._isAdmin() || typeof this.spatialStreamClient?.pruneBiometricCrops !== 'function') return;
+      this.adminPruneCropsBtn.disabled = true;
+      try {
+        const res = await this.spatialStreamClient.pruneBiometricCrops().catch(() => null);
+        if (res?.status === 'ok') {
+          const pruned = Number(res.pruned ?? res.deleted ?? 0);
+          this._setAdminMessage(`Pulizia completata (${pruned} crop scaduti rimossi)`, false);
+          await this._refreshBiometricsStatusSummary();
+        } else {
+          this._setAdminMessage('Errore durante la pulizia dei crop biometrici', true);
+        }
+      } finally {
+        if (this.adminPruneCropsBtn) {
+          this.adminPruneCropsBtn.disabled = !this._isAdmin();
+        }
       }
     });
 
@@ -1054,7 +1187,9 @@ export class SecurityFabHub {
       this.fabIconEl.innerHTML = icon('shield-check', { size: 22 });
     }
 
-    if (wasClosed) {
+    if (this.mode === 'settings') {
+      void this.setMode('live');
+    } else if (wasClosed) {
       this._onPanelOpened();
     }
     this.onStateChange?.(this.panelState);
@@ -1075,7 +1210,7 @@ export class SecurityFabHub {
     // Mantieni vivi in background i 4 flussi live delle telecamere anche a pannello chiuso,
     // così la riapertura di Sicurezza, il Modale camera, la Vista POV 3D e la Calibrazione
     // sono istantanei (0ms) senza mai ricaricare lo stream da zero.
-    if (this.mode !== 'live') {
+    if (this.mode === 'replay') {
       this.recordingManager?.detachAll?.();
       this.setPlaying(false);
     }
@@ -1090,50 +1225,81 @@ export class SecurityFabHub {
 
     if (this.mode === 'live') {
       await this.connectAllLiveStreams();
-    } else {
+    } else if (this.mode === 'replay') {
       if (!Number.isFinite(this._loadedTracksStartUnix)) {
         await this.loadHistoricalWindowAround(this.currentUnix);
       }
       await this.bindAllHistoricalSlotsAndSeek(true);
+    } else if (this.mode === 'settings') {
+      await this._refreshSettingsTabData();
     }
   }
 
   async _refreshStorageHealth() {
-    if (!this.recordingManager || !this.storageLabelEl) return;
+    if (!this.recordingManager) return;
     const summary = await this.recordingManager.getStorageSummary().catch(() => null);
     if (!summary) return;
     const primary = summary.providers?.[0];
-    if (summary.configured && primary) {
-      this.storageLabelEl.textContent = primary.detail || 'Archivio NVR attivo';
-    } else {
-      this.storageLabelEl.textContent = 'Archivio NVR predisposto • Schermo scuro automatico se assente';
+    const detailText = summary.configured && primary
+      ? (primary.detail || 'Archivio NVR attivo')
+      : 'Archivio NVR predisposto • Schermo scuro automatico se assente';
+    if (this.storageLabelEl) {
+      this.storageLabelEl.textContent = detailText;
+    }
+    if (this.settingsNvrStatusEl) {
+      this.settingsNvrStatusEl.textContent = summary.configured
+        ? (primary?.detail || 'Attivo')
+        : 'Predisposto (solo live)';
     }
   }
 
-  // --- Modalità Live vs Cronologia (Replay Storico) ---
+  // --- Modalità Live vs Cronologia vs Impostazioni ---
 
   async setMode(nextMode, { skipInitialLoad = false } = {}) {
-    const mode = nextMode === 'replay' ? 'replay' : 'live';
+    const mode = nextMode === 'replay' ? 'replay' : nextMode === 'settings' ? 'settings' : 'live';
+    const prevMode = this.mode;
     this.mode = mode;
 
     const isLive = mode === 'live';
+    const isReplay = mode === 'replay';
+    const isSettings = mode === 'settings';
+
     this.liveBtn?.classList.toggle('active', isLive);
     this.liveBtn?.setAttribute('aria-selected', String(isLive));
-    this.replayBtn?.classList.toggle('active', !isLive);
-    this.replayBtn?.setAttribute('aria-selected', String(!isLive));
-    this.panelEl?.classList.toggle('mode-replay', !isLive);
-    if (this.historySectionEl) {
-      this.historySectionEl.hidden = isLive;
+    this.replayBtn?.classList.toggle('active', isReplay);
+    this.replayBtn?.setAttribute('aria-selected', String(isReplay));
+    this.settingsBtn?.classList.toggle('active', isSettings);
+    this.settingsBtn?.setAttribute('aria-selected', String(isSettings));
+
+    this.panelEl?.classList.toggle('mode-replay', isReplay);
+    this.panelEl?.classList.toggle('mode-settings', isSettings);
+    this.container?.classList.toggle('mode-settings', isSettings);
+
+    if (this.layoutToggleBtn) {
+      this.layoutToggleBtn.hidden = isSettings;
     }
+    if (this.historySectionEl) {
+      this.historySectionEl.hidden = !isReplay;
+    }
+    if (this.settingsSectionEl) {
+      this.settingsSectionEl.hidden = !isSettings;
+    }
+    if (this.panelBodyEl && prevMode !== mode) {
+      this.panelBodyEl.scrollTop = 0;
+    }
+    if (!isReplay) {
+      this._closeHitlEditor();
+    }
+    this._setAdminMessage('', false);
 
     if (this.stripModeBtn) {
-      this.stripModeBtn.classList.toggle('active', isLive);
+      this.stripModeBtn.classList.toggle('active', !isReplay);
     }
     if (this.stripModeLabel) {
-      this.stripModeLabel.textContent = isLive ? 'LIVE' : 'REPLAY';
+      this.stripModeLabel.textContent = isReplay ? 'REPLAY' : 'LIVE';
     }
     if (this.stripPlayBtn) {
-      this.stripPlayBtn.hidden = isLive;
+      this.stripPlayBtn.hidden = !isReplay;
     }
 
     if (isLive) {
@@ -1152,7 +1318,7 @@ export class SecurityFabHub {
       if (this.panelState !== 'closed') {
         await this.connectAllLiveStreams();
       }
-    } else {
+    } else if (isReplay) {
       // Passaggio a Cronologia / Replay Storico
       this.disconnectAllLiveStreams();
       this.trajectoryRenderer?.setLiveMode?.(false);
@@ -1174,6 +1340,13 @@ export class SecurityFabHub {
       this._updateReplayClockUI();
       this._updateStatusSummary();
       requestAnimationFrame(() => this.drawDensityCanvas());
+    } else {
+      // Passaggio a Impostazioni (mantiene vivi eventuali stream Live a costo 0ms su ritorno a Live)
+      this.setPlaying(false);
+      this.recordingManager?.detachAll?.();
+      this._renderLiveBioStrip();
+      this._updateStatusSummary();
+      await this._refreshSettingsTabData();
     }
 
     this._modeListeners.forEach((fn) => {
@@ -1718,6 +1891,10 @@ export class SecurityFabHub {
     const spatialOnline = Boolean(this.spatialStreamClient?.connected || this._historyBackendOnline);
     if (this.mode === 'live') {
       this.statusSummaryEl.textContent = `${camWord} • ${spatialOnline ? 'Spatial 3D attivo' : 'Live video'}`;
+    } else if (this.mode === 'settings') {
+      this.statusSummaryEl.textContent = this._isAdmin()
+        ? 'Preferenze & Amministrazione'
+        : 'Preferenze visualizzazione';
     } else {
       this.statusSummaryEl.textContent = `${camWord} • Cronologia & Replay 3D`;
     }
@@ -1940,36 +2117,91 @@ export class SecurityFabHub {
       this.bioAdminToggleBtn.hidden = !isAdmin;
       this.bioAdminToggleBtn.disabled = !isAdmin;
       this.bioAdminToggleBtn.style.display = isAdmin ? '' : 'none';
-      this.bioAdminToggleBtn.classList.toggle('active', Boolean(isAdmin && this._adminPanelOpen));
+    }
+    if (this.settingsResidentNoteEl) {
+      this.settingsResidentNoteEl.hidden = isAdmin;
+      this.settingsResidentNoteEl.style.display = isAdmin ? 'none' : '';
+    }
+
+    for (const btn of [this.adminPlateAddBtn, this.adminReloadGalleryBtn, this.adminPruneCropsBtn]) {
+      if (btn) btn.disabled = !isAdmin;
+    }
+    for (const inp of [this.adminPlateInput, this.adminPlateOwnerInput, this.adminPlateVehicleInput]) {
+      if (inp) inp.disabled = !isAdmin;
     }
 
     if (!isAdmin) {
-      this._adminPanelOpen = false;
       this._closeHitlEditor();
       if (this.bioAdminPanelEl) {
         this.bioAdminPanelEl.hidden = true;
         this.bioAdminPanelEl.style.display = 'none';
       }
+      if (this.adminPlatesListEl) this.adminPlatesListEl.innerHTML = '';
+      if (this.adminIdentitiesListEl) this.adminIdentitiesListEl.innerHTML = '';
       this._setAdminMessage('', false);
-    } else if (this.bioAdminPanelEl) {
-      this.bioAdminPanelEl.hidden = !this._adminPanelOpen;
-      this.bioAdminPanelEl.style.display = this._adminPanelOpen ? '' : 'none';
+    } else {
+      if (this.bioAdminPanelEl) {
+        this.bioAdminPanelEl.hidden = false;
+        this.bioAdminPanelEl.style.display = '';
+      }
+      if (this.mode === 'settings' && this.panelState !== 'closed') {
+        void this._refreshAdminLists();
+      }
     }
 
+    if (this.mode === 'settings') {
+      this._updateStatusSummary();
+    }
     this._renderBioEventsList(this.historyBioEvents);
   }
 
-  _setAdminMessage(text, isError = false) {
-    if (!this.adminBioMsgEl) return;
-    if (!text) {
-      this.adminBioMsgEl.hidden = true;
-      this.adminBioMsgEl.textContent = '';
-      this.adminBioMsgEl.classList.remove('is-error');
+  async _refreshSettingsTabData() {
+    const tasks = [
+      this._refreshStorageHealth(),
+      this._refreshBiometricsStatusSummary(),
+    ];
+    if (this._isAdmin()) {
+      tasks.push(this._refreshAdminLists());
+    }
+    await Promise.all(tasks);
+  }
+
+  async _refreshBiometricsStatusSummary() {
+    if (!this.settingsBioStatusEl) return;
+    if (typeof this.spatialStreamClient?.fetchBiometricsStatus !== 'function') {
+      this.settingsBioStatusEl.textContent = this.spatialStreamClient?.connected ? 'Connesso' : 'Offline';
       return;
     }
-    this.adminBioMsgEl.textContent = String(text);
-    this.adminBioMsgEl.classList.toggle('is-error', Boolean(isError));
-    this.adminBioMsgEl.hidden = false;
+    const status = await this.spatialStreamClient.fetchBiometricsStatus().catch(() => null);
+    this._biometricsStatus = status;
+    if (!status) {
+      this.settingsBioStatusEl.textContent = this.spatialStreamClient?.connected ? 'Attivo' : 'Server offline';
+      return;
+    }
+    const faceReady = Boolean(status.face_ready || status.face_enabled || status.enabled);
+    const alprReady = Boolean(status.alpr_ready || status.alpr_enabled || status.enabled);
+    const idCount = Number(status.identities_count ?? this.bioIdentitiesList.length ?? 0);
+    const plateCount = Number(status.plates_count ?? this.bioPlatesList.length ?? 0);
+    if (!faceReady && !alprReady && status.enabled === false) {
+      this.settingsBioStatusEl.textContent = 'Disattivo da config';
+    } else {
+      this.settingsBioStatusEl.textContent = `Attivo · ${idCount} volti · ${plateCount} targhe`;
+    }
+  }
+
+  _setAdminMessage(text, isError = false) {
+    const targets = [this.adminBioMsgEl, this.bioHitlMsgEl].filter(Boolean);
+    for (const el of targets) {
+      if (!text) {
+        el.hidden = true;
+        el.textContent = '';
+        el.classList.remove('is-error');
+      } else {
+        el.textContent = String(text);
+        el.classList.toggle('is-error', Boolean(isError));
+        el.hidden = false;
+      }
+    }
   }
 
   _closeHitlEditor() {
@@ -2085,7 +2317,7 @@ export class SecurityFabHub {
     await Promise.all([
       this._refreshBiometricEventsForWindow(),
       this._loadBiometricIdentitiesOptions(),
-      this._adminPanelOpen ? this._refreshAdminLists() : Promise.resolve(),
+      this.mode === 'settings' ? this._refreshAdminLists() : Promise.resolve(),
     ]);
   }
 
@@ -2110,21 +2342,29 @@ export class SecurityFabHub {
   }
 
   _renderAdminPlates() {
+    if (this.adminPlatesCountEl) {
+      this.adminPlatesCountEl.textContent = String(this.bioPlatesList.length);
+    }
     if (!this.adminPlatesListEl) return;
     if (!this._isAdmin() || this.bioPlatesList.length === 0) {
-      this.adminPlatesListEl.innerHTML = '<div class="m3-bio-empty">Nessuna targa in whitelist</div>';
+      this.adminPlatesListEl.innerHTML = '<div class="m3-bio-empty">Nessuna targa autorizzata in whitelist</div>';
       return;
     }
     this.adminPlatesListEl.innerHTML = this.bioPlatesList
       .map((p) => {
         const plate = String(p.plate || '');
         const owner = String(p.owner_name || '');
-        const label = p.vehicle_label ? ` (${String(p.vehicle_label)})` : '';
+        const label = p.vehicle_label ? String(p.vehicle_label) : '';
         return `
           <div class="m3-admin-item">
-            <span><strong>${escapeHtml(plate)}</strong> · ${escapeHtml(owner)}${escapeHtml(label)}</span>
+            <div class="m3-admin-item-main">
+              <span class="spatial-plate-pill is-authorized"><span class="spatial-plate-eu">I</span><span>${escapeHtml(plate)}</span></span>
+              <span class="m3-admin-item-copy">
+                <strong>${escapeHtml(owner)}</strong>${label ? `<span class="m3-admin-item-sub"> · ${escapeHtml(label)}</span>` : ''}
+              </span>
+            </div>
             <button type="button" class="m3-admin-del-btn" data-del-plate="${escapeHtml(plate)}" title="Rimuovi targa ${escapeHtml(plate)}" aria-label="Rimuovi targa ${escapeHtml(plate)}">
-              ${icon('x', { size: 12 })}
+              ${icon('x', { size: 14 })}
             </button>
           </div>
         `;
@@ -2133,20 +2373,30 @@ export class SecurityFabHub {
   }
 
   _renderAdminIdentities() {
+    if (this.adminIdentitiesCountEl) {
+      this.adminIdentitiesCountEl.textContent = String(this.bioIdentitiesList.length);
+    }
     if (!this.adminIdentitiesListEl) return;
     if (!this._isAdmin() || this.bioIdentitiesList.length === 0) {
-      this.adminIdentitiesListEl.innerHTML = '<div class="m3-bio-empty">Nessun volto registrato</div>';
+      this.adminIdentitiesListEl.innerHTML = '<div class="m3-bio-empty">Nessun volto registrato in galleria</div>';
       return;
     }
     this.adminIdentitiesListEl.innerHTML = this.bioIdentitiesList
       .map((item) => {
         const name = String(item.name || '');
         const samples = Number(item.samples_count) || 0;
+        const sampleWord = samples === 1 ? '1 campione' : `${samples} campioni`;
         return `
           <div class="m3-admin-item">
-            <span><strong>${escapeHtml(name)}</strong> · ${samples} campioni</span>
+            <div class="m3-admin-item-main">
+              <span class="m3-admin-avatar-badge" aria-hidden="true">${icon('user-check', { size: 13 })}</span>
+              <span class="m3-admin-item-copy">
+                <strong>${escapeHtml(name)}</strong>
+                <span class="m3-admin-item-sub"> · ${sampleWord}</span>
+              </span>
+            </div>
             <button type="button" class="m3-admin-del-btn" data-del-identity="${escapeHtml(name)}" title="Rimuovi persona ${escapeHtml(name)}" aria-label="Rimuovi persona ${escapeHtml(name)}">
-              ${icon('x', { size: 12 })}
+              ${icon('x', { size: 14 })}
             </button>
           </div>
         `;
