@@ -242,6 +242,7 @@ async function bootstrap() {
     cameraController,
     assetLoader,
     deviceModals,
+    haClient,
     onStateChange: (state) => {
       if (state === 'expanded') {
         navFabHub?.close();

@@ -33,6 +33,9 @@ _MINIMAL_JPEG = (
 )
 
 _PRE_SEEDED_ENV: dict[str, str] = {
+    "SH3D_DEV_MODE": "false",
+    "SPATIAL_DEV_AUTH_REQUIRED": "",
+    "VITE_HA_DEV_URL": "",
     "SPATIAL_SERVER_HOST": "127.0.0.1",
     "SPATIAL_AUTH_REQUIRED": "true",
     "SPATIAL_SESSION_SECRET": "e2e-test-session-secret-0123456789abcdef",

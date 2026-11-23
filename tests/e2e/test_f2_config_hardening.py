@@ -144,3 +144,32 @@ def test_f2_t2_05_host_override_from_env_still_respected(monkeypatch) -> None:
     monkeypatch.setenv("SPATIAL_SERVER_HOST", "0.0.0.0")
     cfg = SpatialServerConfig.from_env()
     assert cfg.host == "0.0.0.0"
+
+
+@pytest.mark.tier2
+def test_f2_t2_06_single_switch_sh3d_dev_mode_false_vs_true(monkeypatch) -> None:
+    from spatial_server.config import SpatialServerConfig
+
+    monkeypatch.setenv("SPATIAL_ALLOWED_ORIGINS", "https://smarthome.tailnet.ts.net")
+    monkeypatch.setenv("SPATIAL_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("SPATIAL_DEV_AUTH_REQUIRED", "false")
+    monkeypatch.setenv("VITE_HA_PUBLIC_URL", "https://smarthome.tailnet.ts.net:8443")
+    monkeypatch.setenv("VITE_HA_DEV_URL", "http://192.168.86.24:8123")
+
+    # 1. Production mode (SH3D_DEV_MODE=false): ignores all *_DEV overrides and keeps strict prod CORS/Auth
+    monkeypatch.setenv("SH3D_DEV_MODE", "false")
+    prod_cfg = SpatialServerConfig.from_env()
+    assert prod_cfg.dev_mode is False
+    assert prod_cfg.auth_required is True
+    assert prod_cfg.ha_public_url == "https://smarthome.tailnet.ts.net:8443"
+    assert list(prod_cfg.allowed_origins) == ["https://smarthome.tailnet.ts.net"]
+
+    # 2. Dev mode (SH3D_DEV_MODE=true): merges localhost CORS and applies *_DEV overrides seamlessly
+    monkeypatch.setenv("SH3D_DEV_MODE", "true")
+    dev_cfg = SpatialServerConfig.from_env()
+    assert dev_cfg.dev_mode is True
+    assert dev_cfg.auth_required is False
+    assert dev_cfg.ha_public_url == "http://192.168.86.24:8123"
+    assert "https://smarthome.tailnet.ts.net" in dev_cfg.allowed_origins
+    assert "http://localhost:3000" in dev_cfg.allowed_origins
+    assert "http://127.0.0.1:8080" in dev_cfg.allowed_origins

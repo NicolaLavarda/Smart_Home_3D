@@ -299,6 +299,13 @@ export class TimelineController {
         id: d.track_id,
         class: d.class_label,
         identity: d.identity,
+        identity_confidence: d.identity_confidence,
+        plate: d.plate,
+        plate_confidence: d.plate_confidence,
+        plate_whitelisted: d.plate_whitelisted,
+        plate_owner: d.plate_owner,
+        biometric_locked: d.biometric_locked,
+        best_crop_id: d.best_crop_id,
         confidence: d.confidence,
         x: d.x,
         y: d.y,
@@ -307,6 +314,7 @@ export class TimelineController {
         vz: d.vz || 0,
         t: d.timestamp - origin,
         camera_id: d.camera_sources?.[0] || 'Cam_Carraio',
+        camera_sources: d.camera_sources || ['Cam_Carraio'],
       }));
 
       this.trajectoryRenderer.loadDetections(mapped);

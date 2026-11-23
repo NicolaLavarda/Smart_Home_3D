@@ -11,6 +11,7 @@ go2rtc/go2rtc.exe
 spatial_server/data/*.db*
 spatial_server/models/
 spatial_server/data/camera_calibrations.json
+spatial_server/data/biometrics/
 caddy/caddy.exe
 tools/nssm.exe
 logs/

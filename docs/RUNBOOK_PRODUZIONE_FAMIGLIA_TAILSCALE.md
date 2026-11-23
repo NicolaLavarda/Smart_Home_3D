@@ -305,3 +305,68 @@ Esegui queste verifiche sul PC Fisso (PowerShell) e da uno smartphone su rete 4G
 | Video telecamera in `MSE LIVE` o `OFFLINE` | Credenziali Reolink errate, `GO2RTC_CANDIDATE_*` mancanti in NSSM o porta `8555` filtrata | Verificare `REOLINK_CARRAIO_PASS`, `GO2RTC_CANDIDATE_LAN` e `GO2RTC_CANDIDATE_TAILSCALE` in `.env`, rieseguire `scripts\install_windows_services.ps1` (Admin) per aggiornare `AppEnvironmentExtra` di `SmartHome3D-go2rtc`, controllare Firewall `:8555` e Grant Tailscale *(nota: su reti mobili restrittive `MSE LIVE` su `:443` funge comunque da fallback)* |
 | `*.ts.net` irraggiungibile dallo smartphone sul Wi-Fi di casa | Tailscale disattivato su Wi-Fi (On-Demand) o Chrome escluso in Android App Split Tunneling | Mantenere Tailscale attivo anche sul Wi-Fi domestico (senza Exit Node) e non escludere Chrome/PWA nello Split Tunneling |
 | Utente `Residente` vede ancora *Calibra Cam* | Sessione salvata con vecchio account Admin o flag Amministratore ancora attivo in HA | Disattivare *Amministratore* sull'utente in Home Assistant, eseguire **Logout** dal menu Impostazioni della PWA e rieffettuare il login |
+
+---
+
+## 6. Sottosistema Biometrico (Face Recognition + ALPR) e Dismissione CodeProject.AI
+
+### 6.1 Provisioning Modelli ONNX ed Enrollment Volti
+Per abilitare il riconoscimento volti (`SCRFD_500M` + `MobileFaceNet w600k_mbf`) e la lettura targhe IT/EU (`YOLOv9-tiny` + `fast-plate-ocr` European/Global) nativamente dentro `SmartHome3D-SpatialServer` senza Docker/PyTorch:
+
+1. Scarica i modelli ONNX leggeri sul nodo Windows eseguito come Amministratore:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\setup_windows_node.ps1 -WithOpenVINO -WithBiometrics
+   # oppure direttamente nel virtualenv attivo:
+   .\.venv\Scripts\python.exe tools\download_biometric_models.py
+   ```
+2. Genera l'indice compatto degli embedding facciali (`.npz`) dalle cartelle ordinate della famiglia (`<NomePersona>\*.jpg`):
+   ```powershell
+   .\.venv\Scripts\python.exe tools\enroll_faces.py --source "C:\Percorso\Volti totali"
+   ```
+3. Configura le targhe autorizzate di famiglia in `spatial_server\data\biometrics\plates_whitelist.json` oppure direttamente dalla UI Admin della PWA (sezione **Sicurezza → Cronologia → Gestisci**).
+
+### 6.2 Validazione Hardware su Intel Core i5-6400 (8 GB RAM)
+Prima di abilitare la biometria H24 in produzione, verifica sul PC Fisso che latenza per singolo crop (`~80–150 ms`) e RAM aggiuntiva (`<= 250–300 MB`) rispettino i vincoli della VM Home Assistant:
+
+```powershell
+.\.venv\Scripts\python.exe tools\benchmark_biometrics.py --compare-providers
+```
+
+Impostazioni consigliate in `.env` per preservare almeno 2 core alla VM VirtualBox di Home Assistant e a `go2rtc`:
+```env
+OMP_NUM_THREADS=2
+OPENVINO_CPU_THREADS=2
+BIOMETRICS_ONNX_PROVIDER=cpu
+BIOMETRICS_ONNX_INTRA_THREADS=2
+BIOMETRICS_ENABLED=true
+BIOMETRICS_FACE_ENABLED=true
+BIOMETRICS_ALPR_ENABLED=true
+FACE_RECOGNITION_WEBHOOK_URL=
+```
+
+### 6.3 Attivazione Graduale, Controllo RBAC e Flusso Admin HITL
+1. Aggiorna le variabili d'ambiente NSSM di `SmartHome3D-SpatialServer` ed esegui il riavvio ordinato:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\install_windows_services.ps1 -NoStart -SkipFirewall
+   scripts\stop_services.bat
+   scripts\start_services.bat
+   ```
+2. Verifica lo stato della pipeline biometrica (`running=true`, modelli `face_ready` / `alpr_ready`, quota crop e coda bounded):
+   - Via API autenticata: `GET https://<pc-fisso>.<tailnet>.ts.net/api/v1/biometrics/status`
+   - Dalla PWA su smartphone/PC:
+     - **Utenti `Residente`:** vedono in sola lettura badge 3D, pillole targa, strip live e cronologia filtrabile per persona/targa/sconosciuti; **non vedono** né il pulsante *Gestisci* né i pulsanti *Assegna* (`POST/PUT/DELETE` biometrici rispondono `403 Forbidden`).
+     - **Utenti `Admin` / `Owner`:** possono etichettare volti e targhe sconosciuti con il flusso **Human-in-the-Loop** (aggiungendo subito il crop alla galleria volti o la targa alla whitelist), ricaricare o rimuovere identità dalla galleria ed eliminare voci della whitelist.
+
+### 6.4 Dismissione Sicura di CodeProject.AI (~1–2 GB RAM recuperata)
+Solo dopo aver confermato su flussi reali (4 telecamere attive) che `SmartHome3D-SpatialServer` riconosce correttamente volti e targhe e che `FACE_RECOGNITION_WEBHOOK_URL=` è vuoto in `.env`:
+
+1. Esegui prima un **audit read-only** per misurare processi, porta `32168` e RAM occupata da CodeProject.AI:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\decommission_codeproject_ai.ps1
+   ```
+2. Se `SmartHome3D-SpatialServer` è attivo e stabile, arresta e disabilita il servizio legacy recuperando ~1–2 GB di RAM sul nodo 8 GB:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\decommission_codeproject_ai.ps1 -Apply
+   ```
+   *(L'operazione è reversibile tramite `Set-Service -Name "<nome_servizio>" -StartupType Automatic; Start-Service -Name "<nome_servizio>"`, indicato dallo script al termine.)*
+

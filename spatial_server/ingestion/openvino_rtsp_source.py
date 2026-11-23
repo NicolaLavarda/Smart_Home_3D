@@ -50,6 +50,7 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         shared_compiled_ov=None,
         shared_backend_name: Optional[str] = None,
         infer_lock: Optional[threading.Lock] = None,
+        cpu_threads: int = 2,
     ) -> None:
         self.rtsp_url = rtsp_url
         self.camera_id = camera_id
@@ -58,10 +59,14 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self.frame_interval_s = 1.0 / max(target_fps, 1.0)
         self.conf_threshold = max(0.05, min(float(conf_threshold), 0.95))
         self._infer_lock = infer_lock
+        self.cpu_threads = max(1, int(cpu_threads))
 
         self._running = False
         self._task: Optional[asyncio.Task[None]] = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"rtsp-cv-{camera_id}")
+        self._latest_frame_lock = threading.Lock()
+        self._latest_frame: Optional[np.ndarray] = None
+        self._latest_frame_ts: float = 0.0
         self._backend_name = "initializing"
         self._compiled_ov = None
         self._yolo_model = None
@@ -120,7 +125,23 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         return canvas, left, top, new_w, new_h
 
     def _compile_and_warmup_ov(self, core, ov_model, device_name: str):
-        compiled = core.compile_model(ov_model, device_name)
+        cpu_threads = max(1, int(getattr(self, "cpu_threads", 2)))
+        if hasattr(core, "set_property"):
+            try:
+                core.set_property("CPU", {"INFERENCE_NUM_THREADS": cpu_threads})
+            except Exception:
+                pass
+        if device_name.upper() == "CPU":
+            try:
+                compiled = core.compile_model(
+                    ov_model,
+                    device_name,
+                    {"INFERENCE_NUM_THREADS": cpu_threads},
+                )
+            except TypeError:
+                compiled = core.compile_model(ov_model, device_name)
+        else:
+            compiled = core.compile_model(ov_model, device_name)
         dummy = np.zeros((1, 3, 640, 640), dtype=np.float32)
         res = compiled([dummy])
         _ = self._extract_ov_output(compiled, res)
@@ -216,6 +237,16 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return cap
 
+    def get_latest_frame(self) -> Optional[tuple[np.ndarray, float]]:
+        """Return a copy of the latest decoded substream frame and timestamp, if available."""
+        lock = getattr(self, "_latest_frame_lock", None)
+        if lock is None:
+            return None
+        with lock:
+            if self._latest_frame is None:
+                return None
+            return self._latest_frame.copy(), self._latest_frame_ts
+
     async def start(self, on_batch: DetectionBatchCallback) -> None:
         if self._running:
             return
@@ -231,6 +262,11 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             except asyncio.CancelledError:
                 pass
             self._task = None
+        lock = getattr(self, "_latest_frame_lock", None)
+        if lock is not None:
+            with lock:
+                self._latest_frame = None
+                self._latest_frame_ts = 0.0
 
     async def _capture_loop(self, on_batch: DetectionBatchCallback) -> None:
         loop = asyncio.get_running_loop()
@@ -283,7 +319,14 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                     await asyncio.sleep(1.5)
                     continue
 
-                events = await loop.run_in_executor(self._executor, self._infer_frame, frame, time.time())
+                now_frame_ts = time.time()
+                lock = getattr(self, "_latest_frame_lock", None)
+                if lock is not None:
+                    with lock:
+                        self._latest_frame = frame.copy()
+                        self._latest_frame_ts = now_frame_ts
+
+                events = await loop.run_in_executor(self._executor, self._infer_frame, frame, now_frame_ts)
                 self._frames_inferred += 1
                 self._raw_detections_total += len(events)
                 self._last_error = None

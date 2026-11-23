@@ -515,3 +515,26 @@ def test_t2_f15_08_scripts_hygiene_and_safety_static_scan(tmp_path: Path):
     )
     res = run_bat_dry_run(ws_info, "scripts/start_services.bat", nssm_status_exit=1)
     assert res["returncode"] == 0, f"start_services.bat failed on spaced path:\n{res['stdout']}\n{res['stderr']}"
+
+
+def test_t1_f15_09_biometrics_deploy_switches_and_decommission_cpai_ast():
+    """T1-F15-09: setup -WithBiometrics, install OMP_NUM_THREADS=2, and decommission_codeproject_ai.ps1 AST/safety."""
+    setup_text = (REPO_ROOT / "scripts" / "setup_windows_node.ps1").read_text(encoding="utf-8")
+    install_text = (REPO_ROOT / "scripts" / "install_windows_services.ps1").read_text(encoding="utf-8")
+    decomm_ps1 = REPO_ROOT / "scripts" / "decommission_codeproject_ai.ps1"
+
+    assert decomm_ps1.is_file(), f"Missing {decomm_ps1}"
+    parsed = parse_ps1_ast(decomm_ps1)
+    assert parsed["errors"] == [], f"AST errors in {decomm_ps1.name}: {parsed['errors']}"
+    assert parsed["has_param_block"] is True
+    params = {p["name"]: p["types"] for p in parsed["parameters"]}
+    assert "Apply" in params and "SkipSpatialCheck" in params
+
+    decomm_text = decomm_ps1.read_text(encoding="utf-8")
+    assert "$ErrorActionPreference" in decomm_text
+    assert "[DRY-RUN]" in decomm_text and "SmartHome3D-SpatialServer" in decomm_text
+    assert "Set-Service" in decomm_text and "Disabled" in decomm_text
+
+    assert "-WithBiometrics" in setup_text or "[switch]$WithBiometrics" in setup_text
+    assert "download_biometric_models.py" in setup_text
+    assert "OMP_NUM_THREADS" in install_text and '"2"' in install_text

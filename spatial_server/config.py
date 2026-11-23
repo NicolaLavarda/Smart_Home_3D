@@ -119,6 +119,27 @@ def _parse_camera_streams(raw: str) -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
+def _parse_biometrics_camera_rules(raw: str) -> tuple[tuple[str, str, float], ...]:
+    rules: list[tuple[str, str, float]] = []
+    for item in (raw or "").split(","):
+        cleaned = item.strip()
+        if not cleaned or ":" not in cleaned or "=" not in cleaned:
+            continue
+        cam_part, rest = cleaned.split(":", 1)
+        mod_part, range_part = rest.split("=", 1)
+        cam_id = cam_part.strip()
+        modality = mod_part.strip().lower()
+        if not cam_id or modality not in ("face", "alpr"):
+            continue
+        try:
+            max_range_m = float(range_part.strip())
+        except ValueError:
+            continue
+        if max_range_m > 0.0:
+            rules.append((cam_id, modality, max_range_m))
+    return tuple(rules)
+
+
 @dataclass(frozen=True)
 class SpatialServerConfig:
     host: str
@@ -155,6 +176,42 @@ class SpatialServerConfig:
     nvr_storage_dir: Optional[Path] = None
     go2rtc_rtsp_base_url: str = "rtsp://127.0.0.1:8554"
     openvino_camera_streams: tuple[tuple[str, str], ...] = ()
+    openvino_cpu_threads: int = 2
+    biometrics_enabled: bool = False
+    biometrics_face_enabled: bool = True
+    biometrics_alpr_enabled: bool = True
+    biometrics_onnx_provider: str = "cpu"
+    biometrics_onnx_intra_threads: int = 2
+    biometrics_onnx_inter_threads: int = 1
+    biometrics_queue_maxsize: int = 8
+    biometrics_min_eval_interval_s: float = 0.6
+    biometrics_max_attempts_per_track: int = 6
+    biometrics_unknown_backoff_s: float = 4.0
+    go2rtc_http_base_url: str = "http://127.0.0.1:1984"
+    biometrics_snapshot_timeout_s: float = 2.5
+    biometrics_panoramic_max_width: int = 3840
+    biometrics_panoramic_edge_margin_u: float = 0.15
+    biometrics_face_det_model: str = "det_500m.onnx"
+    biometrics_face_rec_model: str = "w600k_mbf.onnx"
+    biometrics_face_min_width_px: float = 48.0
+    biometrics_face_min_laplacian: float = 35.0
+    biometrics_face_max_yaw_ratio: float = 0.55
+    biometrics_face_match_threshold: float = 0.45
+    biometrics_face_margin_threshold: float = 0.08
+    biometrics_face_consensus_k: int = 2
+    biometrics_face_max_range_m: float = 8.0
+    biometrics_alpr_det_model: str = "yolo-v9-t-384-license-plate-end2end"
+    biometrics_alpr_ocr_model: str = "cct-xs-v2-global-model"
+    biometrics_alpr_min_plate_width_px: float = 55.0
+    biometrics_alpr_consensus_k: int = 2
+    biometrics_alpr_max_range_m: float = 13.0
+    biometrics_alpr_whitelist_max_dist: int = 1
+    biometrics_crop_retention_days: int = 14
+    biometrics_crop_max_mb: float = 250.0
+    biometrics_data_dir: Optional[Path] = None
+    biometrics_plates_whitelist_file: Optional[Path] = None
+    biometrics_camera_rules: tuple[tuple[str, str, float], ...] = ()
+    dev_mode: bool = False
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -163,17 +220,30 @@ class SpatialServerConfig:
         data_dir.mkdir(parents=True, exist_ok=True)
         models_dir.mkdir(parents=True, exist_ok=True)
 
+        dev_mode = _parse_bool_env("SH3D_DEV_MODE", False)
         ha_public_url = _normalize_ha_url(
             os.getenv("VITE_HA_PUBLIC_URL") or os.getenv("HA_PUBLIC_URL", "")
         )
+        if dev_mode:
+            dev_ha_url = _normalize_ha_url(os.getenv("VITE_HA_DEV_URL", ""))
+            if dev_ha_url:
+                ha_public_url = dev_ha_url
         host = (os.getenv("SPATIAL_SERVER_HOST") or "127.0.0.1").strip() or "127.0.0.1"
         auth_required = _parse_bool_env("SPATIAL_AUTH_REQUIRED", True)
+        if dev_mode and (os.getenv("SPATIAL_DEV_AUTH_REQUIRED") or "").strip():
+            auth_required = _parse_bool_env("SPATIAL_DEV_AUTH_REQUIRED", auth_required)
         auth_cache_ttl_s = max(0.0, float(os.getenv("SPATIAL_AUTH_CACHE_TTL_S", "120.0")))
         session_secret_key = os.getenv("SPATIAL_SESSION_SECRET", "").strip()
         allowed_origins = _parse_allowed_origins(
             os.getenv("SPATIAL_ALLOWED_ORIGINS", ""),
             ha_public_url=ha_public_url,
         )
+        if dev_mode:
+            merged_origins = list(allowed_origins)
+            for dev_origin in DEFAULT_ALLOWED_ORIGINS:
+                if dev_origin not in merged_origins:
+                    merged_origins.append(dev_origin)
+            allowed_origins = tuple(merged_origins)
         raw_nvr_dir = (os.getenv("SPATIAL_NVR_STORAGE_DIR") or "").strip()
         nvr_storage_dir = Path(raw_nvr_dir) if raw_nvr_dir else None
         go2rtc_rtsp_url = os.getenv("GO2RTC_RTSP_CARRAIO_SUB", "rtsp://127.0.0.1:8554/carraio_sub")
@@ -185,6 +255,24 @@ class SpatialServerConfig:
             else:
                 go2rtc_rtsp_base_url = "rtsp://127.0.0.1:8554"
         openvino_camera_streams = _parse_camera_streams(os.getenv("OPENVINO_CAMERA_STREAMS", ""))
+        go2rtc_api_port = int(os.getenv("GO2RTC_API_PORT", "1984"))
+        go2rtc_http_base_url = (
+            (os.getenv("GO2RTC_HTTP_BASE_URL") or f"http://127.0.0.1:{go2rtc_api_port}").strip().rstrip("/")
+        )
+        raw_bio_data_dir = (os.getenv("BIOMETRICS_DATA_DIR") or "").strip()
+        biometrics_data_dir = Path(raw_bio_data_dir) if raw_bio_data_dir else (data_dir / "biometrics")
+        raw_plates_file = (os.getenv("BIOMETRICS_PLATES_WHITELIST_FILE") or "").strip()
+        biometrics_plates_whitelist_file = (
+            Path(raw_plates_file) if raw_plates_file else (biometrics_data_dir / "plates_whitelist.json")
+        )
+        default_ingestion_mode = (
+            os.getenv("CV_INGESTION_MODE") or os.getenv("SPATIAL_INGESTION_MODE") or "synthetic"
+        ).lower()
+        if dev_mode and (os.getenv("CV_DEV_INGESTION_MODE") or "").strip():
+            default_ingestion_mode = os.getenv("CV_DEV_INGESTION_MODE", "").strip().lower()
+        biometrics_enabled = _parse_bool_env("BIOMETRICS_ENABLED", False)
+        if dev_mode and (os.getenv("BIOMETRICS_DEV_ENABLED") or "").strip():
+            biometrics_enabled = _parse_bool_env("BIOMETRICS_DEV_ENABLED", biometrics_enabled)
 
         return cls(
             host=host,
@@ -195,7 +283,7 @@ class SpatialServerConfig:
             calibration_override_path=data_dir / "camera_calibrations.json",
             data_dir=data_dir,
             models_dir=models_dir,
-            default_ingestion_mode=(os.getenv("CV_INGESTION_MODE") or os.getenv("SPATIAL_INGESTION_MODE") or "synthetic").lower(),
+            default_ingestion_mode=default_ingestion_mode,
             go2rtc_rtsp_url=go2rtc_rtsp_url,
             mqtt_host=os.getenv("MQTT_BROKER_HOST") or os.getenv("MQTT_HOST", "192.168.86.24"),
             mqtt_port=int(os.getenv("MQTT_BROKER_PORT") or os.getenv("MQTT_PORT", "1883")),
@@ -221,5 +309,41 @@ class SpatialServerConfig:
             nvr_storage_dir=nvr_storage_dir,
             go2rtc_rtsp_base_url=go2rtc_rtsp_base_url,
             openvino_camera_streams=openvino_camera_streams,
+            openvino_cpu_threads=max(1, int(os.getenv("OPENVINO_CPU_THREADS", "2"))),
+            biometrics_enabled=biometrics_enabled,
+            biometrics_face_enabled=_parse_bool_env("BIOMETRICS_FACE_ENABLED", True),
+            biometrics_alpr_enabled=_parse_bool_env("BIOMETRICS_ALPR_ENABLED", True),
+            biometrics_onnx_provider=(os.getenv("BIOMETRICS_ONNX_PROVIDER") or "cpu").strip().lower() or "cpu",
+            biometrics_onnx_intra_threads=max(1, int(os.getenv("BIOMETRICS_ONNX_INTRA_THREADS", "2"))),
+            biometrics_onnx_inter_threads=max(1, int(os.getenv("BIOMETRICS_ONNX_INTER_THREADS", "1"))),
+            biometrics_queue_maxsize=max(1, int(os.getenv("BIOMETRICS_QUEUE_MAXSIZE", "8"))),
+            biometrics_min_eval_interval_s=max(0.0, float(os.getenv("BIOMETRICS_MIN_EVAL_INTERVAL_S", "0.6"))),
+            biometrics_max_attempts_per_track=max(1, int(os.getenv("BIOMETRICS_MAX_ATTEMPTS_PER_TRACK", "6"))),
+            biometrics_unknown_backoff_s=max(0.5, float(os.getenv("BIOMETRICS_UNKNOWN_BACKOFF_S", "4.0"))),
+            go2rtc_http_base_url=go2rtc_http_base_url,
+            biometrics_snapshot_timeout_s=max(0.3, float(os.getenv("BIOMETRICS_SNAPSHOT_TIMEOUT_S", "2.5"))),
+            biometrics_panoramic_max_width=max(640, int(os.getenv("BIOMETRICS_PANORAMIC_MAX_WIDTH", "3840"))),
+            biometrics_panoramic_edge_margin_u=max(0.0, min(0.45, float(os.getenv("BIOMETRICS_PANORAMIC_EDGE_MARGIN_U", "0.15")))),
+            biometrics_face_det_model=(os.getenv("BIOMETRICS_FACE_DET_MODEL") or "det_500m.onnx").strip() or "det_500m.onnx",
+            biometrics_face_rec_model=(os.getenv("BIOMETRICS_FACE_REC_MODEL") or "w600k_mbf.onnx").strip() or "w600k_mbf.onnx",
+            biometrics_face_min_width_px=max(16.0, float(os.getenv("BIOMETRICS_FACE_MIN_WIDTH_PX", "48.0"))),
+            biometrics_face_min_laplacian=max(0.0, float(os.getenv("BIOMETRICS_FACE_MIN_LAPLACIAN", "35.0"))),
+            biometrics_face_max_yaw_ratio=max(0.1, float(os.getenv("BIOMETRICS_FACE_MAX_YAW_RATIO", "0.55"))),
+            biometrics_face_match_threshold=max(0.1, min(1.0, float(os.getenv("BIOMETRICS_FACE_MATCH_THRESHOLD", "0.45")))),
+            biometrics_face_margin_threshold=max(0.0, min(1.0, float(os.getenv("BIOMETRICS_FACE_MARGIN_THRESHOLD", "0.08")))),
+            biometrics_face_consensus_k=max(1, int(os.getenv("BIOMETRICS_FACE_CONSENSUS_K", "2"))),
+            biometrics_face_max_range_m=max(1.0, float(os.getenv("BIOMETRICS_FACE_MAX_RANGE_M", "8.0"))),
+            biometrics_alpr_det_model=(os.getenv("BIOMETRICS_ALPR_DET_MODEL") or "yolo-v9-t-384-license-plate-end2end").strip() or "yolo-v9-t-384-license-plate-end2end",
+            biometrics_alpr_ocr_model=(os.getenv("BIOMETRICS_ALPR_OCR_MODEL") or "cct-xs-v2-global-model").strip() or "cct-xs-v2-global-model",
+            biometrics_alpr_min_plate_width_px=max(16.0, float(os.getenv("BIOMETRICS_ALPR_MIN_PLATE_WIDTH_PX", "55.0"))),
+            biometrics_alpr_consensus_k=max(1, int(os.getenv("BIOMETRICS_ALPR_CONSENSUS_K", "2"))),
+            biometrics_alpr_max_range_m=max(1.0, float(os.getenv("BIOMETRICS_ALPR_MAX_RANGE_M", "13.0"))),
+            biometrics_alpr_whitelist_max_dist=max(0, int(os.getenv("BIOMETRICS_ALPR_WHITELIST_MAX_DIST", "1"))),
+            biometrics_crop_retention_days=max(1, int(os.getenv("BIOMETRICS_CROP_RETENTION_DAYS", "14"))),
+            biometrics_crop_max_mb=max(1.0, float(os.getenv("BIOMETRICS_CROP_MAX_MB", "250.0"))),
+            biometrics_data_dir=biometrics_data_dir,
+            biometrics_plates_whitelist_file=biometrics_plates_whitelist_file,
+            biometrics_camera_rules=_parse_biometrics_camera_rules(os.getenv("BIOMETRICS_CAMERA_RULES", "")),
+            dev_mode=dev_mode,
         )
 

@@ -55,6 +55,7 @@ export class SpatialStreamClient {
     this.statusListeners = new Set();
     this.authErrorListeners = new Set();
     this.calibrationListeners = new Set();
+    this.biometricEventListeners = new Set();
     this.lastStatusPayload = null;
   }
 
@@ -90,6 +91,11 @@ export class SpatialStreamClient {
   onCalibrationUpdate(callback) {
     this.calibrationListeners.add(callback);
     return () => this.calibrationListeners.delete(callback);
+  }
+
+  onBiometricEvent(callback) {
+    this.biometricEventListeners.add(callback);
+    return () => this.biometricEventListeners.delete(callback);
   }
 
   emitStatus(connected, meta = null) {
@@ -140,6 +146,14 @@ export class SpatialStreamClient {
               cb(msg);
             } catch (e) {
               console.warn('[SpatialStreamClient] Errore listener calibration_updated:', e);
+            }
+          });
+        } else if (msg.type === 'biometric_event') {
+          this.biometricEventListeners.forEach((cb) => {
+            try {
+              cb(msg);
+            } catch (e) {
+              console.warn('[SpatialStreamClient] Errore listener biometric_event:', e);
             }
           });
         }
@@ -317,7 +331,7 @@ export class SpatialStreamClient {
     return data;
   }
 
-  async fetchTracks(tStart, tEnd, classes = null, limit = 15000) {
+  async fetchTracks(tStart, tEnd, classes = null, limit = 15000, filters = null) {
     const params = new URLSearchParams({
       t_start: String(tStart),
       t_end: String(tEnd),
@@ -326,7 +340,125 @@ export class SpatialStreamClient {
     if (Array.isArray(classes) && classes.length > 0) {
       params.set('classes', classes.join(','));
     }
+    if (filters && typeof filters === 'object') {
+      if (typeof filters.identity === 'string' && filters.identity.trim()) {
+        params.set('identity', filters.identity.trim());
+      }
+      if (typeof filters.plate === 'string' && filters.plate.trim()) {
+        params.set('plate', filters.plate.trim().toUpperCase());
+      }
+      if (filters.unknownOnly) {
+        params.set('unknown_only', 'true');
+      }
+    }
     return await this.requestJson(`/api/v1/tracks?${params.toString()}`, { method: 'GET', timeoutMs: 12000 });
+  }
+
+  async fetchBiometricsStatus() {
+    return await this.requestJson('/api/v1/biometrics/status', {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 3000,
+    });
+  }
+
+  async fetchBiometricEvents({
+    tStart = null,
+    tEnd = null,
+    modality = null,
+    status = null,
+    identity = null,
+    plate = null,
+    trackId = null,
+    limit = 100,
+  } = {}) {
+    const params = new URLSearchParams();
+    if (Number.isFinite(tStart)) params.set('t_start', String(tStart));
+    if (Number.isFinite(tEnd)) params.set('t_end', String(tEnd));
+    if (modality) params.set('modality', String(modality));
+    if (status) params.set('status', String(status));
+    if (typeof identity === 'string' && identity.trim()) params.set('identity', identity.trim());
+    if (typeof plate === 'string' && plate.trim()) params.set('plate', plate.trim().toUpperCase());
+    if (Number.isFinite(trackId)) params.set('track_id', String(trackId));
+    params.set('limit', String(Math.max(1, Math.min(1000, Number(limit) || 100))));
+    const qs = params.toString();
+    return await this.requestJson(`/api/v1/biometrics/events${qs ? `?${qs}` : ''}`, {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 8000,
+    });
+  }
+
+  async fetchBiometricIdentities() {
+    return await this.requestJson('/api/v1/biometrics/identities', {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 5000,
+    });
+  }
+
+  async fetchBiometricPlates() {
+    return await this.requestJson('/api/v1/biometrics/plates', {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 5000,
+    });
+  }
+
+  getBiometricCropUrl(cropId) {
+    const clean = String(cropId || '').trim();
+    if (!clean) return null;
+    return `${this.baseUrl}/api/v1/biometrics/crops/${encodeURIComponent(clean)}`;
+  }
+
+  async assignBiometricEvent(eventId, payload = {}) {
+    return await this.requestJson(`/api/v1/biometrics/events/${encodeURIComponent(eventId)}/assign`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      timeoutMs: 12000,
+    });
+  }
+
+  async reloadBiometricIdentities() {
+    return await this.requestJson('/api/v1/biometrics/identities/reload', {
+      method: 'POST',
+      cache: 'no-store',
+      timeoutMs: 8000,
+    });
+  }
+
+  async deleteBiometricIdentity(personName) {
+    return await this.requestJson(`/api/v1/biometrics/identities/${encodeURIComponent(personName)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+      timeoutMs: 8000,
+    });
+  }
+
+  async upsertBiometricPlate({ plate, owner_name, vehicle_label = null, notes = null }) {
+    return await this.requestJson('/api/v1/biometrics/plates', {
+      method: 'PUT',
+      body: JSON.stringify({ plate, owner_name, vehicle_label, notes }),
+      cache: 'no-store',
+      timeoutMs: 8000,
+    });
+  }
+
+  async deleteBiometricPlate(plate) {
+    return await this.requestJson(`/api/v1/biometrics/plates/${encodeURIComponent(plate)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+      timeoutMs: 8000,
+    });
+  }
+
+  async pruneBiometricCrops() {
+    return await this.requestJson('/api/v1/biometrics/crops/prune', {
+      method: 'POST',
+      cache: 'no-store',
+      timeoutMs: 15000,
+    });
   }
 
   async fetchTimelineDensity(tStart, tEnd, buckets = 80) {

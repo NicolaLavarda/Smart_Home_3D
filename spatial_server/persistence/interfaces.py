@@ -20,8 +20,11 @@ class ITrackRepository(ABC):
         classes: Optional[list[str]] = None,
         zone_bbox: Optional[tuple[float, float, float, float]] = None,
         limit: int = 5000,
+        identity: Optional[str] = None,
+        plate: Optional[str] = None,
+        unknown_only: bool = False,
     ) -> list[dict[str, Any]]:
-        """Query detections inside [t_start, t_end] optionally filtered by class & XZ zone."""
+        """Query detections inside [t_start, t_end] optionally filtered by class, XZ zone & biometrics."""
 
     @abstractmethod
     def query_timeline_density(self, t_start: float, t_end: float, buckets: int = 60) -> list[dict[str, Any]]:
@@ -30,4 +33,114 @@ class ITrackRepository(ABC):
     @abstractmethod
     def prune_older_than(self, cutoff_timestamp: float) -> int:
         """Delete records older than cutoff_timestamp and return removed row count."""
+
+    def get_max_track_id(self) -> int:
+        """Return highest persisted track_id across history & biometric tables (0 if empty)."""
+        return 0
+
+    def backfill_track_biometrics(
+        self,
+        track_id: int,
+        *,
+        min_timestamp: float,
+        identity: Optional[str] = None,
+        identity_confidence: Optional[float] = None,
+        plate: Optional[str] = None,
+        plate_confidence: Optional[float] = None,
+        plate_whitelisted: Optional[bool] = None,
+        plate_owner: Optional[str] = None,
+        biometric_locked: Optional[bool] = None,
+        best_crop_id: Optional[str] = None,
+    ) -> int:
+        """Retroactively update earlier persisted rows of an identified track."""
+        return 0
+
+    def record_biometric_event(self, event: dict[str, Any]) -> int:
+        """Insert or update a deduplicated biometric event for a visit and return event id."""
+        return 0
+
+    def query_biometric_events(
+        self,
+        t_start: Optional[float] = None,
+        t_end: Optional[float] = None,
+        *,
+        modality: Optional[str] = None,
+        status: Optional[str] = None,
+        identity: Optional[str] = None,
+        plate: Optional[str] = None,
+        track_id: Optional[int] = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Query persisted biometric recognition events."""
+        return []
+
+    def get_biometric_event(self, event_id: int) -> Optional[dict[str, Any]]:
+        """Fetch a single biometric event by primary key id."""
+        return None
+
+    def get_crop_relpath(self, crop_id: str) -> Optional[str]:
+        """Resolve stored relative crop path for a crop_id, if known."""
+        return None
+
+    def prune_biometric_events_older_than(self, cutoff_timestamp: float) -> tuple[int, list[str]]:
+        """Delete expired biometric_events rows and return (deleted_count, crop_relpaths)."""
+        return (0, [])
+
+    def list_plate_whitelist(self) -> list[dict[str, Any]]:
+        """Return all authorized plates stored in persistence."""
+        return []
+
+    def upsert_plate_whitelist(
+        self,
+        plate: str,
+        owner_name: str,
+        vehicle_label: Optional[str] = None,
+        notes: Optional[str] = None,
+        updated_at: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Insert or update an authorized plate entry."""
+        raise NotImplementedError("Plate whitelist persistence not implemented")
+
+    def delete_plate_whitelist(self, plate: str) -> bool:
+        """Remove an authorized plate entry and return True if deleted."""
+        return False
+
+    def list_face_identities_meta(self) -> list[dict[str, Any]]:
+        """Return per-identity metadata aggregated across face embeddings & biometric events."""
+        return []
+
+    def update_biometric_event_review(
+        self,
+        event_id: int,
+        *,
+        identity: Optional[str] = None,
+        identity_confidence: Optional[float] = None,
+        plate: Optional[str] = None,
+        plate_confidence: Optional[float] = None,
+        plate_whitelisted: Optional[bool] = None,
+        plate_owner: Optional[str] = None,
+        biometric_locked: Optional[bool] = None,
+        biometric_status: Optional[str] = None,
+        reviewed_by: Optional[str] = None,
+        reviewed_at: Optional[float] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Update an existing biometric event after Admin HITL review and return the updated record."""
+        return None
+
+    def add_face_embedding(
+        self,
+        person_name: str,
+        model_name: str,
+        embedding_blob: bytes,
+        *,
+        quality_score: float = 0.0,
+        source: str = "hitl",
+        created_at: Optional[float] = None,
+    ) -> int:
+        """Persist a single L2-normalized face embedding sample and return its row id."""
+        return 0
+
+    def delete_face_embeddings(self, person_name: str) -> int:
+        """Delete persisted face embedding samples for `person_name` and return removed row count."""
+        return 0
 

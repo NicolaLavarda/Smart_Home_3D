@@ -32,6 +32,8 @@ class DetectionEvent(BaseModel):
     bbox: BoundingBox2D
     sub_label: Optional[str] = None
     face_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    plate: Optional[str] = None
+    plate_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     track_hint_id: Optional[str] = None
 
 
@@ -63,6 +65,13 @@ class TrackedEntity3D(BaseModel):
     confidence: float = 0.9
     identity: Optional[str] = None
     identity_confidence: float = 0.0
+    plate: Optional[str] = None
+    plate_confidence: float = 0.0
+    plate_whitelisted: Optional[bool] = None
+    plate_owner: Optional[str] = None
+    biometric_locked: bool = False
+    biometric_status: Literal["none", "pending", "locked", "unknown"] = "none"
+    best_crop_id: Optional[str] = None
     state: SpatialPoint3D
     last_seen: float
 

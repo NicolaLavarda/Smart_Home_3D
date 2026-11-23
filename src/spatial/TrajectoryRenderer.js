@@ -5,6 +5,7 @@ const CLASS_COLORS = {
   person: [0.02, 0.71, 0.83],
   car: [0.96, 0.62, 0.04],
   truck: [0.98, 0.45, 0.09],
+  motorbike: [0.55, 0.36, 0.96],
   bicycle: [0.06, 0.73, 0.51],
   dog: [0.93, 0.28, 0.60],
 };
@@ -107,15 +108,27 @@ export class TrajectoryRenderer {
 
     grouped.forEach((points, id) => {
       const firstPoint = points[0];
+      const richestPoint = points.find((p) => p.identity || p.plate) || firstPoint;
       const entityClass = firstPoint.class || firstPoint.class_label || 'person';
+      const camSources = Array.isArray(richestPoint.camera_sources) && richestPoint.camera_sources.length > 0
+        ? richestPoint.camera_sources
+        : [firstPoint.camera_id || 'Cam_Carraio'];
 
       const markerGroup = this.avatarFactory.createAvatar({
         track_id: id,
         class_label: entityClass,
-        identity: firstPoint.identity || null,
-        confidence: firstPoint.confidence ?? 0.92,
-        camera_sources: firstPoint.camera_id ? [firstPoint.camera_id] : ['Cam_Carraio'],
-        state: { vx: 0, vz: 0 },
+        identity: richestPoint.identity || null,
+        identity_confidence: richestPoint.identity_confidence ?? 0,
+        plate: richestPoint.plate || null,
+        plate_confidence: richestPoint.plate_confidence ?? 0,
+        plate_whitelisted: richestPoint.plate_whitelisted ?? null,
+        plate_owner: richestPoint.plate_owner || null,
+        biometric_locked: Boolean(richestPoint.biometric_locked),
+        biometric_status: richestPoint.biometric_status || 'none',
+        best_crop_id: richestPoint.best_crop_id || null,
+        confidence: richestPoint.confidence ?? firstPoint.confidence ?? 0.92,
+        camera_sources: camSources,
+        state: { vx: 0, vz: 0, camera_sources: camSources },
       });
       markerGroup.visible = false;
       this.scene.add(markerGroup);
@@ -169,6 +182,7 @@ export class TrajectoryRenderer {
         entry = {
           trackId: id,
           classLabel: track.class_label || 'person',
+          isKnown: Boolean((track.identity && track.identity !== 'Sconosciuto') || track.plate_whitelisted === true),
           markerGroup,
           trailLine,
           targetPos: new THREE.Vector3(x, y, z),
@@ -182,6 +196,7 @@ export class TrajectoryRenderer {
       } else {
         entry.targetPos.set(x, y, z);
         entry.velocity.set(vx, vy, vz);
+        entry.isKnown = Boolean((track.identity && track.identity !== 'Sconosciuto') || track.plate_whitelisted === true);
         entry.lastUpdatePerf = nowPerf;
         entry.lastSeenPerf = nowPerf;
         this.avatarFactory.updateAvatarMetadata(entry.markerGroup, track);
@@ -241,7 +256,9 @@ export class TrajectoryRenderer {
       }
 
       // Aggiorna BufferGeometry scia
-      const [baseR, baseG, baseB] = CLASS_COLORS[entry.classLabel] || CLASS_COLORS.person;
+      const [baseR, baseG, baseB] = entry.isKnown
+        ? [0.06, 0.73, 0.51]
+        : (CLASS_COLORS[entry.classLabel] || CLASS_COLORS.person);
       const trailWindowStart = nowUnix - this.trailDuration;
       const validTrail = entry.trailPoints.filter((pt) => pt.t >= trailWindowStart);
       if (validTrail.length !== entry.trailPoints.length) {
@@ -279,7 +296,6 @@ export class TrajectoryRenderer {
 
     this.entities.forEach((entity) => {
       const { markerGroup, trailLine, points, class: entityClass } = entity;
-      const [baseR, baseG, baseB] = CLASS_COLORS[entityClass] || CLASS_COLORS.person;
 
       const pastPoints = points.filter((p) => p.t <= currentTime);
       const futurePoints = points.filter((p) => p.t > currentTime);
@@ -321,14 +337,33 @@ export class TrajectoryRenderer {
         }
       }
 
+      const metaPoint =
+        (lastPoint.identity || lastPoint.plate)
+          ? lastPoint
+          : pastPoints.slice().reverse().find((p) => p.identity || p.plate) || lastPoint;
+      const camSources = Array.isArray(lastPoint.camera_sources) && lastPoint.camera_sources.length > 0
+        ? lastPoint.camera_sources
+        : [lastPoint.camera_id || 'Cam_Carraio'];
+      const isKnown = Boolean((metaPoint.identity && metaPoint.identity !== 'Sconosciuto') || metaPoint.plate_whitelisted === true);
+      const [baseR, baseG, baseB] = isKnown
+        ? [0.06, 0.73, 0.51]
+        : (CLASS_COLORS[entityClass] || CLASS_COLORS.person);
+
       markerGroup.position.copy(currentPos);
       this.avatarFactory.updateAvatarMetadata(markerGroup, {
         track_id: entity.id,
         class_label: entityClass,
-        identity: lastPoint.identity || null,
+        identity: metaPoint.identity || null,
+        identity_confidence: metaPoint.identity_confidence ?? 0,
+        plate: metaPoint.plate || null,
+        plate_confidence: metaPoint.plate_confidence ?? 0,
+        plate_whitelisted: metaPoint.plate_whitelisted ?? null,
+        plate_owner: metaPoint.plate_owner || null,
+        biometric_locked: Boolean(metaPoint.biometric_locked),
+        best_crop_id: metaPoint.best_crop_id || null,
         confidence: lastPoint.confidence ?? 0.92,
-        camera_sources: [lastPoint.camera_id || 'Cam_Carraio'],
-        state: { vx, vz },
+        camera_sources: camSources,
+        state: { vx, vz, camera_sources: camSources },
       });
 
       const trailWindowStart = currentTime - this.trailDuration;

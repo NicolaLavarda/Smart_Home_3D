@@ -224,6 +224,39 @@ export function createPwaOptions() {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const isProd = mode === 'production';
+  const rawDevFlag = String(env.SH3D_DEV_MODE ?? '').trim().toLowerCase();
+  const hasExplicitDevFlag = rawDevFlag !== '';
+  const devModeEnabled = hasExplicitDevFlag
+    ? ['1', 'true', 'yes', 'on'].includes(rawDevFlag)
+    : !isProd;
+  // Defense-in-depth: `npm run build` (isProd === true) ALWAYS strips dev-only VITE_* vars
+  // regardless of SH3D_DEV_MODE so a forgotten `true` can never leak dev tokens/URLs into dist/.
+  const stripDevViteVars = isProd || !devModeEnabled;
+
+  const define = stripDevViteVars
+    ? {
+      'import.meta.env.VITE_HA_TOKEN': JSON.stringify(''),
+      'import.meta.env.VITE_HA_DEV_URL': JSON.stringify(''),
+      'import.meta.env.VITE_SPATIAL_SERVER_URL': JSON.stringify(''),
+      'import.meta.env.VITE_SPATIAL_WS_URL': JSON.stringify(''),
+      'import.meta.env.VITE_GO2RTC_URL': JSON.stringify(''),
+      'import.meta.env.VITE_GO2RTC_TAILSCALE_URL': JSON.stringify(''),
+    }
+    : {
+      ...(env.VITE_HA_DEV_URL && env.VITE_HA_DEV_URL.trim()
+        ? { 'import.meta.env.VITE_HA_PUBLIC_URL': JSON.stringify(env.VITE_HA_DEV_URL.trim()) }
+        : {}),
+    };
+
+  const bridgeEnv = stripDevViteVars
+    ? { ...env, VITE_HA_TOKEN: '' }
+    : {
+      ...env,
+      ...(env.VITE_HA_DEV_URL && env.VITE_HA_DEV_URL.trim()
+        ? { VITE_HA_PUBLIC_URL: env.VITE_HA_DEV_URL.trim() }
+        : {}),
+    };
+
   const pwaOptions = createPwaOptions();
   const rawPwaPlugins = VitePWA(pwaOptions);
   const pwaPlugins = (Array.isArray(rawPwaPlugins) ? rawPwaPlugins : [rawPwaPlugins]).map((plugin) => {
@@ -239,12 +272,8 @@ export default defineConfig(({ mode }) => {
   return {
     root: '.',
     publicDir: 'public',
-    define: isProd
-      ? {
-          'import.meta.env.VITE_HA_TOKEN': JSON.stringify(''),
-        }
-      : {},
-    plugins: [haCameraBridgePlugin(env), ...pwaPlugins],
+    define,
+    plugins: [haCameraBridgePlugin(bridgeEnv), ...pwaPlugins],
     server: {
       port: 3000,
       open: false,

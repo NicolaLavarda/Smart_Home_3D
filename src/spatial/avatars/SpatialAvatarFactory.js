@@ -2,10 +2,20 @@ import * as THREE from 'three';
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { icon } from '../../ui/icons.js';
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const CLASS_STYLE = {
   person: { color: 0x06b6d4, badgeColor: '#38bdf8', iconName: 'user', defaultName: 'Persona' },
   car: { color: 0xf59e0b, badgeColor: '#fbbf24', iconName: 'car', defaultName: 'Veicolo' },
   truck: { color: 0xf97316, badgeColor: '#fb923c', iconName: 'truck', defaultName: 'Furgone' },
+  motorbike: { color: 0x8b5cf6, badgeColor: '#a78bfa', iconName: 'bike', defaultName: 'Moto' },
   bicycle: { color: 0x10b981, badgeColor: '#34d399', iconName: 'bike', defaultName: 'Bici' },
   dog: { color: 0xec4899, badgeColor: '#f472b6', iconName: 'dog', defaultName: 'Animale' },
 };
@@ -141,31 +151,64 @@ export class SpatialAvatarFactory {
     const { badgeEl, ringMat, bodyMat } = avatarGroup.userData;
     if (!badgeEl) return;
 
-    const idNum = trackData.track_id ?? trackData.id ?? '?';
-    const identity = trackData.identity;
     const state = trackData.state || {};
     const vx = state.vx ?? 0;
     const vz = state.vz ?? 0;
     const speedMs = Math.hypot(vx, vz);
-    const camSources = Array.isArray(trackData.camera_sources)
-      ? trackData.camera_sources.join('+')
-      : trackData.camera || 'Cam_Carraio';
+
+    const rawCamSources = Array.isArray(state.camera_sources) && state.camera_sources.length > 0
+      ? state.camera_sources
+      : Array.isArray(trackData.camera_sources) && trackData.camera_sources.length > 0
+        ? trackData.camera_sources
+        : [trackData.camera || 'Cam_Carraio'];
+    const camSources = escapeHtml(
+      rawCamSources.map((c) => String(c || '').replace(/^Cam_/i, '')).join('+')
+    );
+
+    const idNum = escapeHtml(trackData.track_id ?? trackData.id ?? '?');
+    const identity = trackData.identity ? escapeHtml(trackData.identity) : '';
+    const rawPlate = trackData.plate ? String(trackData.plate).trim().toUpperCase() : '';
+    const plateEsc = rawPlate ? escapeHtml(rawPlate) : '';
+    const plateOwnerEsc = trackData.plate_owner ? escapeHtml(trackData.plate_owner) : '';
+    const isLocked = Boolean(trackData.biometric_locked);
+    const hasKnownIdentity = Boolean(trackData.identity && trackData.identity !== 'Sconosciuto');
+    const isPlateAuthorized = trackData.plate_whitelisted === true;
+    const isPlateGuest = Boolean(rawPlate) && trackData.plate_whitelisted === false;
 
     const iconHtml = icon(style.iconName, { size: 12 });
-    const title = identity
-      ? `${iconHtml} <span>${identity}</span>`
-      : `${iconHtml} <span>${style.defaultName} #${idNum}</span>`;
+    const lockHtml = isLocked
+      ? `<span class="spatial-lock-chip" title="Identità confermata">${icon('lock', { size: 10 })}</span>`
+      : '';
+
+    let title;
+    if (hasKnownIdentity) {
+      title = `${iconHtml} <span>${identity}</span>${lockHtml}`;
+    } else if (plateOwnerEsc) {
+      title = `${iconHtml} <span>${plateOwnerEsc}</span>${lockHtml}`;
+    } else {
+      title = `${iconHtml} <span>${style.defaultName} #${idNum}</span>`;
+    }
+
+    const plateHtml = plateEsc
+      ? `<span class="spatial-plate-pill ${isPlateAuthorized ? 'is-authorized' : isPlateGuest ? 'is-guest' : ''}"><span class="spatial-plate-eu">I</span><span>${plateEsc}</span></span>`
+      : '';
 
     const confPct = trackData.confidence ? `${Math.round(trackData.confidence * 100)}%` : '';
     const speedStr = speedMs > 0.15 ? ` • ${speedMs.toFixed(1)} m/s` : '';
+    const metaEsc = escapeHtml(`${confPct}${speedStr} · `);
 
-    badgeEl.innerHTML = `${title} <span style="opacity:0.72;font-weight:400;font-size:10px;">${confPct}${speedStr} · ${camSources}</span>`;
+    badgeEl.innerHTML = `${title}${plateHtml}<span style="opacity:0.72;font-weight:400;font-size:10px;">${metaEsc}${camSources}</span>`;
 
-    if (identity && identity !== 'Sconosciuto') {
+    if (hasKnownIdentity || isPlateAuthorized) {
       ringMat.color.setHex(0x10b981);
       bodyMat.color.setHex(0x10b981);
       bodyMat.emissive.setHex(0x10b981);
       badgeEl.style.borderColor = '#10b981';
+    } else if (isPlateGuest) {
+      ringMat.color.setHex(0xf59e0b);
+      bodyMat.color.setHex(0xf59e0b);
+      bodyMat.emissive.setHex(0xf59e0b);
+      badgeEl.style.borderColor = '#fbbf24';
     } else {
       ringMat.color.setHex(style.color);
       bodyMat.color.setHex(style.color);

@@ -12,7 +12,11 @@ from .interfaces import DetectionBatchCallback, IDetectionSource
 
 logger = logging.getLogger(__name__)
 
-VALID_LABELS = {"person", "car", "truck", "bicycle", "dog"}
+VALID_LABELS = {"person", "car", "truck", "bicycle", "dog", "motorbike", "motorcycle"}
+
+_LABEL_ALIASES = {
+    "motorcycle": "motorbike",
+}
 
 
 class MqttFrigateDetectionSource(IDetectionSource):
@@ -141,9 +145,10 @@ class MqttFrigateDetectionSource(IDetectionSource):
             after = data["after"]
             if data.get("type") == "end":
                 return None
-            label = str(after.get("label", "")).lower()
-            if label not in VALID_LABELS:
+            raw_label = str(after.get("label", "")).lower()
+            if raw_label not in VALID_LABELS:
                 return None
+            label = _LABEL_ALIASES.get(raw_label, raw_label)
             box = after.get("box") or []
             if len(box) != 4:
                 return None
@@ -162,6 +167,26 @@ class MqttFrigateDetectionSource(IDetectionSource):
             elif sub_label is not None:
                 sub_label = str(sub_label)
 
+            raw_plate = after.get("recognized_license_plate")
+            plate_val: Optional[str] = None
+            plate_conf: Optional[float] = None
+            if isinstance(raw_plate, list) and raw_plate:
+                plate_val = str(raw_plate[0]).strip().upper() or None
+                if len(raw_plate) > 1 and raw_plate[1] is not None:
+                    try:
+                        plate_conf = float(raw_plate[1])
+                    except (TypeError, ValueError):
+                        plate_conf = None
+            elif isinstance(raw_plate, str) and raw_plate.strip():
+                plate_val = raw_plate.strip().upper()
+            if plate_conf is None and after.get("recognized_license_plate_score") is not None:
+                try:
+                    plate_conf = float(after["recognized_license_plate_score"])
+                except (TypeError, ValueError):
+                    plate_conf = None
+            if plate_conf is not None:
+                plate_conf = min(max(plate_conf, 0.0), 1.0)
+
             return DetectionEvent(
                 camera_id=cam_id,
                 timestamp=float(after.get("frame_time") or time.time()),
@@ -174,12 +199,15 @@ class MqttFrigateDetectionSource(IDetectionSource):
                     y_max=min(max(y2, 0.0), 1.0),
                 ),
                 sub_label=sub_label,
+                plate=plate_val,
+                plate_confidence=plate_conf,
             )
 
         # Generic flat detection schema
-        label = str(data.get("class_label", "")).lower()
+        raw_label = str(data.get("class_label", "")).lower()
         box = data.get("bbox")
-        if label in VALID_LABELS and isinstance(box, list) and len(box) == 4:
+        if raw_label in VALID_LABELS and isinstance(box, list) and len(box) == 4:
+            label = _LABEL_ALIASES.get(raw_label, raw_label)
             x1, y1, x2, y2 = [min(max(float(v), 0.0), 1.0) for v in box]
             raw_cam = str(data.get("camera_id", self.default_camera_id))
             resolved_cam = self._resolve_camera_id(raw_cam) if raw_cam.lower() in self._alias_map_lower else raw_cam
@@ -191,6 +219,8 @@ class MqttFrigateDetectionSource(IDetectionSource):
                 bbox=BoundingBox2D(x_min=x1, y_min=y1, x_max=x2, y_max=y2),
                 sub_label=data.get("sub_label"),
                 face_confidence=data.get("face_confidence"),
+                plate=data.get("plate"),
+                plate_confidence=data.get("plate_confidence"),
             )
         return None
 

@@ -42,6 +42,15 @@ function formatFullDateTime(unixSec) {
   return `${day} ${formatTimeInput(dt)}`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * SecurityFabHub
  *
@@ -67,6 +76,7 @@ export class SecurityFabHub {
     cameraController,
     assetLoader,
     deviceModals,
+    haClient = null,
     onStateChange = null,
   } = {}) {
     this.container = domContainer;
@@ -78,6 +88,7 @@ export class SecurityFabHub {
     this.cameraController = cameraController;
     this.assetLoader = assetLoader;
     this.deviceModals = deviceModals;
+    this.haClient = haClient || null;
     this.onStateChange = typeof onStateChange === 'function' ? onStateChange : null;
 
     // Stato UI: 'closed' | 'expanded' | 'strip'
@@ -117,6 +128,17 @@ export class SecurityFabHub {
     this._densityResizeObserver = null;
     this._lastUiSyncPerf = 0;
 
+    this.bioFilters = { identity: '', plate: '', unknownOnly: false };
+    this.recentLiveBioEvents = [];
+    this.historyBioEvents = [];
+    this.bioIdentitiesList = [];
+    this.bioPlatesList = [];
+    this._adminPanelOpen = false;
+    this._activeHitlEvent = null;
+    this._bioPlateTimer = null;
+    this._unsubBioEvents = null;
+    this._unsubHaAuth = null;
+
     this._onKeyDown = (e) => {
       if (e.key === 'Escape' && this.panelState === 'expanded') {
         this.close();
@@ -127,6 +149,13 @@ export class SecurityFabHub {
     this.bindEvents();
     this.bindSpatialClient();
     this.syncCameraTiles();
+    this._syncAdminControls();
+
+    if (this.haClient && typeof this.haClient.onAuthChange === 'function') {
+      this._unsubHaAuth = this.haClient.onAuthChange(() => {
+        this._syncAdminControls();
+      });
+    }
 
     if (this.cameraCatalog && typeof this.cameraCatalog.onChange === 'function') {
       this._unsubCatalog = this.cameraCatalog.onChange(() => {
@@ -292,6 +321,9 @@ export class SecurityFabHub {
           <div class="m3-sec-cameras-track" id="sec-cameras-track"></div>
         </div>
 
+        <!-- Striscia Live Riconoscimenti Biometrici (nascosta se vuota o in modalità Cronologia) -->
+        <div class="m3-sec-bio-live-strip" id="sec-bio-live-strip" hidden aria-label="Ultimi riconoscimenti biometrici"></div>
+
         <!-- Sezione Cronologia & Ricostruzione 3D (visibile solo in modalità Cronologia) -->
         <div class="m3-sec-history-section" id="sec-history-section" hidden>
           <div class="m3-history-top-row">
@@ -311,6 +343,23 @@ export class SecurityFabHub {
                 <input type="time" id="sec-time-input" aria-label="Orario cronologia" />
               </label>
             </div>
+          </div>
+
+          <div class="m3-bio-filters-row" id="sec-bio-filters" role="search" aria-label="Filtri cronologia biometrici">
+            <label class="m3-bio-filter-pill" title="Filtra per persona riconosciuta">
+              ${icon('user-check', { size: 13 })}
+              <select id="sec-filter-identity" class="m3-bio-select" aria-label="Filtra per persona">
+                <option value="">Tutte le persone</option>
+                <option value="__unknown__">Solo sconosciuti</option>
+              </select>
+            </label>
+            <label class="m3-bio-filter-pill m3-bio-plate-pill" title="Filtra per numero di targa">
+              ${icon('tag', { size: 13 })}
+              <input type="text" id="sec-filter-plate" class="m3-bio-input" placeholder="Targa (es. AB123CD)" aria-label="Filtra per targa" maxlength="12" />
+            </label>
+            <button type="button" class="m3-bio-clear-btn" id="btn-sec-bio-filter-clear" hidden title="Azzera filtri biometrici" aria-label="Azzera filtri biometrici">
+              ${icon('x', { size: 13 })}
+            </button>
           </div>
 
           <div class="m3-history-scrubber-card">
@@ -353,6 +402,61 @@ export class SecurityFabHub {
                   <button type="button" class="m3-speed-btn" data-speed="5">5x</button>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div class="m3-bio-events-wrap" id="sec-bio-events-wrap" hidden>
+            <div class="m3-bio-events-header">
+              <span class="m3-bio-events-title">${icon('shield-check', { size: 13 })} <span>Eventi riconosciuti</span></span>
+              <div class="m3-bio-events-header-actions">
+                <span class="m3-bio-events-count" id="sec-bio-events-count">0</span>
+                <button
+                  type="button"
+                  class="m3-bio-admin-toggle"
+                  id="btn-sec-bio-admin"
+                  hidden
+                  disabled
+                  style="display: none;"
+                  title="Gestione volti e whitelist targhe (solo Admin)"
+                  aria-label="Gestisci biometria e whitelist targhe"
+                >
+                  ${icon('sliders-horizontal', { size: 12 })}
+                  <span>Gestisci</span>
+                </button>
+              </div>
+            </div>
+            <div class="m3-bio-hitl-editor" id="sec-bio-hitl-editor" hidden></div>
+            <div class="m3-bio-events-list" id="sec-bio-events-list"></div>
+          </div>
+
+          <div class="m3-bio-admin-panel" id="sec-bio-admin-panel" hidden style="display: none;">
+            <div class="m3-admin-status-msg" id="sec-admin-bio-msg" hidden></div>
+
+            <div class="m3-admin-section">
+              <div class="m3-admin-section-head">
+                <span>${icon('car', { size: 13 })} Whitelist targhe autorizzate</span>
+              </div>
+              <div class="m3-admin-form-row">
+                <input type="text" id="sec-admin-plate-input" placeholder="Targa (AB123CD)" maxlength="12" aria-label="Nuova targa whitelist" />
+                <input type="text" id="sec-admin-plate-owner" placeholder="Proprietario" maxlength="64" aria-label="Proprietario targa" />
+                <input type="text" id="sec-admin-plate-vehicle" placeholder="Auto (opzionale)" maxlength="48" aria-label="Modello veicolo" />
+                <button type="button" class="m3-admin-btn primary" id="btn-sec-admin-plate-add" title="Aggiungi o aggiorna targa in whitelist">
+                  ${icon('plus', { size: 13 })}
+                  <span>Salva</span>
+                </button>
+              </div>
+              <div class="m3-admin-list" id="sec-admin-plates-list"></div>
+            </div>
+
+            <div class="m3-admin-section">
+              <div class="m3-admin-section-head">
+                <span>${icon('user-check', { size: 13 })} Galleria volti registrati</span>
+                <button type="button" class="m3-admin-btn" id="btn-sec-admin-reload-gallery" title="Ricarica indice volti da disco">
+                  ${icon('refresh-cw', { size: 12 })}
+                  <span>Ricarica</span>
+                </button>
+              </div>
+              <div class="m3-admin-list" id="sec-admin-identities-list"></div>
             </div>
           </div>
 
@@ -412,6 +516,26 @@ export class SecurityFabHub {
     this.stepBackBtn = this.container.querySelector('#btn-sec-step-back');
     this.stepFwdBtn = this.container.querySelector('#btn-sec-step-fwd');
     this.storageLabelEl = this.container.querySelector('#sec-storage-label');
+
+    this.bioLiveStripEl = this.container.querySelector('#sec-bio-live-strip');
+    this.identityFilterSelect = this.container.querySelector('#sec-filter-identity');
+    this.plateFilterInput = this.container.querySelector('#sec-filter-plate');
+    this.clearBioFilterBtn = this.container.querySelector('#btn-sec-bio-filter-clear');
+    this.bioEventsWrapEl = this.container.querySelector('#sec-bio-events-wrap');
+    this.bioEventsCountEl = this.container.querySelector('#sec-bio-events-count');
+    this.bioEventsListEl = this.container.querySelector('#sec-bio-events-list');
+
+    this.bioAdminToggleBtn = this.container.querySelector('#btn-sec-bio-admin');
+    this.bioHitlEditorEl = this.container.querySelector('#sec-bio-hitl-editor');
+    this.bioAdminPanelEl = this.container.querySelector('#sec-bio-admin-panel');
+    this.adminBioMsgEl = this.container.querySelector('#sec-admin-bio-msg');
+    this.adminPlateInput = this.container.querySelector('#sec-admin-plate-input');
+    this.adminPlateOwnerInput = this.container.querySelector('#sec-admin-plate-owner');
+    this.adminPlateVehicleInput = this.container.querySelector('#sec-admin-plate-vehicle');
+    this.adminPlateAddBtn = this.container.querySelector('#btn-sec-admin-plate-add');
+    this.adminPlatesListEl = this.container.querySelector('#sec-admin-plates-list');
+    this.adminReloadGalleryBtn = this.container.querySelector('#btn-sec-admin-reload-gallery');
+    this.adminIdentitiesListEl = this.container.querySelector('#sec-admin-identities-list');
 
     this._syncDateTimeInputsFromUnix(this.currentUnix);
     this._syncSliderBounds();
@@ -568,6 +692,149 @@ export class SecurityFabHub {
     this.entities3dBtn?.addEventListener('click', toggleEntities);
     this.stripEntitiesBtn?.addEventListener('click', toggleEntities);
 
+    // Filtri biometrici semantici (Persona / Sconosciuti / Targa)
+    this.identityFilterSelect?.addEventListener('change', () => {
+      const val = String(this.identityFilterSelect.value || '');
+      this.bioFilters.unknownOnly = val === '__unknown__';
+      this.bioFilters.identity = this.bioFilters.unknownOnly ? '' : val;
+      this._onBioFiltersChanged();
+    });
+
+    this.plateFilterInput?.addEventListener('input', () => {
+      if (this._bioPlateTimer) clearTimeout(this._bioPlateTimer);
+      this._bioPlateTimer = setTimeout(() => {
+        this._bioPlateTimer = null;
+        this.bioFilters.plate = String(this.plateFilterInput?.value || '').trim().toUpperCase();
+        this._onBioFiltersChanged();
+      }, 280);
+    });
+
+    this.plateFilterInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (this._bioPlateTimer) {
+          clearTimeout(this._bioPlateTimer);
+          this._bioPlateTimer = null;
+        }
+        this.bioFilters.plate = String(this.plateFilterInput?.value || '').trim().toUpperCase();
+        this._onBioFiltersChanged();
+      }
+    });
+
+    this.clearBioFilterBtn?.addEventListener('click', () => {
+      if (this._bioPlateTimer) {
+        clearTimeout(this._bioPlateTimer);
+        this._bioPlateTimer = null;
+      }
+      this.bioFilters = { identity: '', plate: '', unknownOnly: false };
+      if (this.identityFilterSelect) this.identityFilterSelect.value = '';
+      if (this.plateFilterInput) this.plateFilterInput.value = '';
+      this._onBioFiltersChanged();
+    });
+
+    const handleBioJumpClick = (e) => {
+      const targetBtn = e.target?.closest?.('[data-jump-ts]');
+      if (!targetBtn) return;
+      const ts = Number(targetBtn.dataset.jumpTs);
+      if (Number.isFinite(ts) && ts > 0) {
+        this.jumpToUnixTimestamp(ts, { switchToReplay: true, reloadWindow: false });
+      }
+    };
+    this.bioLiveStripEl?.addEventListener('click', handleBioJumpClick);
+    this.bioEventsListEl?.addEventListener('click', (e) => {
+      const hitlBtn = e.target?.closest?.('[data-hitl-event-id]');
+      if (hitlBtn) {
+        e.stopPropagation();
+        if (!this._isAdmin()) return;
+        const rawId = hitlBtn.getAttribute?.('data-hitl-event-id') ?? hitlBtn.dataset?.hitlEventId;
+        const evId = Number(rawId);
+        const found = this.historyBioEvents.find((item) => Number(item.id) === evId);
+        if (found) this._openHitlEditor(found);
+        return;
+      }
+      handleBioJumpClick(e);
+    });
+
+    this.bioAdminToggleBtn?.addEventListener('click', async () => {
+      if (!this._isAdmin()) return;
+      this._adminPanelOpen = !this._adminPanelOpen;
+      this._syncAdminControls();
+      if (this._adminPanelOpen) {
+        await this._refreshAdminLists();
+      }
+    });
+
+    this.bioHitlEditorEl?.addEventListener('click', (e) => {
+      if (e.target?.closest?.('#btn-sec-hitl-cancel')) {
+        this._closeHitlEditor();
+        return;
+      }
+      if (e.target?.closest?.('#btn-sec-hitl-save')) {
+        this._submitHitlEditor();
+      }
+    });
+
+    this.adminPlateAddBtn?.addEventListener('click', async () => {
+      if (!this._isAdmin() || typeof this.spatialStreamClient?.upsertBiometricPlate !== 'function') return;
+      const plate = String(this.adminPlateInput?.value || '').trim().toUpperCase();
+      const ownerName = String(this.adminPlateOwnerInput?.value || '').trim();
+      const vehicleLabel = String(this.adminPlateVehicleInput?.value || '').trim() || null;
+      if (!plate || !ownerName) {
+        this._setAdminMessage('Inserisci targa e proprietario', true);
+        return;
+      }
+      const res = await this.spatialStreamClient
+        .upsertBiometricPlate({ plate, owner_name: ownerName, vehicle_label: vehicleLabel })
+        .catch(() => null);
+      if (res?.status === 'ok') {
+        if (this.adminPlateInput) this.adminPlateInput.value = '';
+        if (this.adminPlateOwnerInput) this.adminPlateOwnerInput.value = '';
+        if (this.adminPlateVehicleInput) this.adminPlateVehicleInput.value = '';
+        this.bioPlatesList = Array.isArray(res.plates) ? res.plates : this.bioPlatesList;
+        this._renderAdminPlates();
+        this._setAdminMessage(`Targa ${plate} salvata in whitelist`, false);
+      } else {
+        this._setAdminMessage('Errore salvataggio targa in whitelist', true);
+      }
+    });
+
+    this.adminPlatesListEl?.addEventListener('click', async (e) => {
+      const delBtn = e.target?.closest?.('[data-del-plate]');
+      if (!delBtn || !this._isAdmin() || typeof this.spatialStreamClient?.deleteBiometricPlate !== 'function') return;
+      const plate = String(delBtn.getAttribute?.('data-del-plate') ?? delBtn.dataset?.delPlate ?? '').trim();
+      if (!plate) return;
+      const res = await this.spatialStreamClient.deleteBiometricPlate(plate).catch(() => null);
+      if (res?.status === 'ok') {
+        this.bioPlatesList = Array.isArray(res.plates) ? res.plates : this.bioPlatesList.filter((p) => p.plate !== plate);
+        this._renderAdminPlates();
+        this._setAdminMessage(`Targa ${plate} rimossa`, false);
+      }
+    });
+
+    this.adminReloadGalleryBtn?.addEventListener('click', async () => {
+      if (!this._isAdmin() || typeof this.spatialStreamClient?.reloadBiometricIdentities !== 'function') return;
+      const res = await this.spatialStreamClient.reloadBiometricIdentities().catch(() => null);
+      if (res?.status === 'ok') {
+        this.bioIdentitiesList = Array.isArray(res.identities) ? res.identities : this.bioIdentitiesList;
+        this._renderAdminIdentities();
+        await this._loadBiometricIdentitiesOptions();
+        this._setAdminMessage(`Galleria ricaricata (${this.bioIdentitiesList.length} persone)`, false);
+      }
+    });
+
+    this.adminIdentitiesListEl?.addEventListener('click', async (e) => {
+      const delBtn = e.target?.closest?.('[data-del-identity]');
+      if (!delBtn || !this._isAdmin() || typeof this.spatialStreamClient?.deleteBiometricIdentity !== 'function') return;
+      const personName = String(delBtn.getAttribute?.('data-del-identity') ?? delBtn.dataset?.delIdentity ?? '').trim();
+      if (!personName) return;
+      const res = await this.spatialStreamClient.deleteBiometricIdentity(personName).catch(() => null);
+      if (res?.status === 'ok') {
+        this.bioIdentitiesList = this.bioIdentitiesList.filter((i) => i.name !== personName);
+        this._renderAdminIdentities();
+        await this._loadBiometricIdentitiesOptions();
+        this._setAdminMessage(`Identita ${personName} rimossa`, false);
+      }
+    });
+
     window.addEventListener('keydown', this._onKeyDown);
   }
 
@@ -604,6 +871,12 @@ export class SecurityFabHub {
         }
       }
     });
+
+    if (typeof this.spatialStreamClient.onBiometricEvent === 'function') {
+      this._unsubBioEvents = this.spatialStreamClient.onBiometricEvent((ev) => {
+        this._pushLiveBiometricEvent(ev);
+      });
+    }
   }
 
   /**
@@ -812,6 +1085,8 @@ export class SecurityFabHub {
   async _onPanelOpened() {
     this.syncCameraTiles();
     this._refreshStorageHealth();
+    this._loadBiometricIdentitiesOptions();
+    this._refreshRecentLiveBioEvents();
 
     if (this.mode === 'live') {
       await this.connectAllLiveStreams();
@@ -872,6 +1147,7 @@ export class SecurityFabHub {
         this.stripClockEl.textContent = 'LIVE';
       }
       this._updateStatusSummary();
+      this._renderLiveBioStrip();
 
       if (this.panelState !== 'closed') {
         await this.connectAllLiveStreams();
@@ -881,6 +1157,7 @@ export class SecurityFabHub {
       this.disconnectAllLiveStreams();
       this.trajectoryRenderer?.setLiveMode?.(false);
       this.setEntitiesVisible(true);
+      this._renderLiveBioStrip();
 
       if (!skipInitialLoad) {
         const nowUnix = Math.floor(Date.now() / 1000);
@@ -1156,10 +1433,13 @@ export class SecurityFabHub {
     }
 
     const TRACK_LIMIT = 15000;
+    const activeFilters = this._getActiveBioFilterParams();
     let { sliceStart, sliceEnd } = this._computeTrackSliceBounds(targetUnix);
-    let tracksRes = await this.spatialStreamClient
-      .fetchTracks(sliceStart, sliceEnd, null, TRACK_LIMIT)
-      .catch(() => null);
+    let tracksRes = await (
+      activeFilters
+        ? this.spatialStreamClient.fetchTracks(sliceStart, sliceEnd, null, TRACK_LIMIT, activeFilters)
+        : this.spatialStreamClient.fetchTracks(sliceStart, sliceEnd, null, TRACK_LIMIT)
+    ).catch(() => null);
 
     // Protezione anti-troncamento: se la prima metà della slice (es. auto parcheggiata tutta la notte)
     // satura il LIMIT prima di raggiungere targetUnix, riesegue una query mirata attorno a targetUnix.
@@ -1172,9 +1452,11 @@ export class SecurityFabHub {
       if (Number.isFinite(lastTs) && lastTs < targetUnix - 5) {
         sliceStart = Math.max(this.windowStartUnix, Math.floor(targetUnix - 120));
         sliceEnd = Math.min(this.windowEndUnix, Math.ceil(targetUnix + 180));
-        const focused = await this.spatialStreamClient
-          .fetchTracks(sliceStart, sliceEnd, null, TRACK_LIMIT)
-          .catch(() => null);
+        const focused = await (
+          activeFilters
+            ? this.spatialStreamClient.fetchTracks(sliceStart, sliceEnd, null, TRACK_LIMIT, activeFilters)
+            : this.spatialStreamClient.fetchTracks(sliceStart, sliceEnd, null, TRACK_LIMIT)
+        ).catch(() => null);
         if (focused) {
           tracksRes = focused;
         }
@@ -1194,6 +1476,13 @@ export class SecurityFabHub {
         id: d.track_id,
         class: d.class_label,
         identity: d.identity,
+        identity_confidence: d.identity_confidence,
+        plate: d.plate,
+        plate_confidence: d.plate_confidence,
+        plate_whitelisted: d.plate_whitelisted,
+        plate_owner: d.plate_owner,
+        biometric_locked: d.biometric_locked,
+        best_crop_id: d.best_crop_id,
         confidence: d.confidence,
         x: d.x,
         y: d.y,
@@ -1202,6 +1491,7 @@ export class SecurityFabHub {
         vz: d.vz || 0,
         t: d.timestamp - origin,
         camera_id: d.camera_sources?.[0] || 'Cam_Carraio',
+        camera_sources: d.camera_sources || ['Cam_Carraio'],
       }));
 
       this.trajectoryRenderer?.loadDetections?.(mapped);
@@ -1256,7 +1546,7 @@ export class SecurityFabHub {
       typeof this.spatialStreamClient.fetchTimelineDensity === 'function'
     );
 
-    const [segmentsMap, densityRes, sliceResult] = await Promise.all([
+    const [segmentsMap, densityRes, sliceResult, bioEventsRes] = await Promise.all([
       this.recordingManager
         ? this.recordingManager.queryAllSegments(this.windowStartUnix, this.windowEndUnix).catch(() => new Map())
         : Promise.resolve(new Map()),
@@ -1266,6 +1556,7 @@ export class SecurityFabHub {
       hasSpatialRest
         ? this._fetchTracksCentered(this.currentUnix)
         : Promise.resolve({ tracksRes: null, sliceStart: this.windowStartUnix, sliceEnd: this.windowEndUnix }),
+      this._fetchBiometricEventsInWindow(this.windowStartUnix, this.windowEndUnix),
     ]);
 
     if (seq !== this._historyLoadSeq) return;
@@ -1286,6 +1577,7 @@ export class SecurityFabHub {
     );
 
     this._applyLoadedTracks(sliceResult?.tracksRes || null, sliceResult.sliceStart, sliceResult.sliceEnd);
+    this._applyBiometricEventsWindow(bioEventsRes);
     this._renderReplayFrameAtCurrentUnix();
     requestAnimationFrame(() => this.drawDensityCanvas());
   }
@@ -1482,8 +1774,452 @@ export class SecurityFabHub {
     ctx.fillRect(cursorX - 1, 0, 2, h);
   }
 
+  // --- Biometria Live & Filtri Semantici Cronologia ---
+
+  _hasActiveBioFilters() {
+    return Boolean(this.bioFilters.identity || this.bioFilters.plate || this.bioFilters.unknownOnly);
+  }
+
+  _getActiveBioFilterParams() {
+    if (!this._hasActiveBioFilters()) return null;
+    return {
+      identity: this.bioFilters.identity || '',
+      plate: this.bioFilters.plate || '',
+      unknownOnly: Boolean(this.bioFilters.unknownOnly),
+    };
+  }
+
+  async _onBioFiltersChanged() {
+    if (this.clearBioFilterBtn) {
+      this.clearBioFilterBtn.hidden = !this._hasActiveBioFilters();
+    }
+    if (this.mode === 'replay') {
+      await Promise.all([
+        this.loadTracksSliceAround(this.currentUnix),
+        this._refreshBiometricEventsForWindow(),
+      ]);
+    }
+  }
+
+  _resolveEventCropUrl(ev) {
+    if (!ev) return null;
+    if (ev.crop_url) return ev.crop_url;
+    if (ev.best_crop_id && typeof this.spatialStreamClient?.getBiometricCropUrl === 'function') {
+      return this.spatialStreamClient.getBiometricCropUrl(ev.best_crop_id);
+    }
+    return null;
+  }
+
+  _pushLiveBiometricEvent(ev) {
+    if (!ev) return;
+    const dedupKey = `${ev.track_id ?? ''}_${ev.modality || ''}`;
+    const filtered = this.recentLiveBioEvents.filter(
+      (item) => `${item.track_id ?? ''}_${item.modality || ''}` !== dedupKey
+    );
+    filtered.unshift(ev);
+    this.recentLiveBioEvents = filtered.slice(0, 4);
+    this._renderLiveBioStrip();
+  }
+
+  _renderLiveBioStrip() {
+    if (!this.bioLiveStripEl) return;
+    if (this.mode !== 'live' || this.recentLiveBioEvents.length === 0) {
+      this.bioLiveStripEl.hidden = true;
+      this.bioLiveStripEl.innerHTML = '';
+      return;
+    }
+
+    this.bioLiveStripEl.innerHTML = this.recentLiveBioEvents
+      .map((ev) => {
+        const isAlpr = ev.modality === 'alpr' || Boolean(ev.plate);
+        const rawLabel = isAlpr
+          ? (ev.plate_owner ? `${ev.plate || ''} · ${ev.plate_owner}` : ev.plate || 'Targa sconosciuta')
+          : (ev.identity || 'Sconosciuto');
+        const isAuth = isAlpr
+          ? ev.plate_whitelisted === true
+          : Boolean(ev.identity && ev.identity !== 'Sconosciuto');
+        const isGuest = isAlpr && ev.plate_whitelisted === false;
+        const camShort = String(ev.camera_id || '').replace(/^Cam_/i, '');
+        const cropUrl = this._resolveEventCropUrl(ev);
+        const lockHtml = ev.biometric_locked ? icon('lock', { size: 11 }) : '';
+        return `
+          <button
+            type="button"
+            class="m3-bio-chip ${isAuth ? 'is-authorized' : isGuest ? 'is-guest' : ''}"
+            data-jump-ts="${Number(ev.timestamp) || 0}"
+            title="Vai a questo evento nella Cronologia"
+          >
+            ${cropUrl ? `<img class="m3-bio-chip-thumb" src="${escapeHtml(cropUrl)}" crossorigin="use-credentials" alt="" loading="lazy" />` : ''}
+            <span class="m3-bio-chip-copy">
+              <span class="m3-bio-chip-title">${icon(isAlpr ? 'car' : 'user-check', { size: 12 })} <span>${escapeHtml(rawLabel)}</span> ${lockHtml}</span>
+              <span class="m3-bio-chip-meta">${escapeHtml(camShort)} · ${escapeHtml(formatShortDateTime(ev.timestamp))}</span>
+            </span>
+          </button>
+        `;
+      })
+      .join('');
+    this.bioLiveStripEl.hidden = false;
+  }
+
+  async _loadBiometricIdentitiesOptions() {
+    if (!this.identityFilterSelect || typeof this.spatialStreamClient?.fetchBiometricIdentities !== 'function') {
+      return;
+    }
+    const res = await this.spatialStreamClient.fetchBiometricIdentities().catch(() => null);
+    if (!res || !Array.isArray(res.identities)) return;
+
+    this.bioIdentitiesList = res.identities;
+    const prevValue = this.bioFilters.unknownOnly ? '__unknown__' : this.bioFilters.identity;
+    const baseOptions = [
+      { value: '', label: 'Tutte le persone' },
+      { value: '__unknown__', label: 'Solo sconosciuti' },
+    ];
+    for (const item of res.identities) {
+      if (item?.name) {
+        baseOptions.push({ value: String(item.name), label: String(item.name) });
+      }
+    }
+
+    this.identityFilterSelect.innerHTML = '';
+    for (const optCfg of baseOptions) {
+      const opt = document.createElement('option');
+      opt.value = optCfg.value;
+      opt.textContent = optCfg.label;
+      this.identityFilterSelect.appendChild(opt);
+    }
+    if (baseOptions.some((o) => o.value === prevValue)) {
+      this.identityFilterSelect.value = prevValue;
+    }
+  }
+
+  async _refreshRecentLiveBioEvents() {
+    if (typeof this.spatialStreamClient?.fetchBiometricEvents !== 'function') return;
+    const res = await this.spatialStreamClient.fetchBiometricEvents({ limit: 4 }).catch(() => null);
+    if (res && Array.isArray(res.events) && res.events.length > 0 && this.recentLiveBioEvents.length === 0) {
+      this.recentLiveBioEvents = res.events.slice(0, 4);
+      this._renderLiveBioStrip();
+    }
+  }
+
+  async _fetchBiometricEventsInWindow(tStart, tEnd) {
+    if (typeof this.spatialStreamClient?.fetchBiometricEvents !== 'function') {
+      return null;
+    }
+    return await this.spatialStreamClient
+      .fetchBiometricEvents({
+        tStart,
+        tEnd,
+        identity: this.bioFilters.identity || null,
+        plate: this.bioFilters.plate || null,
+        limit: 40,
+      })
+      .catch(() => null);
+  }
+
+  async _refreshBiometricEventsForWindow() {
+    const res = await this._fetchBiometricEventsInWindow(this.windowStartUnix, this.windowEndUnix);
+    this._applyBiometricEventsWindow(res);
+  }
+
+  _applyBiometricEventsWindow(res) {
+    let items = Array.isArray(res?.events) ? res.events : [];
+    if (this.bioFilters.unknownOnly) {
+      items = items.filter((ev) => !ev.identity && !ev.plate);
+    }
+    this.historyBioEvents = items;
+    this._renderBioEventsList(items);
+  }
+
+  _isAdmin() {
+    return Boolean(this.haClient?.isAdmin);
+  }
+
+  _syncAdminControls() {
+    const isAdmin = this._isAdmin();
+    if (this.bioAdminToggleBtn) {
+      this.bioAdminToggleBtn.hidden = !isAdmin;
+      this.bioAdminToggleBtn.disabled = !isAdmin;
+      this.bioAdminToggleBtn.style.display = isAdmin ? '' : 'none';
+      this.bioAdminToggleBtn.classList.toggle('active', Boolean(isAdmin && this._adminPanelOpen));
+    }
+
+    if (!isAdmin) {
+      this._adminPanelOpen = false;
+      this._closeHitlEditor();
+      if (this.bioAdminPanelEl) {
+        this.bioAdminPanelEl.hidden = true;
+        this.bioAdminPanelEl.style.display = 'none';
+      }
+      this._setAdminMessage('', false);
+    } else if (this.bioAdminPanelEl) {
+      this.bioAdminPanelEl.hidden = !this._adminPanelOpen;
+      this.bioAdminPanelEl.style.display = this._adminPanelOpen ? '' : 'none';
+    }
+
+    this._renderBioEventsList(this.historyBioEvents);
+  }
+
+  _setAdminMessage(text, isError = false) {
+    if (!this.adminBioMsgEl) return;
+    if (!text) {
+      this.adminBioMsgEl.hidden = true;
+      this.adminBioMsgEl.textContent = '';
+      this.adminBioMsgEl.classList.remove('is-error');
+      return;
+    }
+    this.adminBioMsgEl.textContent = String(text);
+    this.adminBioMsgEl.classList.toggle('is-error', Boolean(isError));
+    this.adminBioMsgEl.hidden = false;
+  }
+
+  _closeHitlEditor() {
+    this._activeHitlEvent = null;
+    if (this.bioHitlEditorEl) {
+      this.bioHitlEditorEl.hidden = true;
+      this.bioHitlEditorEl.innerHTML = '';
+    }
+  }
+
+  _openHitlEditor(ev) {
+    if (!this._isAdmin() || !this.bioHitlEditorEl || !ev) return;
+    this._activeHitlEvent = ev;
+    const isAlpr = ev.modality === 'alpr' || Boolean(ev.plate || ev.plate_raw);
+    const cropUrl = this._resolveEventCropUrl(ev);
+
+    if (isAlpr) {
+      const prefillPlate = String(ev.plate || ev.plate_raw || '').trim().toUpperCase();
+      const prefillOwner = String(ev.plate_owner || '').trim();
+      const wlChecked = ev.plate_whitelisted === true;
+      this.bioHitlEditorEl.innerHTML = `
+        <div class="m3-hitl-head">
+          ${cropUrl ? `<img class="m3-hitl-thumb" src="${escapeHtml(cropUrl)}" crossorigin="use-credentials" alt="" />` : ''}
+          <span>Assegna o correggi targa (Track #${Number(ev.track_id) || 0})</span>
+        </div>
+        <div class="m3-hitl-fields">
+          <input type="text" id="sec-hitl-plate-input" value="${escapeHtml(prefillPlate)}" placeholder="Targa (es. AB123CD)" maxlength="12" aria-label="Targa" />
+          <label class="m3-hitl-check">
+            <input type="checkbox" id="sec-hitl-whitelist-check" ${wlChecked ? 'checked' : ''} />
+            <span>Aggiungi alla whitelist autorizzata</span>
+          </label>
+          <input type="text" id="sec-hitl-owner-input" value="${escapeHtml(prefillOwner)}" placeholder="Proprietario (se in whitelist)" maxlength="64" aria-label="Proprietario" />
+          <input type="text" id="sec-hitl-vehicle-input" value="" placeholder="Modello veicolo (opzionale)" maxlength="48" aria-label="Veicolo" />
+        </div>
+        <div class="m3-hitl-actions">
+          <button type="button" class="m3-hitl-btn-cancel" id="btn-sec-hitl-cancel">${icon('x', { size: 12 })} <span>Annulla</span></button>
+          <button type="button" class="m3-hitl-btn-save" id="btn-sec-hitl-save">${icon('check', { size: 12 })} <span>Salva targa</span></button>
+        </div>
+      `;
+      const wlEl = this.bioHitlEditorEl.querySelector('#sec-hitl-whitelist-check');
+      if (wlEl) wlEl.checked = wlChecked;
+    } else {
+      const prefillId = String(ev.identity || '').trim();
+      this.bioHitlEditorEl.innerHTML = `
+        <div class="m3-hitl-head">
+          ${cropUrl ? `<img class="m3-hitl-thumb" src="${escapeHtml(cropUrl)}" crossorigin="use-credentials" alt="" />` : ''}
+          <span>Assegna persona riconosciuta (Track #${Number(ev.track_id) || 0})</span>
+        </div>
+        <div class="m3-hitl-fields">
+          <input type="text" id="sec-hitl-identity-input" value="${escapeHtml(prefillId)}" placeholder="Nome persona (es. Nicola)" maxlength="64" aria-label="Nome persona" />
+          <label class="m3-hitl-check">
+            <input type="checkbox" id="sec-hitl-enroll-check" checked />
+            <span>Aggiungi questo volto alla galleria per futuri riconoscimenti</span>
+          </label>
+        </div>
+        <div class="m3-hitl-actions">
+          <button type="button" class="m3-hitl-btn-cancel" id="btn-sec-hitl-cancel">${icon('x', { size: 12 })} <span>Annulla</span></button>
+          <button type="button" class="m3-hitl-btn-save" id="btn-sec-hitl-save">${icon('check', { size: 12 })} <span>Salva persona</span></button>
+        </div>
+      `;
+      const enrollEl = this.bioHitlEditorEl.querySelector('#sec-hitl-enroll-check');
+      if (enrollEl) enrollEl.checked = true;
+    }
+    this.bioHitlEditorEl.hidden = false;
+  }
+
+  async _submitHitlEditor() {
+    if (!this._isAdmin() || !this._activeHitlEvent || typeof this.spatialStreamClient?.assignBiometricEvent !== 'function') {
+      return;
+    }
+    const ev = this._activeHitlEvent;
+    const isAlpr = ev.modality === 'alpr' || Boolean(ev.plate || ev.plate_raw);
+    let payload;
+    if (isAlpr) {
+      const plate = String(this.bioHitlEditorEl?.querySelector('#sec-hitl-plate-input')?.value || '').trim().toUpperCase();
+      const wlEl = this.bioHitlEditorEl?.querySelector('#sec-hitl-whitelist-check');
+      const addToWhitelist = Boolean(wlEl?.checked ?? wlEl?.hasAttribute?.('checked'));
+      const ownerName = String(this.bioHitlEditorEl?.querySelector('#sec-hitl-owner-input')?.value || '').trim();
+      const vehicleLabel = String(this.bioHitlEditorEl?.querySelector('#sec-hitl-vehicle-input')?.value || '').trim() || null;
+      if (!plate) {
+        this._setAdminMessage('Inserisci una targa valida', true);
+        return;
+      }
+      if (addToWhitelist && !ownerName) {
+        this._setAdminMessage('Inserisci il proprietario per aggiungere la targa alla whitelist', true);
+        return;
+      }
+      payload = {
+        plate,
+        add_to_whitelist: addToWhitelist,
+        owner_name: ownerName || null,
+        vehicle_label: vehicleLabel,
+      };
+    } else {
+      const identity = String(this.bioHitlEditorEl?.querySelector('#sec-hitl-identity-input')?.value || '').trim();
+      const enrollEl = this.bioHitlEditorEl?.querySelector('#sec-hitl-enroll-check');
+      const enrollCrop = enrollEl ? Boolean(enrollEl.checked ?? enrollEl.hasAttribute?.('checked')) : true;
+      if (!identity) {
+        this._setAdminMessage('Inserisci il nome della persona', true);
+        return;
+      }
+      payload = { identity, enroll_crop: enrollCrop };
+    }
+
+    const res = await this.spatialStreamClient.assignBiometricEvent(ev.id, payload).catch(() => null);
+    if (!res || res.status !== 'ok') {
+      this._setAdminMessage('Salvataggio assegnazione HITL non riuscito', true);
+      return;
+    }
+
+    this._closeHitlEditor();
+    this._setAdminMessage(res.enroll_note || 'Evento biometrico aggiornato e storicizzato', false);
+    await Promise.all([
+      this._refreshBiometricEventsForWindow(),
+      this._loadBiometricIdentitiesOptions(),
+      this._adminPanelOpen ? this._refreshAdminLists() : Promise.resolve(),
+    ]);
+  }
+
+  async _refreshAdminLists() {
+    if (!this._isAdmin()) return;
+    const [platesRes, idRes] = await Promise.all([
+      typeof this.spatialStreamClient?.fetchBiometricPlates === 'function'
+        ? this.spatialStreamClient.fetchBiometricPlates().catch(() => null)
+        : Promise.resolve(null),
+      typeof this.spatialStreamClient?.fetchBiometricIdentities === 'function'
+        ? this.spatialStreamClient.fetchBiometricIdentities().catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    if (platesRes && Array.isArray(platesRes.plates)) {
+      this.bioPlatesList = platesRes.plates;
+      this._renderAdminPlates();
+    }
+    if (idRes && Array.isArray(idRes.identities)) {
+      this.bioIdentitiesList = idRes.identities;
+      this._renderAdminIdentities();
+    }
+  }
+
+  _renderAdminPlates() {
+    if (!this.adminPlatesListEl) return;
+    if (!this._isAdmin() || this.bioPlatesList.length === 0) {
+      this.adminPlatesListEl.innerHTML = '<div class="m3-bio-empty">Nessuna targa in whitelist</div>';
+      return;
+    }
+    this.adminPlatesListEl.innerHTML = this.bioPlatesList
+      .map((p) => {
+        const plate = String(p.plate || '');
+        const owner = String(p.owner_name || '');
+        const label = p.vehicle_label ? ` (${String(p.vehicle_label)})` : '';
+        return `
+          <div class="m3-admin-item">
+            <span><strong>${escapeHtml(plate)}</strong> · ${escapeHtml(owner)}${escapeHtml(label)}</span>
+            <button type="button" class="m3-admin-del-btn" data-del-plate="${escapeHtml(plate)}" title="Rimuovi targa ${escapeHtml(plate)}" aria-label="Rimuovi targa ${escapeHtml(plate)}">
+              ${icon('x', { size: 12 })}
+            </button>
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  _renderAdminIdentities() {
+    if (!this.adminIdentitiesListEl) return;
+    if (!this._isAdmin() || this.bioIdentitiesList.length === 0) {
+      this.adminIdentitiesListEl.innerHTML = '<div class="m3-bio-empty">Nessun volto registrato</div>';
+      return;
+    }
+    this.adminIdentitiesListEl.innerHTML = this.bioIdentitiesList
+      .map((item) => {
+        const name = String(item.name || '');
+        const samples = Number(item.samples_count) || 0;
+        return `
+          <div class="m3-admin-item">
+            <span><strong>${escapeHtml(name)}</strong> · ${samples} campioni</span>
+            <button type="button" class="m3-admin-del-btn" data-del-identity="${escapeHtml(name)}" title="Rimuovi persona ${escapeHtml(name)}" aria-label="Rimuovi persona ${escapeHtml(name)}">
+              ${icon('x', { size: 12 })}
+            </button>
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  _renderBioEventsList(events) {
+    if (!this.bioEventsWrapEl || !this.bioEventsListEl) return;
+    const isAdmin = this._isAdmin();
+    const hasFilter = this._hasActiveBioFilters();
+    if (this.bioEventsCountEl) {
+      this.bioEventsCountEl.textContent = String(events.length);
+    }
+
+    if (events.length === 0) {
+      if (!hasFilter && !isAdmin) {
+        this.bioEventsWrapEl.hidden = true;
+        this.bioEventsListEl.innerHTML = '';
+        return;
+      }
+      this.bioEventsListEl.innerHTML = '<div class="m3-bio-empty">Nessun evento biometrico corrispondente</div>';
+      this.bioEventsWrapEl.hidden = false;
+      return;
+    }
+
+    this.bioEventsListEl.innerHTML = events
+      .map((ev) => {
+        const isAlpr = ev.modality === 'alpr' || Boolean(ev.plate || ev.plate_raw);
+        const cropUrl = this._resolveEventCropUrl(ev);
+        const plateHtml = ev.plate
+          ? `<span class="spatial-plate-pill ${ev.plate_whitelisted === true ? 'is-authorized' : ev.plate_whitelisted === false ? 'is-guest' : ''}"><span class="spatial-plate-eu">I</span><span>${escapeHtml(ev.plate)}</span></span>`
+          : '';
+        const mainText = isAlpr
+          ? (ev.plate_owner || (ev.plate ? 'Veicolo' : 'Targa non letta'))
+          : (ev.identity || 'Sconosciuto');
+        const camShort = String(ev.camera_id || '').replace(/^Cam_/i, '');
+        const lockHtml = ev.biometric_locked ? icon('lock', { size: 11 }) : '';
+        const reviewedHtml = ev.reviewed_by ? '<span class="m3-bio-reviewed-tag">Verificato</span>' : '';
+        const hitlBtnHtml = isAdmin && ev.id
+          ? `<button type="button" class="m3-bio-hitl-btn" data-hitl-event-id="${Number(ev.id)}" title="Assegna o correggi riconoscimento (Admin)" aria-label="Assegna riconoscimento">${icon('user-check', { size: 13 })}</button>`
+          : '';
+        return `
+          <div class="m3-bio-event-row">
+            <button type="button" class="m3-bio-event-card" data-jump-ts="${Number(ev.timestamp) || 0}">
+              ${cropUrl ? `<img class="m3-bio-event-thumb" src="${escapeHtml(cropUrl)}" crossorigin="use-credentials" alt="" loading="lazy" />` : ''}
+              <span class="m3-bio-event-body">
+                <span class="m3-bio-event-main">${icon(isAlpr ? 'car' : 'user-check', { size: 12 })} <span>${escapeHtml(mainText)}</span> ${plateHtml} ${lockHtml} ${reviewedHtml}</span>
+                <span class="m3-bio-event-sub">${escapeHtml(camShort)} · ${escapeHtml(formatFullDateTime(ev.timestamp))}</span>
+              </span>
+            </button>
+            ${hitlBtnHtml}
+          </div>
+        `;
+      })
+      .join('');
+    this.bioEventsWrapEl.hidden = false;
+  }
+
   dispose() {
     window.removeEventListener('keydown', this._onKeyDown);
+    if (this._bioPlateTimer) {
+      clearTimeout(this._bioPlateTimer);
+      this._bioPlateTimer = null;
+    }
+    if (typeof this._unsubBioEvents === 'function') {
+      this._unsubBioEvents();
+      this._unsubBioEvents = null;
+    }
+    if (typeof this._unsubHaAuth === 'function') {
+      this._unsubHaAuth();
+      this._unsubHaAuth = null;
+    }
     if (this._sliceReloadTimer) {
       clearTimeout(this._sliceReloadTimer);
       this._sliceReloadTimer = null;

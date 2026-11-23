@@ -14,7 +14,7 @@ Prima di formulare qualsiasi proposta, ispeziona e incrocia i seguenti file real
 
 - **Documentazione architetturale e operativa:**
   - `docs/master_prompt_architetturale_per_antigravity_ide.md`
-  - `docs/PIPELINE_AGGIUNTA_TELECAMERA.md`
+  - `docs/PIPELINE_AGGIUNTA_TELECAMERA.md` e `docs/PROMPT_AGGIUNTA_TELECAMERA.md`
   - `docs/RUNBOOK_PRODUZIONE_FAMIGLIA_TAILSCALE.md`
   - `docs/PWA_PRODUCTION_SECURITY_PROMPT.md`
   - `docs/FUTURE_PHASES_PROMPT.md`
@@ -22,7 +22,8 @@ Prima di formulare qualsiasi proposta, ispeziona e incrocia i seguenti file real
   - `spatial_server/main.py`, `spatial_server/config.py`, `spatial_server/requirements.txt`
   - `spatial_server/domain/models.py`
   - `spatial_server/biometrics/interfaces.py` e `spatial_server/biometrics/resolvers.py`
-  - `spatial_server/ingestion/openvino_rtsp_source.py` e `spatial_server/ingestion/interfaces.py`
+  - `spatial_server/ingestion/openvino_rtsp_source.py`, `spatial_server/ingestion/mqtt_source.py` e `spatial_server/ingestion/interfaces.py`
+  - `spatial_server/optics/pinhole_model.py`, `spatial_server/optics/panoramic_model.py` e `spatial_server/optics/interfaces.py`
   - `spatial_server/tracking/kalman_tracker.py` e `spatial_server/tracking/interfaces.py`
   - `spatial_server/persistence/repository.py` e `spatial_server/persistence/interfaces.py`
   - `spatial_server/security/ha_auth.py`
@@ -32,10 +33,11 @@ Prima di formulare qualsiasi proposta, ispeziona e incrocia i seguenti file real
   - `caddy/Caddyfile`
   - `scripts/install_windows_services.ps1`, `scripts/setup_windows_node.ps1`, `scripts/update_services.bat`
 - **Frontend 3D / PWA (`src/`):**
+  - `src/main.js`
   - `src/spatial/network/SpatialStreamClient.js`
   - `src/spatial/avatars/SpatialAvatarFactory.js`
-  - `src/spatial/TimelineController.js` e `src/spatial/TrajectoryRenderer.js`
-  - `src/ui/SecurityFabHub.js`
+  - `src/spatial/TrajectoryRenderer.js` (e `src/spatial/TimelineController.js`, tenendo presente che oggi `SecurityFabHub.js` è l'hub primario montato in `src/main.js` per Live + Cronologia/Replay 3D)
+  - `src/ui/SecurityFabHub.js` e `src/devices/camera/SecurityCameraModal.js`
 
 ---
 
@@ -52,8 +54,8 @@ Tutta la progettazione deve rispettare rigorosamente i vincoli dell'host di prod
   - **NO transcoding software FFmpeg** in `go2rtc` (flussi video sempre in passthrough H.264).
   - **NO scrittura su disco di snapshot temporanei** ad ogni frame.
 - **Budget risorse del nuovo sottosistema biometrico dentro `SpatialServer`:**
-  - RAM aggiuntiva stimata: target **<= 250–300 MB** con un unico runtime ONNX condiviso (`onnxruntime` / `openvino` già presente).
-  - CPU: esecuzione vincolata (`intra_op_num_threads=2` o configurabile), coda asincrona limitata con politica *drop-oldest* per garantire che 2 core restino sempre disponibili alla VM VirtualBox, a `go2rtc` e al tracking in tempo reale.
+  - RAM aggiuntiva stimata: target **<= 250–300 MB** con un unico runtime ONNX/OpenVINO condiviso (`onnxruntime` / `openvino` già presente e già condiviso tra le 4 sorgenti RTSP in `_build_openvino_sources` tramite `shared_compiled_ov` e `infer_lock`).
+  - CPU: esecuzione vincolata (`intra_op_num_threads=2` o configurabile), coda asincrona limitata con politica *drop-oldest* per garantire che 2 core restino sempre disponibili alla VM VirtualBox, a `go2rtc` e al loop di tracking multi-camera (4 flussi RTSP substream attivi in parallelo a ~7 FPS complessivi).
   - Latenza target per valutazione su singolo crop: **~80–150 ms** (contro gli 1.500–2.000 ms del vecchio approccio a polling).
 
 ---
@@ -63,11 +65,14 @@ Integrare in modo nativo, scalabile, disaccoppiato e *track-aware* il **riconosc
 
 Il piano deve coprire nel dettaglio tutti i seguenti pilastri:
 
-### A. Strategia Dual-Stream "Substream Tracking + Main Stream On-Demand"
-- Il tracking 24/7 (`openvino_rtsp_source.py` + `kalman_tracker.py`) continua a girare leggero sul **substream**.
-- Solo quando un track di classe `person` o `car`/`vehicle` entra in una zona/distanza utile (ROI 3D o distanza massima dalla camera configurabile per telecamera) e non ha ancora un'identità bloccata, il worker biometrico richiede in modo **asincrono** un frame ad alta risoluzione (es. 5MP `2560x1920`) dall'endpoint locale di `go2rtc` (`http://127.0.0.1:1984/api/frame.jpeg?src=<main_stream>`) mantenuto in memoria (RAM, zero file temporanei).
-- Rimappatura delle coordinate normalizzate del bounding box dal substream al frame ad alta risoluzione (con padding configurabile e clamp ai bordi) per ritagliare **esclusivamente** il soggetto/veicolo prima dell'inferenza.
-- Verifica di `go2rtc/go2rtc.yaml` per assicurarsi che gli stream main/sub siano mappati in modo coerente per telecamera.
+### A. Strategia Dual-Stream "Substream Tracking + Main Stream On-Demand" (Multi-Camera 16:9 / 4:3 + Panoramiche 180° 32:9)
+- Il tracking 24/7 (`openvino_rtsp_source.py` + `kalman_tracker.py`) continua a girare leggero sui **4 substream** condividendo il modello OpenVINO (`carraio_sub`, `portico_sub`, `ingresso_sub`, `stradina_sub`). Nota che `_infer_openvino_yolo` applica già il letterboxing `640x640` e rimappa le coordinate normalizzate `BoundingBox2D` (`[0, 1]^4`) sull'aspect ratio nativo del substream di ciascuna telecamera.
+- Solo quando un track 3D di classe `person` o `car`/`vehicle` entra in una zona/distanza utile (ROI 3D o distanza massima `obs_range_m` dalla camera configurabile per telecamera) e non ha ancora un'identità bloccata, il worker biometrico richiede in modo **asincrono** un frame ad alta risoluzione dall'endpoint locale di `go2rtc` (`http://127.0.0.1:1984/api/frame.jpeg?src=<main_stream>`) mantenuto in memoria (RAM, zero file temporanei).
+- **Gestione differenziata risoluzioni e ottiche (Pinhole vs Panoramiche 180° 32:9):**
+  - `Cam_Carraio` (RLC-540A, 5MP `2560x1920`) e `Cam_Portico` (RLC-810A, 8MP `3840x2160`) usano il modello `pinhole_radtan`.
+  - `Cam_Ingresso` e `Cam_Stradina` sono **Reolink Duo 3 PoE panoramiche 180° dual-lens** (`equirectangular_180` in `spatial_server/optics/panoramic_model.py`, aspect ratio **32:9**, main stream fino a `7680x2160` 16MP). Decodificare un intero frame JPEG `7680x2160` in BGR non compresso in Python occuperebbe ~48 MB per singolo frame e >150–200 ms di solo JPEG decode sull'i5-6400: prevedere quindi una strategia memory-safe (es. parametri di resize `go2rtc` o decode OpenCV ridotto `IMREAD_REDUCED_COLOR_2` quando il bbox è sufficientemente grande, oltre a penalizzare/scartare crop ai bordi estremi del FOV 180° dove la distorsione equirettangolare degrada landmark facciali e OCR targhe).
+- Rimappatura delle coordinate normalizzate del bounding box dal substream al frame ad alta risoluzione (con padding configurabile e clamp ai bordi) per ritagliare **esclusivamente** il soggetto/veicolo prima dell'inferenza e liberare immediatamente il buffer del frame intero.
+- Verifica di `go2rtc/go2rtc.yaml` e della mappatura `camera_id -> main_stream_id / sub_stream_id` (derivabile da `scene_manifest.json` / `config.py`).
 
 ### B. Pipeline Face Recognition (InsightFace ONNX puro)
 - **Modelli ONNX leggeri:**
@@ -93,21 +98,22 @@ Il piano deve coprire nel dettaglio tutti i seguenti pilastri:
   - Matching su **whitelist configurabile** (auto di famiglia/parenti) con tolleranza controllata (es. distanza di Levenshtein `<= 1`) applicata solo dopo aggregazione multi-frame.
 
 ### D. Architettura Concorrente, Backpressure e "Track Locking"
-- Disaccoppiamento totale tra loop di ingestion/tracking e worker biometrico tramite coda asincrona bounded (es. `asyncio.Queue` / `ThreadPoolExecutor` con `maxsize` piccolo e scarto dei frame obsoleti).
+- **Rifattorizzazione dell'hook in `process_detection_batch` (`spatial_server/main.py`):** attualmente `await self.identity_resolver.resolve_identity(evt)` viene invocato in modo sincrono *prima* di `self.tracker.update(observations, now_ts)`, quando l'evento 2D non ha ancora un `track_id` 3D associato. Il piano deve spostare/disaccoppiare la risoluzione biometrica **dopo** `self.tracker.update(...)` (mantenendo comunque il passthrough immediato a costo zero di eventuali `sub_label` pre-etichettate da MQTT/Frigate), così da accodare richieste biometriche già arricchite di `track_id`, distanza 3D (`obs_range_m`), `camera_id` migliore e `bbox` 2D associato.
+- Disaccoppiamento totale tra loop di ingestion/tracking e worker biometrico tramite coda asincrona bounded (es. `asyncio.Queue` / `ThreadPoolExecutor` dedicato con `maxsize` piccolo e scarto/sovrascrittura dei job obsoleti per lo stesso `track_id`) senza contendere il lock del loop RTSP substream se non strettamente necessario.
 - **Fusione temporale per `track_id`:**
   - Accumulare al massimo `N` (es. 3–5) inferenze valide per track.
   - Applicare voto pesato (confidenza × qualità crop).
   - Appena `K` (es. 2–3) frame concordano sopra soglia sulla stessa identità o targa, **bloccare (`lock`) l'identità sul track** e interrompere l'inferenza biometrica su quel `track_id` fino al termine del track (o fino a eventuale scadenza/cambio stato).
-- Valutare come propagare e mantenere l'identità biometrica durante il tracking multi-camera / handover 3D nel `kalman_tracker.py`.
+- Valutare come propagare e mantenere l'identità biometrica (e la targa) durante il tracking multi-camera / handover 3D nel `kalman_tracker.py` (es. passaggio di un veicolo o persona tra `Cam_Carraio`, `Cam_Ingresso`, `Cam_Portico` e `Cam_Stradina`) e forzare il salvataggio immediato in SQLite (`_select_tracks_to_persist`) appena un track ottiene o aggiorna l'identità/targa bloccata.
 
 ### E. Persistenza SQLite WAL e Gestione Crop/Thumbnail
-- **Database (`spatial_tracks.db`):** estensione retrocompatibile dello schema con migrazioni automatiche idempotenti per salvare `identity`, `identity_confidence`, `plate`, `plate_confidence`, `biometric_locked`, riferimento al *best crop* thumbnail e tabella/log degli eventi biometrici.
-- **Gestione *best crop* su disco:** salvare esclusivamente il singolo crop migliore per track (o per evento sconosciuto/confermato) con una politica automatica di retention/pulizia (es. limite giorni o quota MB) per evitare crescita incontrollata del disco.
+- **Database (`spatial_tracks.db`):** estensione retrocompatibile dello schema con migrazioni automatiche idempotenti (`ALTER TABLE` / nuove tabelle) per salvare `identity`, `identity_confidence`, `plate`, `plate_confidence`, `biometric_locked`, riferimento al *best crop* thumbnail e tabella/log degli eventi biometrici.
+- **Gestione *best crop* su disco:** salvare esclusivamente il singolo crop migliore per track (o per evento sconosciuto/confermato) con una politica automatica di retention/pulizia (es. limite giorni o quota MB allineata a `_db_flush_loop`) per evitare crescita incontrollata del disco.
 
 ### F. Integrazione Frontend 3D / PWA e Human-in-the-Loop
-- Esporre identità, targa, confidenza e stato di lock nel payload WebSocket verso `SpatialStreamClient.js` e nello storico REST.
-- Mostrare badge identità/targa sugli avatar in `SpatialAvatarFactory.js` e filtri semantici (per persona, targa, sconosciuto) in `TimelineController.js` e `SecurityFabHub.js`.
-- Prevedere (in una fase dedicata) un flusso **Human-in-the-Loop** sicuro nella PWA: visualizzare il crop migliore di un volto/targa sconosciuto o a bassa confidenza e poterlo assegnare a una persona/whitelist con aggiornamento incrementale dell'indice degli embedding o della whitelist.
+- Esporre identità, targa, confidenza e stato di lock nel payload WebSocket verso `SpatialStreamClient.js` e nello storico REST (`/api/v1/tracks`).
+- Mostrare badge identità/targa sugli avatar in `SpatialAvatarFactory.js` (e `TrajectoryRenderer.js`) e filtri semantici (per persona, targa, sconosciuto) in `SecurityFabHub.js` (che oggi in `src/main.js` è l'hub centrale attivo per Live multi-camera e Cronologia/Replay 3D) e, per coerenza/retrocompatibilità, in `TimelineController.js` / `SecurityCameraModal.js`.
+- Prevedere (in una fase dedicata) un flusso **Human-in-the-Loop** sicuro nella PWA (`SecurityFabHub.js` / modale dedicata): visualizzare il crop migliore di un volto/targa sconosciuto o a bassa confidenza e poterlo assegnare a una persona/whitelist con aggiornamento incrementale dell'indice degli embedding o della whitelist.
 
 ### G. Sicurezza, Privacy e Manutenibilità
 - **Zero segreti nel codice:** eventuali credenziali telecamere, configurazioni sensibili e whitelist targhe devono risiedere esclusivamente in variabili d'ambiente / `.env` locale o file di configurazione gitignored.
@@ -148,4 +154,8 @@ Organizza la tua risposta esattamente nelle seguenti sezioni, con massimo livell
 
 ## 5. Dettagli Locali Opzionali da Tenere Presenti
 - Percorso cartelle volti già pronte: `[INSERISCI QUI IL PERCORSO, es. D:\faces_db\<NomePersona> o "da definire"]`
-- Telecamere prioritarie per volti e targhe: `[INSERISCI QUI I NOMI CAMERA IN go2rtc.yaml, es. ingresso/carraio o "deducile da go2rtc.yaml e config.py"]`
+- Telecamere attive in `go2rtc.yaml` e `scene_manifest.json`:
+  - `Cam_Carraio` (`carraio_main` / `carraio_sub`, Reolink RLC-540A pinhole — prioritaria per **ALPR targhe** e **volti** al cancello/cancelletto)
+  - `Cam_Ingresso` (`ingresso_main` / `ingresso_sub`, Reolink Duo 3 PoE 180° `equirectangular_180` 32:9 — copertura panoramica viale ovest/ingresso in sovrapposizione con `Cam_Carraio`)
+  - `Cam_Portico` (`portico_main` / `portico_sub`, Reolink RLC-810A pinhole — prioritaria per **volti** sotto il portico e **ALPR/veicoli** verso il garage)
+  - `Cam_Stradina` (`stradina_main` / `stradina_sub`, Reolink Duo 3 PoE 180° `equirectangular_180` 32:9 — copertura panoramica facciata nord / stradina)

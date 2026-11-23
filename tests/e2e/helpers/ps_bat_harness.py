@@ -742,6 +742,8 @@ function Start-Process {
     )
 
     env = os.environ.copy()
+    for _k in _ISOLATED_ENV_STRIP_KEYS:
+        env.pop(_k, None)
     env["PATH"] = f"{bin_shim};{env.get('PATH', '')}"
     env["SH3D_STUB_LOG"] = str(stub_log)
     env["SH3D_PS_LOG"] = str(ps_log)
@@ -777,6 +779,30 @@ function Start-Process {
     }
 
 
+_ISOLATED_ENV_STRIP_KEYS: tuple[str, ...] = (
+    "SH3D_DEV_MODE",
+    "SPATIAL_DEV_AUTH_REQUIRED",
+    "VITE_HA_DEV_URL",
+    "REOLINK_CARRAIO_PASS",
+    "REOLINK_CARRAIO_PASSWORD",
+    "REOLINK_PORTICO_PASS",
+    "REOLINK_INGRESSO_PASS",
+    "REOLINK_STRADINA_PASS",
+    "MQTT_PASS",
+    "MQTT_PASSWORD",
+    "SPATIAL_SERVER_HOST",
+    "SPATIAL_SERVER_PORT",
+    "SPATIAL_AUTH_REQUIRED",
+    "SPATIAL_SESSION_SECRET",
+    "SPATIAL_ALLOWED_ORIGINS",
+    "GO2RTC_CANDIDATE_LAN",
+    "GO2RTC_CANDIDATE_TAILSCALE",
+    "BIOMETRICS_ENABLED",
+    "VITE_HA_TOKEN",
+    "HA_TOKEN",
+)
+
+
 def run_bat_dry_run(
     ws_info: dict[str, Any],
     bat_rel_path: str,
@@ -804,6 +830,8 @@ def run_bat_dry_run(
     cmd = ["cmd.exe", "/c", str(bat_path), *(bat_args or [])]
 
     env = os.environ.copy()
+    for _k in _ISOLATED_ENV_STRIP_KEYS:
+        env.pop(_k, None)
     env["PATH"] = f"{bin_shim};{env.get('PATH', '')}"
     env["SH3D_STUB_LOG"] = str(stub_log)
     env["SH3D_SC_STATE_DIR"] = str(sc_state_dir)

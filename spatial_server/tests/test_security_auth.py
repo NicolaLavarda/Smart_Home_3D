@@ -217,6 +217,9 @@ def _valid_detection_payload() -> dict[str, Any]:
 
 def test_config_from_env_defaults_and_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in (
+        "SH3D_DEV_MODE",
+        "SPATIAL_DEV_AUTH_REQUIRED",
+        "VITE_HA_DEV_URL",
         "SPATIAL_SERVER_HOST",
         "SPATIAL_AUTH_REQUIRED",
         "SPATIAL_AUTH_CACHE_TTL_S",
@@ -391,6 +394,17 @@ def test_unauthenticated_requests_return_401() -> None:
                     ("GET", "/api/v1/status", None),
                     ("GET", "/api/v1/tracks?t_start=0&t_end=10", None),
                     ("GET", "/api/v1/timeline-density?t_start=0&t_end=10", None),
+                    ("GET", "/api/v1/biometrics/status", None),
+                    ("GET", "/api/v1/biometrics/events", None),
+                    ("GET", "/api/v1/biometrics/crops/1000_1_face_1", None),
+                    ("GET", "/api/v1/biometrics/identities", None),
+                    ("GET", "/api/v1/biometrics/plates", None),
+                    ("POST", "/api/v1/biometrics/events/1/assign", {"identity": "Nicola"}),
+                    ("POST", "/api/v1/biometrics/identities/reload", None),
+                    ("DELETE", "/api/v1/biometrics/identities/Nicola", None),
+                    ("PUT", "/api/v1/biometrics/plates", {"plate": "AB123CD", "owner_name": "Nicola"}),
+                    ("DELETE", "/api/v1/biometrics/plates/AB123CD", None),
+                    ("POST", "/api/v1/biometrics/crops/prune", None),
                     ("GET", "/api/v1/calibration/Cam_Carraio", None),
                     ("GET", "/api/v1/ha-camera/snapshot/camera.carraio", None),
                     ("POST", "/api/v1/calibration/solve-pnp", _valid_solve_pnp_payload(app)),
@@ -533,6 +547,10 @@ def test_rbac_resident_vs_admin_and_owner() -> None:
                 assert client.get("/api/v1/status").status_code == 200
                 assert client.get("/api/v1/tracks?t_start=0&t_end=10").status_code == 200
                 assert client.get("/api/v1/timeline-density?t_start=0&t_end=10").status_code == 200
+                assert client.get("/api/v1/biometrics/status").status_code == 200
+                assert client.get("/api/v1/biometrics/events").status_code == 200
+                assert client.get("/api/v1/biometrics/identities").status_code == 200
+                assert client.get("/api/v1/biometrics/plates").status_code == 200
                 assert client.get("/api/v1/calibration/Cam_Carraio").status_code == 200
 
                 assert client.post("/api/v1/calibration/solve-pnp", json=_valid_solve_pnp_payload(app)).status_code == 403
@@ -545,6 +563,28 @@ def test_rbac_resident_vs_admin_and_owner() -> None:
                 )
                 assert client.post("/api/v1/ingestion/mode", json={"mode": "synthetic"}).status_code == 403
                 assert client.post("/api/v1/detections", json=_valid_detection_payload()).status_code == 403
+
+                seed_ts = time.time()
+                ev_id = app.state.pipeline.repository.record_biometric_event(
+                    {
+                        "track_id": 501,
+                        "modality": "alpr",
+                        "camera_id": "Cam_Carraio",
+                        "timestamp": seed_ts,
+                        "plate_raw": "AB123CD",
+                        "biometric_locked": False,
+                        "biometric_status": "unknown",
+                    }
+                )
+                assert client.post(f"/api/v1/biometrics/events/{ev_id}/assign", json={"plate": "AB123CD"}).status_code == 403
+                assert client.post("/api/v1/biometrics/identities/reload").status_code == 403
+                assert client.delete("/api/v1/biometrics/identities/Nicola").status_code == 403
+                assert (
+                    client.put("/api/v1/biometrics/plates", json={"plate": "AB123CD", "owner_name": "Nicola"}).status_code
+                    == 403
+                )
+                assert client.delete("/api/v1/biometrics/plates/AB123CD").status_code == 403
+                assert client.post("/api/v1/biometrics/crops/prune").status_code == 403
 
                 # 2. Admin AND Owner -> mutative routes 200
                 for tok in ("tok-admin", "tok-owner"):
@@ -562,6 +602,27 @@ def test_rbac_resident_vs_admin_and_owner() -> None:
                     )
                     assert client.post("/api/v1/ingestion/mode", json={"mode": "synthetic"}).status_code == 200
                     assert client.post("/api/v1/detections", json=_valid_detection_payload()).status_code == 200
+
+                    vec_blob = np.ones(512, dtype=np.float32).tobytes()
+                    app.state.pipeline.repository.add_face_embedding("TmpRbacUser", "w600k_mbf.onnx", vec_blob)
+                    assert (
+                        client.put(
+                            "/api/v1/biometrics/plates",
+                            json={"plate": "AB123CD", "owner_name": "Auto Nicola"},
+                        ).status_code
+                        == 200
+                    )
+                    assert (
+                        client.post(
+                            f"/api/v1/biometrics/events/{ev_id}/assign",
+                            json={"plate": "AB123CD"},
+                        ).status_code
+                        == 200
+                    )
+                    assert client.delete("/api/v1/biometrics/plates/AB123CD").status_code == 200
+                    assert client.post("/api/v1/biometrics/identities/reload").status_code == 200
+                    assert client.delete("/api/v1/biometrics/identities/TmpRbacUser").status_code == 200
+                    assert client.post("/api/v1/biometrics/crops/prune").status_code == 200
         finally:
             app.state.pipeline.repository.close()
 
@@ -696,5 +757,66 @@ def test_cors_allowed_origins_enforced() -> None:
                     },
                 )
                 assert "access-control-allow-origin" not in bad_origin.headers
+        finally:
+            app.state.pipeline.repository.close()
+
+
+def test_biometrics_crop_auth_and_path_traversal_protection() -> None:
+    import cv2
+    from spatial_server.biometrics import BiometricCropStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        bio_dir = tmp_dir / "biometrics"
+        store = BiometricCropStore(bio_dir)
+        img = np.full((120, 160, 3), 140, dtype=np.uint8)
+        crop_id, _rel = store.save_best_crop("1700000000_12_face_2", img, timestamp=time.time())
+        secret_file = tmp_dir / "secret.txt"
+        secret_file.write_text("TOP_SECRET_DO_NOT_SERVE", encoding="utf-8")
+
+        cfg = _make_test_config(tmp_dir, biometrics_data_dir=bio_dir)
+        app = create_app(cfg)
+        _patch_verifier_tokens(
+            app,
+            {
+                "tok-resident": HAUserPrincipal("u-res", "Residente", False, False, time.time(), time.time() + 120),
+            },
+        )
+        try:
+            with TestClient(app) as client:
+                # 1. Unauthenticated crop fetch -> 401
+                assert client.get(f"/api/v1/biometrics/crops/{crop_id}").status_code == 401
+
+                # 2. Authenticated Resident -> 200 JPEG with nosniff
+                ok_resp = client.get(
+                    f"/api/v1/biometrics/crops/{crop_id}",
+                    headers={"Authorization": "Bearer tok-resident"},
+                )
+                assert ok_resp.status_code == 200
+                assert ok_resp.headers["content-type"].startswith("image/jpeg")
+                assert ok_resp.headers.get("x-content-type-options") == "nosniff"
+                assert ok_resp.content.startswith(b"\xff\xd8")
+
+                # 3. Traversal & malformed IDs rejected (never serve secret_file)
+                for bad_id in (
+                    "short",
+                    "..%2Fsecret.txt",
+                    "crop.jpg",
+                    "../secret.txt",
+                    "12345678$bad",
+                ):
+                    r = client.get(
+                        f"/api/v1/biometrics/crops/{bad_id}",
+                        headers={"Authorization": "Bearer tok-resident"},
+                    )
+                    assert r.status_code in (400, 404)
+                    assert b"TOP_SECRET_DO_NOT_SERVE" not in r.content
+
+                # 4. Valid format but nonexistent crop -> 404
+                miss = client.get(
+                    "/api/v1/biometrics/crops/1700000000_99_face_1",
+                    headers={"Authorization": "Bearer tok-resident"},
+                )
+                assert miss.status_code == 404
         finally:
             app.state.pipeline.repository.close()

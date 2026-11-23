@@ -126,6 +126,15 @@ function formatOptionLabel(option) {
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Risolve dinamicamente tutte le entità Home Assistant della telecamera selezionata
  * supportando prefissi diretti (`carraio_*`) o prefissati per zona (`giardino_portico_*`).
@@ -199,6 +208,7 @@ export class SecurityCameraModal {
     this._unsubscribeStatus = null;
     this._unsubscribeAuth = null;
     this._unsubscribeEntities = null;
+    this._unsubscribeBiometric = null;
     this._connectSeq = 0;
     this._camIp = '192.168.86.47';
     this._camName = 'Cam_Carraio';
@@ -296,6 +306,8 @@ export class SecurityCameraModal {
             <span id="cam-daynight-label">Notte</span>
           </span>
         </div>
+
+        <div class="cam-bio-strip" id="cam-bio-strip" hidden aria-label="Ultimo riconoscimento telecamera"></div>
 
         <div class="cam-ctrl-hero-grid">
           <section class="cam-ctrl-card cam-ctrl-card--spotlight" id="cam-card-spotlight">
@@ -482,8 +494,63 @@ export class SecurityCameraModal {
       });
     }
 
+    const spatialClient = this.controller.spatialStreamClient || context.spatialStreamClient || null;
+    if (typeof spatialClient?.onBiometricEvent === 'function') {
+      this._unsubscribeBiometric = spatialClient.onBiometricEvent((ev) => {
+        if (!this.container || this.container !== container) return;
+        if (ev?.camera_id === this._camName) {
+          this._renderBiometricStrip(ev, spatialClient);
+        }
+      });
+    }
+    if (typeof spatialClient?.fetchBiometricEvents === 'function') {
+      spatialClient
+        .fetchBiometricEvents({ limit: 10 })
+        .then((res) => {
+          if (!this.container || this.container !== container) return;
+          const match = Array.isArray(res?.events)
+            ? res.events.find((e) => e?.camera_id === this._camName)
+            : null;
+          if (match) {
+            this._renderBiometricStrip(match, spatialClient);
+          }
+        })
+        .catch(() => {});
+    }
+
     // Collega il flusso video (istantaneo a 0ms se caldo nel pool o con preview sub immediata!)
     await this.connectStream(this.activeStreamName);
+  }
+
+  _renderBiometricStrip(ev, spatialClient = null) {
+    const stripEl = this.container?.querySelector('#cam-bio-strip');
+    if (!stripEl || !ev) return;
+
+    const cropUrlRaw =
+      ev.crop_url ||
+      (ev.best_crop_id ? spatialClient?.getBiometricCropUrl?.(ev.best_crop_id) : null) ||
+      null;
+    const isAlpr = ev.modality === 'alpr' || Boolean(ev.plate);
+    const labelText = isAlpr
+      ? (ev.plate_owner ? `${ev.plate || ''} · ${ev.plate_owner}` : ev.plate || 'Targa sconosciuta')
+      : (ev.identity || 'Sconosciuto');
+    const dt = Number.isFinite(ev.timestamp) ? new Date(ev.timestamp * 1000) : null;
+    const timeStr = dt ? dt.toLocaleTimeString('it-IT', { hour12: false }) : '--:--:--';
+    const isAuthorized = isAlpr
+      ? ev.plate_whitelisted === true
+      : Boolean(ev.identity && ev.identity !== 'Sconosciuto');
+
+    stripEl.className = `cam-bio-strip ${isAuthorized ? 'is-authorized' : ev.biometric_locked ? 'is-locked' : 'is-unknown'}`;
+    stripEl.innerHTML = `
+      ${cropUrlRaw ? `<img class="cam-bio-thumb" src="${escapeHtml(cropUrlRaw)}" crossorigin="use-credentials" alt="" loading="lazy" />` : ''}
+      <span class="cam-bio-icon">${icon(isAlpr ? 'car' : 'user-check', { size: 14 })}</span>
+      <span class="cam-bio-copy">
+        <span class="cam-bio-label">${escapeHtml(labelText)}</span>
+        <span class="cam-bio-meta">${icon('clock', { size: 11 })} ${escapeHtml(timeStr)}</span>
+      </span>
+      ${ev.biometric_locked ? `<span class="cam-bio-lock" title="Identità confermata">${icon('lock', { size: 12 })}</span>` : ''}
+    `;
+    stripEl.hidden = false;
   }
 
   _getEntitiesSnapshot(haClient) {
@@ -927,6 +994,10 @@ export class SecurityCameraModal {
     if (this._unsubscribeEntities) {
       this._unsubscribeEntities();
       this._unsubscribeEntities = null;
+    }
+    if (this._unsubscribeBiometric) {
+      this._unsubscribeBiometric();
+      this._unsubscribeBiometric = null;
     }
     if (this._rebootArmTimer) {
       clearTimeout(this._rebootArmTimer);

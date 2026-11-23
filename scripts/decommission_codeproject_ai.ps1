@@ -1,0 +1,130 @@
+<#
+.SYNOPSIS
+Audit sicuro e dismissione reversibile del server CodeProject.AI su Windows 10 (i5-6400 / 8 GB RAM)
+dopo la messa in produzione del sottosistema biometrico nativo dentro SmartHome3D-SpatialServer.
+In modalita' predefinita (senza -Apply) esegue esclusivamente un audit in sola lettura (dry-run).
+#>
+[CmdletBinding()]
+param(
+    [switch]$Apply,
+    [switch]$SkipSpatialCheck
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "=== SMART HOME 3D - AUDIT & DISMISSIONE CODEPROJECT.AI ===" -ForegroundColor Cyan
+
+$osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+$freeRamBeforeMb = if ($osInfo -and $osInfo.FreePhysicalMemory) {
+    [math]::Round($osInfo.FreePhysicalMemory / 1024.0, 1)
+} else {
+    0.0
+}
+$totalRamMb = if ($osInfo -and $osInfo.TotalVisibleMemorySize) {
+    [math]::Round($osInfo.TotalVisibleMemorySize / 1024.0, 1)
+} else {
+    0.0
+}
+Write-Host ("RAM fisica libera attuale: {0} MB su {1} MB" -f $freeRamBeforeMb, $totalRamMb)
+
+$cpaiServices = @(
+    Get-Service -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -like "*CodeProject*" -or $_.DisplayName -like "*CodeProject*"
+    }
+)
+$cpaiProcesses = @(
+    Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessName -like "CodeProject*" -or $_.ProcessName -like "AnalysisLayer*"
+    }
+)
+
+$port32168 = @()
+if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+    $port32168 = @(Get-NetTCPConnection -LocalPort 32168 -State Listen -ErrorAction SilentlyContinue)
+}
+
+Write-Host ("Servizi Windows CodeProject.AI rilevati: {0}" -f $cpaiServices.Count)
+foreach ($svc in $cpaiServices) {
+    $cimSvc = Get-CimInstance Win32_Service -Filter ("Name='{0}'" -f $svc.Name.Replace("'", "''")) -ErrorAction SilentlyContinue
+    $startMode = if ($cimSvc) { $cimSvc.StartMode } else { "Unknown" }
+    Write-Host ("  - {0} ({1}): Status={2}, StartMode={3}" -f $svc.Name, $svc.DisplayName, $svc.Status, $startMode)
+}
+
+$totalProcRamMb = 0.0
+Write-Host ("Processi attivi CodeProject.AI rilevati: {0}" -f $cpaiProcesses.Count)
+foreach ($proc in $cpaiProcesses) {
+    $mb = [math]::Round($proc.WorkingSet64 / 1MB, 1)
+    $totalProcRamMb += $mb
+    Write-Host ("  - PID {0} ({1}): {2} MB RAM" -f $proc.Id, $proc.ProcessName, $mb)
+}
+Write-Host ("Impronta RAM stimata processi CodeProject.AI: {0} MB" -f [math]::Round($totalProcRamMb, 1))
+
+if ($port32168.Count -gt 0) {
+    Write-Host "[*] Porta TCP 32168 (API CodeProject.AI) attualmente in ascolto." -ForegroundColor Yellow
+} else {
+    Write-Host "[OK] Porta TCP 32168 non in ascolto." -ForegroundColor Green
+}
+
+if (-not $Apply) {
+    Write-Host ""
+    Write-Host "[DRY-RUN] Nessuna modifica applicata al sistema." -ForegroundColor Yellow
+    if ($cpaiServices.Count -gt 0 -or $cpaiProcesses.Count -gt 0) {
+        Write-Host "Per arrestare e disabilitare CodeProject.AI in sicurezza dopo aver verificato SmartHome3D-SpatialServer:"
+        Write-Host "  powershell -ExecutionPolicy Bypass -File scripts\decommission_codeproject_ai.ps1 -Apply"
+    } else {
+        Write-Host "[OK] Nessun servizio o processo CodeProject.AI attivo da dismettere." -ForegroundColor Green
+    }
+    exit 0
+}
+
+# Modalita' -Apply: richiede privilegi Amministratore
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "[ERRORE] L'opzione -Apply richiede una sessione PowerShell come Amministratore." -ForegroundColor Red
+    exit 1
+}
+
+if (-not $SkipSpatialCheck) {
+    $spatialSvc = Get-Service -Name "SmartHome3D-SpatialServer" -ErrorAction SilentlyContinue
+    if ($null -eq $spatialSvc -or $spatialSvc.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Running) {
+        $st = if ($null -eq $spatialSvc) { "Non installato" } else { [string]$spatialSvc.Status }
+        Write-Host ("[ERRORE] SmartHome3D-SpatialServer non e' attivo (stato: {0}). Verifica la biometria locale o passa -SkipSpatialCheck per forzare." -f $st) -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[OK] SmartHome3D-SpatialServer attivo e verificato." -ForegroundColor Green
+}
+
+foreach ($svc in $cpaiServices) {
+    if ($svc.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+        Write-Host ("[*] Arresto servizio {0}..." -f $svc.Name) -ForegroundColor Cyan
+        Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+        try {
+            $svc.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(20))
+        } catch {
+            Write-Host ("[WARN] Timeout arresto servizio {0}." -f $svc.Name) -ForegroundColor Yellow
+        }
+    }
+    Write-Host ("[*] Imposto StartupType=Disabled su {0}..." -f $svc.Name) -ForegroundColor Cyan
+    Set-Service -Name $svc.Name -StartupType Disabled
+    Write-Host ("[OK] Servizio {0} arrestato e disabilitato (rollback: Set-Service -Name '{0}' -StartupType Automatic; Start-Service -Name '{0}')." -f $svc.Name) -ForegroundColor Green
+}
+
+foreach ($proc in $cpaiProcesses) {
+    if (-not $proc.HasExited) {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Start-Sleep -Seconds 2
+$osAfter = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+$freeRamAfterMb = if ($osAfter -and $osAfter.FreePhysicalMemory) {
+    [math]::Round($osAfter.FreePhysicalMemory / 1024.0, 1)
+} else {
+    $freeRamBeforeMb
+}
+$recoveredMb = [math]::Round($freeRamAfterMb - $freeRamBeforeMb, 1)
+
+Write-Host ""
+Write-Host "=== DISMISSIONE COMPLETATA ===" -ForegroundColor Green
+Write-Host ("RAM libera dopo l'arresto: {0} MB (variazione: {1:+#0.0;-#0.0;0.0} MB)" -f $freeRamAfterMb, $recoveredMb)
+Write-Host "Ricorda di verificare che in .env la variabile FACE_RECOGNITION_WEBHOOK_URL= sia vuota e BIOMETRICS_ENABLED=true."

@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, Optional
 import numpy as np
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
@@ -21,10 +22,23 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from spatial_server.biometrics import (
+    BiometricCropStore,
+    BiometricEligibilityGate,
+    BiometricJob,
+    BiometricWorkerService,
     ExternalWebhookIdentityResolver,
+    FaceGalleryIndex,
+    Go2RtcSnapshotProvider,
+    IBiometricCoordinator,
     IIdentityResolver,
     NoOpIdentityResolver,
+    OnnxAlprRecognizer,
+    OnnxInsightFaceRecognizer,
     OpenVINOInsightFaceResolver,
+    PlateWhitelistEntry,
+    PlateWhitelistMatcher,
+    TrackBiometricConsensusManager,
+    TrackBiometricUpdate,
 )
 from spatial_server.config import SpatialServerConfig, _normalize_ha_url
 from spatial_server.security import (
@@ -53,6 +67,7 @@ from spatial_server.ingestion import (
 )
 from spatial_server.optics import (
     CameraCalibrationSolver,
+    EquirectangularPanoramicOpticalModel,
     ICameraOpticalModel,
     PinholeRadTanOpticalModel,
     create_optical_model_from_manifest,
@@ -74,6 +89,23 @@ class AuthSessionRequest(BaseModel):
     token: Optional[str] = None
 
 
+class BiometricEventAssignRequest(BaseModel):
+    identity: Optional[str] = None
+    enroll_crop: bool = True
+    plate: Optional[str] = None
+    add_to_whitelist: bool = False
+    owner_name: Optional[str] = None
+    vehicle_label: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PlateWhitelistUpsertRequest(BaseModel):
+    plate: str
+    owner_name: str
+    vehicle_label: Optional[str] = None
+    notes: Optional[str] = None
+
+
 @dataclass
 class _PersistAnchor:
     x: float
@@ -82,6 +114,8 @@ class _PersistAnchor:
     timestamp: float
     class_label: str
     identity: Optional[str]
+    plate: Optional[str] = None
+    biometric_locked: bool = False
 
 
 class SpatialPipelineService:
@@ -98,6 +132,7 @@ class SpatialPipelineService:
         calibration_solver: CameraCalibrationSolver,
         camera_manifest_meta: Optional[dict[str, dict[str, Any]]] = None,
         saved_calibration_overrides: Optional[dict[str, dict[str, Any]]] = None,
+        biometric_coordinator: Optional[IBiometricCoordinator] = None,
     ) -> None:
         self.config = config
         self.optical_models = optical_models
@@ -112,6 +147,17 @@ class SpatialPipelineService:
             for cam_id, ov in (saved_calibration_overrides or {}).items()
             if isinstance(ov, dict)
         }
+        self.biometric_coordinator = biometric_coordinator
+        if self.biometric_coordinator is not None:
+            if getattr(self.biometric_coordinator, "on_result", None) is None:
+                setattr(self.biometric_coordinator, "on_result", self._handle_biometric_update)
+            snap_provider = getattr(self.biometric_coordinator, "snapshot_provider", None)
+            if (
+                snap_provider is not None
+                and hasattr(snap_provider, "_substream_fallback_getter")
+                and getattr(snap_provider, "_substream_fallback_getter", None) is None
+            ):
+                setattr(snap_provider, "_substream_fallback_getter", self.get_latest_substream_frame)
 
         self.ingestion_mode: str = config.default_ingestion_mode
         self.active_sources: list[IDetectionSource] = []
@@ -127,6 +173,9 @@ class SpatialPipelineService:
         self._persist_anchors: dict[int, _PersistAnchor] = {}
         self.persist_saved_count: int = 0
         self.persist_skipped_count: int = 0
+        self._lazy_crop_store: Optional[BiometricCropStore] = None
+        self._lazy_face_gallery: Optional[FaceGalleryIndex] = None
+        self._lazy_whitelist_matcher: Optional[PlateWhitelistMatcher] = None
 
     def get_optical_model(self, camera_id: str) -> Optional[ICameraOpticalModel]:
         return self.optical_models.get(camera_id)
@@ -207,11 +256,24 @@ class SpatialPipelineService:
         return self.get_camera_calibration_metadata(camera_id)
 
     async def start(self) -> None:
+        if self.config.dev_mode:
+            logger.warning(
+                "SH3D_DEV_MODE=true attivo (sviluppo locale: CORS localhost abilitato, auth_required=%s) — "
+                "imposta SH3D_DEV_MODE=false in produzione!",
+                self.config.auth_required,
+            )
+        if self.biometric_coordinator is not None:
+            await self.biometric_coordinator.start()
         self._flush_task = asyncio.create_task(self._db_flush_loop())
         await self.set_ingestion_mode(self.ingestion_mode)
 
     async def stop(self) -> None:
         await self._stop_sources()
+        if self.biometric_coordinator is not None:
+            try:
+                await self.biometric_coordinator.stop()
+            except Exception as exc:
+                logger.warning("Error stopping biometric coordinator: %s", exc)
         if self._flush_task:
             self._flush_task.cancel()
             try:
@@ -285,6 +347,7 @@ class SpatialPipelineService:
                 shared_compiled_ov=shared_ov if idx > 0 else None,
                 shared_backend_name=shared_backend if idx > 0 else None,
                 infer_lock=shared_lock,
+                cpu_threads=self.config.openvino_cpu_threads,
             )
             if idx == 0 and src._compiled_ov is not None:
                 shared_ov = src._compiled_ov
@@ -303,6 +366,7 @@ class SpatialPipelineService:
             model_path=self.config.openvino_model_path,
             target_fps=self.config.openvino_target_fps,
             conf_threshold=self.config.openvino_conf_threshold,
+            cpu_threads=self.config.openvino_cpu_threads,
         )
 
     def _build_mqtt_camera_alias_map(self) -> dict[str, str]:
@@ -397,6 +461,28 @@ class SpatialPipelineService:
         await self.broadcast_status()
         return details
 
+    def get_latest_substream_frame(self, camera_id: str) -> Optional[tuple[np.ndarray, float]]:
+        for src in self.active_sources:
+            if getattr(src, "camera_id", None) == camera_id and hasattr(src, "get_latest_frame"):
+                res = src.get_latest_frame()
+                if res is not None:
+                    return res
+        return None
+
+    def _is_camera_panoramic_180(self, camera_id: str) -> bool:
+        model = self.optical_models.get(camera_id)
+        if isinstance(model, EquirectangularPanoramicOpticalModel):
+            return True
+        meta = self.camera_manifest_meta.get(camera_id) or {}
+        return bool(meta.get("is_panoramic_180") or meta.get("optical_model") == "equirectangular_180")
+
+    def _prune_biometric_consensus(self, active_tracks: list[TrackedEntity3D]) -> None:
+        if self.biometric_coordinator is None:
+            return
+        consensus = getattr(self.biometric_coordinator, "consensus", None)
+        if consensus is not None and hasattr(consensus, "prune_inactive_tracks"):
+            consensus.prune_inactive_tracks({tr.track_id for tr in active_tracks})
+
     def _prune_stale_persist_anchors(self, active_tracks: list[TrackedEntity3D]) -> None:
         active_ids = {tr.track_id for tr in active_tracks}
         for tid in list(self._persist_anchors):
@@ -425,6 +511,8 @@ class SpatialPipelineService:
                     disp >= min_disp
                     or (heartbeat_s > 0.0 and (dt >= heartbeat_s or dt < 0.0))
                     or tr.identity != anchor.identity
+                    or tr.plate != anchor.plate
+                    or tr.biometric_locked != anchor.biometric_locked
                     or tr.class_label != anchor.class_label
                 )
 
@@ -436,6 +524,8 @@ class SpatialPipelineService:
                     timestamp=tr.last_seen,
                     class_label=tr.class_label,
                     identity=tr.identity,
+                    plate=tr.plate,
+                    biometric_locked=tr.biometric_locked,
                 )
                 persistable.append(tr)
                 self.persist_saved_count += 1
@@ -448,12 +538,14 @@ class SpatialPipelineService:
         if not events:
             now_ts = time.time()
             async with self._pipeline_lock:
-                active_tracks = self.tracker.update([], now_ts)
+                active_tracks, _ = self.tracker.update_with_assignments([], now_ts)
+            self._prune_biometric_consensus(active_tracks)
             self._prune_stale_persist_anchors(active_tracks)
             await self.broadcast_frame(active_tracks, now_ts)
             return active_tracks
 
         observations: list[TrackObservation3D] = []
+        obs_meta: list[tuple[DetectionEvent, float]] = []
         now_ts = max(e.timestamp for e in events)
         self.raw_detections_count += len(events)
 
@@ -501,6 +593,12 @@ class SpatialPipelineService:
                 "timestamp": evt.timestamp,
             }
             identity, id_conf = await self.identity_resolver.resolve_identity(evt)
+            plate_val = evt.plate.strip().upper() if isinstance(evt.plate, str) and evt.plate.strip() else None
+            plate_conf = (
+                float(evt.plate_confidence)
+                if evt.plate_confidence is not None
+                else (0.85 if plate_val else 0.0)
+            )
             obs_range_m = float(math.dist(ray.origin, hit_pt))
             observations.append(
                 TrackObservation3D(
@@ -511,12 +609,41 @@ class SpatialPipelineService:
                     confidence=evt.confidence,
                     identity=identity,
                     identity_confidence=id_conf,
+                    plate=plate_val,
+                    plate_confidence=plate_conf,
                     range_m=obs_range_m,
                 )
             )
+            obs_meta.append((evt, obs_range_m))
 
         async with self._pipeline_lock:
-            active_tracks = self.tracker.update(observations, now_ts)
+            active_tracks, obs_assignments = self.tracker.update_with_assignments(observations, now_ts)
+
+        self._prune_biometric_consensus(active_tracks)
+
+        if self.biometric_coordinator is not None and obs_assignments:
+            tracks_by_id = {tr.track_id: tr for tr in active_tracks}
+            for obs_idx, track_id in obs_assignments.items():
+                evt, obs_range_m = obs_meta[obs_idx]
+                tr = tracks_by_id.get(track_id)
+                if tr is None or tr.biometric_locked:
+                    continue
+                if evt.class_label not in ("person", "car", "truck", "motorbike"):
+                    continue
+                is_pano = self._is_camera_panoramic_180(evt.camera_id)
+                job = BiometricJob(
+                    track_id=track_id,
+                    camera_id=evt.camera_id,
+                    class_label=evt.class_label,
+                    timestamp=evt.timestamp,
+                    bbox=evt.bbox,
+                    obs_range_m=obs_range_m,
+                    world_xyz=(tr.state.x, tr.state.y, tr.state.z),
+                    velocity_xyz=(tr.state.vx, tr.state.vy, tr.state.vz),
+                    is_panoramic_180=is_pano,
+                    camera_weight=0.75 if is_pano else 1.0,
+                )
+                self.biometric_coordinator.enqueue_candidate(job)
 
         persistable = self._select_tracks_to_persist(active_tracks)
         if persistable:
@@ -525,6 +652,335 @@ class SpatialPipelineService:
 
         await self.broadcast_frame(active_tracks, now_ts)
         return active_tracks
+
+    async def broadcast_biometric_event(
+        self,
+        update: TrackBiometricUpdate,
+        *,
+        event_id: Optional[int] = None,
+    ) -> None:
+        await self._broadcast_json(
+            {
+                "type": "biometric_event",
+                "event_id": event_id,
+                "timestamp": update.timestamp,
+                "track_id": update.track_id,
+                "modality": update.modality,
+                "camera_id": update.camera_id,
+                "identity": update.identity,
+                "identity_confidence": update.identity_confidence,
+                "plate": update.plate,
+                "plate_raw": update.plate_raw,
+                "plate_confidence": update.plate_confidence,
+                "plate_format": update.plate_format,
+                "plate_whitelisted": update.plate_whitelisted,
+                "plate_owner": update.plate_owner,
+                "biometric_locked": update.biometric_locked,
+                "biometric_status": update.biometric_status,
+                "attempts_count": update.attempts_count,
+                "best_crop_id": update.best_crop_id,
+                "crop_url": f"/api/v1/biometrics/crops/{update.best_crop_id}" if update.best_crop_id else None,
+                "quality_score": update.quality_score,
+            }
+        )
+
+    def _get_biometrics_data_dir(self) -> Path:
+        return self.config.biometrics_data_dir or (self.config.data_dir / "biometrics")
+
+    def get_biometric_crop_store(self) -> Optional[BiometricCropStore]:
+        if self.biometric_coordinator is not None:
+            consensus = getattr(self.biometric_coordinator, "consensus", None)
+            store = getattr(consensus, "crop_store", None)
+            if store is not None:
+                return store
+        bio_dir = self._get_biometrics_data_dir()
+        if (bio_dir / "crops").is_dir():
+            if self._lazy_crop_store is None or self._lazy_crop_store.base_dir != bio_dir:
+                self._lazy_crop_store = BiometricCropStore(bio_dir)
+            return self._lazy_crop_store
+        return None
+
+    def get_face_recognizer(self) -> Optional[OnnxInsightFaceRecognizer]:
+        if self.biometric_coordinator is not None:
+            face_rec = getattr(self.biometric_coordinator, "face_recognizer", None)
+            if face_rec is not None and hasattr(face_rec, "is_ready") and face_rec.is_ready():
+                return face_rec
+        return None
+
+    def get_face_gallery(self) -> FaceGalleryIndex:
+        if self.biometric_coordinator is not None:
+            face_rec = getattr(self.biometric_coordinator, "face_recognizer", None)
+            gallery = getattr(face_rec, "gallery", None)
+            if gallery is not None:
+                return gallery
+        gal_path = _resolve_face_gallery_path(
+            self._get_biometrics_data_dir(),
+            self.config.biometrics_face_rec_model,
+        )
+        if self._lazy_face_gallery is None or self._lazy_face_gallery.gallery_path != gal_path:
+            self._lazy_face_gallery = FaceGalleryIndex(gal_path)
+        return self._lazy_face_gallery
+
+    def reload_face_gallery(self) -> FaceGalleryIndex:
+        gal_path = _resolve_face_gallery_path(
+            self._get_biometrics_data_dir(),
+            self.config.biometrics_face_rec_model,
+        )
+        gallery = self.get_face_gallery()
+        gallery.gallery_path = gal_path
+        if gal_path.is_file():
+            gallery.load(gal_path)
+        else:
+            with gallery._lock:
+                gallery._clear_locked()
+        return gallery
+
+    def get_plate_whitelist_matcher(self) -> PlateWhitelistMatcher:
+        if self.biometric_coordinator is not None:
+            consensus = getattr(self.biometric_coordinator, "consensus", None)
+            matcher = getattr(consensus, "whitelist_matcher", None)
+            if matcher is not None:
+                return matcher
+        whitelist_path = self.config.biometrics_plates_whitelist_file or (
+            self._get_biometrics_data_dir() / "plates_whitelist.json"
+        )
+        if self._lazy_whitelist_matcher is None or self._lazy_whitelist_matcher.json_path != whitelist_path:
+            self._lazy_whitelist_matcher = PlateWhitelistMatcher(whitelist_path)
+        return self._lazy_whitelist_matcher
+
+    def sync_plate_whitelist_to_matcher_and_json(self) -> list[dict[str, Any]]:
+        rows = self.repository.list_plate_whitelist()
+        matcher = self.get_plate_whitelist_matcher()
+        matcher.replace_all(
+            [
+                PlateWhitelistEntry(
+                    plate=str(r["plate"]),
+                    owner_name=str(r["owner_name"]),
+                    vehicle_label=r.get("vehicle_label"),
+                    notes=r.get("notes"),
+                    updated_at=float(r.get("updated_at") or 0.0),
+                )
+                for r in rows
+            ]
+        )
+        matcher.save_json()
+        return rows
+
+    @staticmethod
+    def sanitize_biometric_event_row(row: dict[str, Any]) -> dict[str, Any]:
+        item = {k: v for k, v in row.items() if k != "best_crop_relpath"}
+        crop_id = item.get("best_crop_id")
+        item["crop_url"] = f"/api/v1/biometrics/crops/{crop_id}" if crop_id else None
+        return item
+
+    async def propagate_biometric_review(
+        self,
+        *,
+        track_id: int,
+        modality: Literal["face", "alpr"],
+        camera_id: str,
+        event_id: int,
+        event_ts: float,
+        review_ts: float,
+        identity: Optional[str] = None,
+        identity_confidence: Optional[float] = None,
+        plate: Optional[str] = None,
+        plate_raw: Optional[str] = None,
+        plate_confidence: Optional[float] = None,
+        plate_format: Optional[str] = None,
+        plate_whitelisted: Optional[bool] = None,
+        plate_owner: Optional[str] = None,
+        best_crop_id: Optional[str] = None,
+        quality_score: float = 0.0,
+    ) -> int:
+        backfilled = self.repository.backfill_track_biometrics(
+            track_id,
+            min_timestamp=event_ts - 600.0,
+            identity=identity,
+            identity_confidence=identity_confidence,
+            plate=plate,
+            plate_confidence=plate_confidence,
+            plate_whitelisted=plate_whitelisted,
+            plate_owner=plate_owner,
+            biometric_locked=True,
+            best_crop_id=best_crop_id,
+        )
+
+        patch_fields: dict[str, Any] = {"biometric_locked": True, "biometric_status": "locked"}
+        if identity is not None:
+            patch_fields["identity"] = identity
+        if identity_confidence is not None:
+            patch_fields["identity_confidence"] = float(identity_confidence)
+        if plate is not None:
+            patch_fields["plate"] = plate
+        if plate_confidence is not None:
+            patch_fields["plate_confidence"] = float(plate_confidence)
+        if plate_whitelisted is not None:
+            patch_fields["plate_whitelisted"] = plate_whitelisted
+        if plate_owner is not None:
+            patch_fields["plate_owner"] = plate_owner
+        if best_crop_id is not None:
+            patch_fields["best_crop_id"] = best_crop_id
+
+        async with self._persist_lock:
+            self._pending_persist = [
+                item.model_copy(update=patch_fields) if item.track_id == track_id else item
+                for item in self._pending_persist
+            ]
+
+        manual_update = TrackBiometricUpdate(
+            track_id=track_id,
+            modality=modality,
+            identity=identity,
+            identity_confidence=float(identity_confidence or 0.0),
+            plate=plate,
+            plate_raw=plate_raw,
+            plate_confidence=float(plate_confidence or 0.0),
+            plate_format=plate_format,
+            plate_whitelisted=plate_whitelisted,
+            plate_owner=plate_owner,
+            biometric_locked=True,
+            biometric_status="locked",
+            attempts_count=0,
+            best_crop_id=best_crop_id,
+            quality_score=quality_score,
+            camera_id=camera_id,
+            timestamp=review_ts,
+        )
+
+        async with self._pipeline_lock:
+            updated_track = self.tracker.apply_biometric_result(manual_update)
+            active_tracks = self.tracker.get_active_tracks()
+
+        if updated_track is not None:
+            await self.broadcast_frame(active_tracks, review_ts)
+            await self.broadcast_biometric_event(manual_update, event_id=event_id)
+
+        return backfilled
+
+    def get_biometric_gallery_summary(self) -> list[dict[str, Any]]:
+        gallery_items = self.get_face_gallery().list_identities()
+
+        db_meta = {
+            str(item["name"]).lower(): item
+            for item in self.repository.list_face_identities_meta()
+        }
+        merged_by_key: dict[str, dict[str, Any]] = {}
+        for g in gallery_items:
+            name = str(g["name"])
+            key = name.lower()
+            meta = db_meta.get(key, {})
+            merged_by_key[key] = {
+                "name": name,
+                "samples_count": int(g.get("samples_count", 0)),
+                "events_count": int(meta.get("events_count", 0)),
+                "last_seen": meta.get("last_seen"),
+                "enrolled": True,
+            }
+        for key, meta in db_meta.items():
+            if key not in merged_by_key:
+                merged_by_key[key] = {
+                    "name": str(meta["name"]),
+                    "samples_count": int(meta.get("samples_count", 0)),
+                    "events_count": int(meta.get("events_count", 0)),
+                    "last_seen": meta.get("last_seen"),
+                    "enrolled": int(meta.get("samples_count", 0)) > 0,
+                }
+        return sorted(merged_by_key.values(), key=lambda x: str(x["name"]).lower())
+
+    def get_biometric_status_summary(self) -> dict[str, Any]:
+        diag: dict[str, Any] = {"enabled": False, "running": False}
+        if self.biometric_coordinator is not None:
+            diag = {"enabled": True, **self.biometric_coordinator.get_diagnostics()}
+            snap = getattr(self.biometric_coordinator, "snapshot_provider", None)
+            if snap is not None and hasattr(snap, "get_diagnostics"):
+                diag["snapshot_breakers"] = snap.get_diagnostics()
+        identities = self.get_biometric_gallery_summary()
+        plates = self.repository.list_plate_whitelist()
+        crop_store = self.get_biometric_crop_store()
+        crop_stats = crop_store.get_usage_stats() if crop_store is not None else {"files_count": 0, "total_mb": 0.0}
+        diag["gallery_identities_count"] = len(identities)
+        diag["gallery_samples_count"] = sum(int(item.get("samples_count", 0)) for item in identities)
+        diag["plates_whitelist_count"] = len(plates)
+        diag["crop_storage"] = {
+            **crop_stats,
+            "retention_days": self.config.biometrics_crop_retention_days,
+            "max_disk_mb": self.config.biometrics_crop_max_mb,
+        }
+        return diag
+
+    async def _handle_biometric_update(self, update: TrackBiometricUpdate) -> None:
+        async with self._pipeline_lock:
+            updated_track = self.tracker.apply_biometric_result(update)
+            active_tracks = self.tracker.get_active_tracks()
+
+        if updated_track is None:
+            return
+
+        event_id: Optional[int] = None
+        if update.biometric_status in ("locked", "unknown"):
+            loop = asyncio.get_running_loop()
+            ev_payload = {
+                "track_id": update.track_id,
+                "modality": update.modality,
+                "camera_id": update.camera_id,
+                "timestamp": update.timestamp,
+                "identity": update.identity,
+                "identity_confidence": update.identity_confidence,
+                "plate": update.plate,
+                "plate_raw": update.plate_raw,
+                "plate_confidence": update.plate_confidence,
+                "plate_format": update.plate_format,
+                "plate_whitelisted": update.plate_whitelisted,
+                "plate_owner": update.plate_owner,
+                "biometric_locked": update.biometric_locked,
+                "biometric_status": update.biometric_status,
+                "attempts_count": update.attempts_count,
+                "quality_score": update.quality_score,
+                "best_crop_id": update.best_crop_id,
+                "best_crop_relpath": update.best_crop_relpath,
+            }
+            event_id = await loop.run_in_executor(None, self.repository.record_biometric_event, ev_payload)
+            async with self._persist_lock:
+                patch_fields = {
+                    "identity": updated_track.identity,
+                    "identity_confidence": updated_track.identity_confidence,
+                    "plate": updated_track.plate,
+                    "plate_confidence": updated_track.plate_confidence,
+                    "plate_whitelisted": updated_track.plate_whitelisted,
+                    "plate_owner": updated_track.plate_owner,
+                    "biometric_locked": updated_track.biometric_locked,
+                    "biometric_status": updated_track.biometric_status,
+                    "best_crop_id": updated_track.best_crop_id,
+                }
+                self._pending_persist = [
+                    item.model_copy(update=patch_fields) if item.track_id == update.track_id else item
+                    for item in self._pending_persist
+                ]
+            await loop.run_in_executor(
+                None,
+                lambda: self.repository.backfill_track_biometrics(
+                    update.track_id,
+                    min_timestamp=update.timestamp - 600.0,
+                    identity=updated_track.identity,
+                    identity_confidence=updated_track.identity_confidence,
+                    plate=updated_track.plate,
+                    plate_confidence=updated_track.plate_confidence,
+                    plate_whitelisted=updated_track.plate_whitelisted,
+                    plate_owner=updated_track.plate_owner,
+                    biometric_locked=updated_track.biometric_locked,
+                    best_crop_id=updated_track.best_crop_id,
+                ),
+            )
+
+        persistable = self._select_tracks_to_persist(active_tracks)
+        if persistable:
+            async with self._persist_lock:
+                self._pending_persist.extend(persistable)
+
+        await self.broadcast_frame(active_tracks, update.timestamp)
+        if update.biometric_status in ("locked", "unknown"):
+            await self.broadcast_biometric_event(update, event_id=event_id)
 
     async def _broadcast_json(self, message: dict[str, Any]) -> None:
         if not self.ws_clients:
@@ -583,13 +1039,190 @@ class SpatialPipelineService:
             try:
                 await self.flush_pending_to_db()
                 if time.monotonic() - last_prune > 3600:
-                    cutoff = time.time() - self.config.db_retention_days * 86400
-                    self.repository.prune_older_than(cutoff)
+                    loop = asyncio.get_running_loop()
+                    cutoff_tracks = time.time() - self.config.db_retention_days * 86400
+                    await loop.run_in_executor(None, self.repository.prune_older_than, cutoff_tracks)
+
+                    cutoff_bio = time.time() - self.config.biometrics_crop_retention_days * 86400
+                    _del_events, relpaths = await loop.run_in_executor(
+                        None, self.repository.prune_biometric_events_older_than, cutoff_bio
+                    )
+                    crop_store = self.get_biometric_crop_store()
+                    if crop_store is not None:
+                        await loop.run_in_executor(
+                            None,
+                            lambda: crop_store.prune(
+                                retention_days=self.config.biometrics_crop_retention_days,
+                                max_disk_mb=self.config.biometrics_crop_max_mb,
+                                extra_relpaths=relpaths,
+                            ),
+                        )
                     last_prune = time.monotonic()
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 logger.warning("SQLite WAL flush warning: %s", exc)
+
+
+def _resolve_face_gallery_path(bio_data_dir: Path, rec_model_name: str) -> Path:
+    default_path = bio_data_dir / "face_gallery.npz"
+    if default_path.is_file():
+        return default_path
+    if "r50" in (rec_model_name or "").lower():
+        r50_path = bio_data_dir / "face_gallery_r50.npz"
+        if r50_path.is_file():
+            return r50_path
+    mbf_path = bio_data_dir / "face_gallery_mbf.npz"
+    if mbf_path.is_file():
+        return mbf_path
+    return default_path
+
+
+def _resolve_alpr_model_files(alpr_dir: Path, det_name: str, ocr_name: str) -> tuple[Path, Path, Path]:
+    det_direct = alpr_dir / det_name
+    if det_direct.is_file():
+        det_path = det_direct
+    else:
+        det_sub = alpr_dir / det_name
+        det_named = det_sub / f"{det_name}.onnx"
+        if det_named.is_file():
+            det_path = det_named
+        else:
+            onnx_cands = sorted(det_sub.glob("*.onnx")) if det_sub.is_dir() else []
+            det_path = onnx_cands[0] if onnx_cands else det_named
+
+    ocr_sub = alpr_dir / ocr_name
+    ocr_onnx_cands = sorted(ocr_sub.glob("*.onnx")) if ocr_sub.is_dir() else []
+    ocr_yaml_cands = sorted(list(ocr_sub.glob("*.yaml")) + list(ocr_sub.glob("*.yml"))) if ocr_sub.is_dir() else []
+    ocr_path = ocr_onnx_cands[0] if ocr_onnx_cands else (ocr_sub / f"{ocr_name}.onnx")
+    ocr_cfg_path = ocr_yaml_cands[0] if ocr_yaml_cands else (ocr_sub / f"{ocr_name}.yaml")
+    return det_path, ocr_path, ocr_cfg_path
+
+
+def _build_biometric_coordinator(
+    cfg: SpatialServerConfig,
+    optical_models: dict[str, ICameraOpticalModel],
+    camera_manifest_meta: dict[str, dict[str, Any]],
+    *,
+    repository: Optional[ITrackRepository] = None,
+) -> BiometricWorkerService:
+    bio_data_dir = cfg.biometrics_data_dir or (cfg.data_dir / "biometrics")
+    bio_data_dir.mkdir(parents=True, exist_ok=True)
+    bio_models_dir = cfg.models_dir / "biometrics"
+
+    stream_candidates_by_cam: dict[str, list[str]] = {}
+    for cam_id in optical_models:
+        meta = camera_manifest_meta.get(cam_id) or {}
+        slug = re.sub(r"^cam_", "", cam_id, flags=re.IGNORECASE).lower()
+        snap_stream = str(meta.get("snap_stream_id") or "").strip() or f"{slug}_snap"
+        main_stream = str(meta.get("stream_id") or "").strip() or f"{slug}_main"
+        cands = [snap_stream]
+        if main_stream and main_stream != snap_stream:
+            cands.append(main_stream)
+        stream_candidates_by_cam[cam_id] = cands
+
+    snapshot_provider = Go2RtcSnapshotProvider(
+        cfg.go2rtc_http_base_url,
+        stream_candidates_by_cam=stream_candidates_by_cam,
+        timeout_s=cfg.biometrics_snapshot_timeout_s,
+        panoramic_max_decode_width=cfg.biometrics_panoramic_max_width,
+    )
+    crop_store = BiometricCropStore(bio_data_dir)
+    whitelist_path = cfg.biometrics_plates_whitelist_file or (bio_data_dir / "plates_whitelist.json")
+    whitelist_matcher = PlateWhitelistMatcher(whitelist_path)
+    if repository is not None:
+        db_plates = {row["plate"]: row for row in repository.list_plate_whitelist()}
+        for entry in whitelist_matcher.list_entries():
+            if entry.plate not in db_plates:
+                row = repository.upsert_plate_whitelist(
+                    entry.plate,
+                    entry.owner_name,
+                    vehicle_label=entry.vehicle_label,
+                    notes=entry.notes,
+                    updated_at=entry.updated_at or time.time(),
+                )
+                db_plates[entry.plate] = row
+        if db_plates:
+            whitelist_matcher.replace_all(
+                [
+                    PlateWhitelistEntry(
+                        plate=str(r["plate"]),
+                        owner_name=str(r["owner_name"]),
+                        vehicle_label=r.get("vehicle_label"),
+                        notes=r.get("notes"),
+                        updated_at=float(r.get("updated_at") or 0.0),
+                    )
+                    for r in db_plates.values()
+                ]
+            )
+    consensus = TrackBiometricConsensusManager(
+        crop_store=crop_store,
+        whitelist_matcher=whitelist_matcher,
+        face_consensus_k=cfg.biometrics_face_consensus_k,
+        alpr_consensus_k=cfg.biometrics_alpr_consensus_k,
+        min_eval_interval_s=cfg.biometrics_min_eval_interval_s,
+        max_fast_attempts=cfg.biometrics_max_attempts_per_track,
+        unknown_backoff_s=cfg.biometrics_unknown_backoff_s,
+        whitelist_max_distance=cfg.biometrics_alpr_whitelist_max_dist,
+    )
+
+    cam_rules: dict[str, dict[str, float]] = {}
+    for cam_id, modality, max_range_m in cfg.biometrics_camera_rules:
+        cam_rules.setdefault(cam_id, {})[modality] = max_range_m
+
+    gate = BiometricEligibilityGate(
+        face_enabled=cfg.biometrics_face_enabled,
+        alpr_enabled=cfg.biometrics_alpr_enabled,
+        face_max_range_m=cfg.biometrics_face_max_range_m,
+        alpr_max_range_m=cfg.biometrics_alpr_max_range_m,
+        panoramic_edge_margin_u=cfg.biometrics_panoramic_edge_margin_u,
+        camera_rules=cam_rules,
+    )
+
+    face_recognizer: Optional[OnnxInsightFaceRecognizer] = None
+    if cfg.biometrics_face_enabled:
+        gallery_path = _resolve_face_gallery_path(bio_data_dir, cfg.biometrics_face_rec_model)
+        gallery = FaceGalleryIndex(gallery_path)
+        face_dir = bio_models_dir / "face"
+        face_recognizer = OnnxInsightFaceRecognizer(
+            face_dir / cfg.biometrics_face_det_model,
+            face_dir / cfg.biometrics_face_rec_model,
+            gallery,
+            provider_name=cfg.biometrics_onnx_provider,
+            intra_threads=cfg.biometrics_onnx_intra_threads,
+            inter_threads=cfg.biometrics_onnx_inter_threads,
+            min_face_width_px=cfg.biometrics_face_min_width_px,
+            min_laplacian=cfg.biometrics_face_min_laplacian,
+            max_yaw_ratio=cfg.biometrics_face_max_yaw_ratio,
+            match_threshold=cfg.biometrics_face_match_threshold,
+            margin_threshold=cfg.biometrics_face_margin_threshold,
+        )
+
+    plate_recognizer: Optional[OnnxAlprRecognizer] = None
+    if cfg.biometrics_alpr_enabled:
+        det_path, ocr_path, ocr_cfg_path = _resolve_alpr_model_files(
+            bio_models_dir / "alpr",
+            cfg.biometrics_alpr_det_model,
+            cfg.biometrics_alpr_ocr_model,
+        )
+        plate_recognizer = OnnxAlprRecognizer(
+            det_path,
+            ocr_path,
+            ocr_cfg_path,
+            provider_name=cfg.biometrics_onnx_provider,
+            intra_threads=cfg.biometrics_onnx_intra_threads,
+            inter_threads=cfg.biometrics_onnx_inter_threads,
+            min_plate_width_px=cfg.biometrics_alpr_min_plate_width_px,
+        )
+
+    return BiometricWorkerService(
+        snapshot_provider=snapshot_provider,
+        consensus=consensus,
+        gate=gate,
+        face_recognizer=face_recognizer,
+        plate_recognizer=plate_recognizer,
+        queue_maxsize=cfg.biometrics_queue_maxsize,
+    )
 
 
 def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> SpatialPipelineService:
@@ -616,16 +1249,25 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
             camera_manifest_meta[cam_id] = cam_data
 
     raycaster = TrimeshGroundRaycaster(cfg.glb_path, cfg.manifest_path)
+    repository = SQLiteWALTrackRepository(cfg.sqlite_db_path)
+
+    biometric_coordinator: Optional[IBiometricCoordinator] = None
+    if cfg.biometrics_enabled:
+        biometric_coordinator = _build_biometric_coordinator(
+            cfg,
+            optical_models,
+            camera_manifest_meta,
+            repository=repository,
+        )
 
     if cfg.face_webhook_url:
         identity_resolver: IIdentityResolver = ExternalWebhookIdentityResolver(cfg.face_webhook_url)
-    elif (cfg.models_dir / "face_gallery").exists():
+    elif not cfg.biometrics_enabled and (cfg.models_dir / "face_gallery").exists():
         identity_resolver = OpenVINOInsightFaceResolver(cfg.models_dir / "face_gallery")
     else:
         identity_resolver = NoOpIdentityResolver()
 
-    tracker = Kalman3DMultiTracker()
-    repository = SQLiteWALTrackRepository(cfg.sqlite_db_path)
+    tracker = Kalman3DMultiTracker(initial_next_track_id=repository.get_max_track_id() + 1)
 
     return SpatialPipelineService(
         config=cfg,
@@ -637,6 +1279,7 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
         calibration_solver=calib_solver,
         camera_manifest_meta=camera_manifest_meta,
         saved_calibration_overrides=saved_overrides,
+        biometric_coordinator=biometric_coordinator,
     )
 
 
@@ -737,8 +1380,12 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
     ) -> dict[str, Any]:
         rc = service.raycaster
         repo = service.repository
+        bio_diag: dict[str, Any] = {"enabled": False, "running": False}
+        if service.biometric_coordinator is not None:
+            bio_diag = {"enabled": True, **service.biometric_coordinator.get_diagnostics()}
         return {
             "status": "ok",
+            "dev_mode": service.config.dev_mode,
             "ingestion_mode": service.ingestion_mode,
             "source_details": [s.status_details() for s in service.active_sources],
             "active_cameras": list(service.optical_models.keys()),
@@ -753,6 +1400,7 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "persist_saved_count": service.persist_saved_count,
             "persist_skipped_count": service.persist_skipped_count,
             "last_detection": service.last_detection_info,
+            "biometrics": bio_diag,
         }
 
     @app.get("/api/v1/tracks")
@@ -765,6 +1413,9 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         min_z: Optional[float] = Query(default=None),
         max_z: Optional[float] = Query(default=None),
         limit: int = Query(default=5000, ge=1, le=20000),
+        identity: Optional[str] = Query(default=None),
+        plate: Optional[str] = Query(default=None),
+        unknown_only: bool = Query(default=False),
         _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> dict[str, Any]:
         cls_list = [c.strip() for c in classes.split(",") if c.strip()] if classes else None
@@ -772,7 +1423,16 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         if None not in (min_x, max_x, min_z, max_z):
             zone_bbox = (float(min_x), float(max_x), float(min_z), float(max_z))
 
-        rows = service.repository.query_time_range(t_start, t_end, classes=cls_list, zone_bbox=zone_bbox, limit=limit)
+        rows = service.repository.query_time_range(
+            t_start,
+            t_end,
+            classes=cls_list,
+            zone_bbox=zone_bbox,
+            limit=limit,
+            identity=identity,
+            plate=plate,
+            unknown_only=unknown_only,
+        )
         t_min = rows[0]["timestamp"] if rows else None
         t_max = rows[-1]["timestamp"] if rows else None
         return {
@@ -781,6 +1441,344 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "t_min": t_min,
             "t_max": t_max,
             "detections": rows,
+        }
+
+    @app.get("/api/v1/biometrics/status")
+    async def get_biometrics_status(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", **service.get_biometric_status_summary()}
+
+    @app.get("/api/v1/biometrics/events")
+    async def get_biometrics_events(
+        response: Response,
+        t_start: Optional[float] = Query(default=None),
+        t_end: Optional[float] = Query(default=None),
+        modality: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        identity: Optional[str] = Query(default=None),
+        plate: Optional[str] = Query(default=None),
+        track_id: Optional[int] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=1000),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        rows = service.repository.query_biometric_events(
+            t_start,
+            t_end,
+            modality=modality,
+            status=status,
+            identity=identity,
+            plate=plate,
+            track_id=track_id,
+            limit=limit,
+        )
+        sanitized = [service.sanitize_biometric_event_row(row) for row in rows]
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(sanitized), "events": sanitized}
+
+    @app.get("/api/v1/biometrics/crops/{crop_id}")
+    async def get_biometrics_crop_image(
+        crop_id: str,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> FileResponse:
+        if not BiometricCropStore.is_valid_crop_id(crop_id):
+            raise HTTPException(status_code=400, detail="crop_id non valido")
+        crop_store = service.get_biometric_crop_store()
+        if crop_store is None:
+            raise HTTPException(status_code=404, detail="Crop biometrico non trovato")
+        known_relpath = service.repository.get_crop_relpath(crop_id)
+        crop_path = crop_store.resolve_crop_path(crop_id, known_relpath=known_relpath)
+        if crop_path is None or not crop_path.is_file():
+            raise HTTPException(status_code=404, detail="Crop biometrico non trovato")
+        return FileResponse(
+            path=crop_path,
+            media_type="image/jpeg",
+            filename=crop_path.name,
+            headers={
+                "Cache-Control": "private, max-age=300",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get("/api/v1/biometrics/identities")
+    async def get_biometrics_identities(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        identities = service.get_biometric_gallery_summary()
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(identities), "identities": identities}
+
+    @app.get("/api/v1/biometrics/plates")
+    async def get_biometrics_plates(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        plates = service.repository.list_plate_whitelist()
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(plates), "plates": plates}
+
+    @app.post("/api/v1/biometrics/events/{event_id}/assign")
+    async def assign_biometric_event_hitl(
+        event_id: int,
+        payload: BiometricEventAssignRequest,
+        response: Response,
+        admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        ev = service.repository.get_biometric_event(event_id)
+        if ev is None:
+            raise HTTPException(status_code=404, detail="Evento biometrico non trovato")
+
+        reviewer = re.sub(r"[\r\n]+", " ", (admin.name or admin.user_id or "admin")).strip() or "admin"
+        now_ts = time.time()
+        modality = str(ev["modality"]).lower()
+        enrolled_sample = False
+        enroll_note: Optional[str] = None
+        backfilled_rows = 0
+
+        if modality == "face":
+            clean_identity = re.sub(r"[\r\n\t]+", " ", (payload.identity or "")).strip()
+            if not clean_identity or len(clean_identity) > 64:
+                raise HTTPException(status_code=400, detail="identity non valida")
+
+            if payload.enroll_crop:
+                crop_id = ev.get("best_crop_id")
+                crop_store = service.get_biometric_crop_store()
+                face_rec = service.get_face_recognizer()
+                if face_rec is None:
+                    enroll_note = "Riconoscitore volti non attivo; etichetta evento salvata senza embedding"
+                elif not crop_id or crop_store is None:
+                    enroll_note = "Crop non disponibile; etichetta evento salvata senza embedding"
+                else:
+                    crop_path = crop_store.resolve_crop_path(
+                        str(crop_id),
+                        known_relpath=ev.get("best_crop_relpath"),
+                    )
+                    if crop_path is None or not crop_path.is_file():
+                        enroll_note = "File crop non trovato; etichetta evento salvata senza embedding"
+                    else:
+                        import cv2
+
+                        raw_bytes = crop_path.read_bytes()
+                        crop_bgr = cv2.imdecode(np.frombuffer(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        if crop_bgr is None or crop_bgr.size == 0:
+                            enroll_note = "Crop JPEG non decodificabile; etichetta evento salvata senza embedding"
+                        else:
+                            loop = asyncio.get_running_loop()
+                            extracted = await loop.run_in_executor(
+                                None,
+                                lambda: face_rec.extract_face_embedding(crop_bgr, bypass_quality_gate=True),
+                            )
+                            if extracted is not None:
+                                emb, _metrics, _thumb = extracted
+                                quality = max(0.5, float(ev.get("quality_score") or 0.7))
+                                service.get_face_gallery().add_embedding(
+                                    clean_identity,
+                                    emb,
+                                    quality=quality,
+                                    persist=True,
+                                )
+                                service.repository.add_face_embedding(
+                                    clean_identity,
+                                    service.config.biometrics_face_rec_model,
+                                    emb.astype(np.float32).tobytes(),
+                                    quality_score=quality,
+                                    source="hitl",
+                                    created_at=now_ts,
+                                )
+                                enrolled_sample = True
+                            else:
+                                enroll_note = "Volto non rilevabile nel crop; etichetta evento salvata senza embedding"
+
+            updated = service.repository.update_biometric_event_review(
+                event_id,
+                identity=clean_identity,
+                identity_confidence=1.0,
+                biometric_locked=True,
+                biometric_status="locked",
+                reviewed_by=reviewer,
+                reviewed_at=now_ts,
+            )
+            backfilled_rows = await service.propagate_biometric_review(
+                track_id=int(ev["track_id"]),
+                modality="face",
+                camera_id=str(ev["camera_id"]),
+                event_id=event_id,
+                event_ts=float(ev["timestamp"]),
+                review_ts=now_ts,
+                identity=clean_identity,
+                identity_confidence=1.0,
+                best_crop_id=ev.get("best_crop_id"),
+                quality_score=float(ev.get("quality_score") or 0.0),
+            )
+        elif modality == "alpr":
+            raw_plate = payload.plate or ev.get("plate") or ev.get("plate_raw") or ""
+            clean_plate = PlateWhitelistMatcher.normalize_key(raw_plate)
+            if len(clean_plate) < 4 or len(clean_plate) > 12:
+                raise HTTPException(status_code=400, detail="Targa non valida")
+
+            if payload.add_to_whitelist:
+                clean_owner = re.sub(r"[\r\n\t]+", " ", (payload.owner_name or "")).strip()
+                if not clean_owner:
+                    raise HTTPException(status_code=400, detail="owner_name obbligatorio per aggiungere alla whitelist")
+                service.repository.upsert_plate_whitelist(
+                    clean_plate,
+                    clean_owner,
+                    vehicle_label=payload.vehicle_label,
+                    notes=payload.notes,
+                    updated_at=now_ts,
+                )
+                service.sync_plate_whitelist_to_matcher_and_json()
+                wl_whitelisted = True
+                wl_owner = clean_owner
+            else:
+                matcher = service.get_plate_whitelist_matcher()
+                if not matcher.list_entries() and service.repository.list_plate_whitelist():
+                    service.sync_plate_whitelist_to_matcher_and_json()
+                wl_entry, _dist = matcher.match(clean_plate, max_distance=0)
+                wl_whitelisted = bool(wl_entry is not None)
+                wl_owner = wl_entry.owner_name if wl_entry is not None else None
+
+            updated = service.repository.update_biometric_event_review(
+                event_id,
+                identity=wl_owner,
+                identity_confidence=1.0 if wl_owner else None,
+                plate=clean_plate,
+                plate_confidence=1.0,
+                plate_whitelisted=wl_whitelisted,
+                plate_owner=wl_owner,
+                biometric_locked=True,
+                biometric_status="locked",
+                reviewed_by=reviewer,
+                reviewed_at=now_ts,
+            )
+            backfilled_rows = await service.propagate_biometric_review(
+                track_id=int(ev["track_id"]),
+                modality="alpr",
+                camera_id=str(ev["camera_id"]),
+                event_id=event_id,
+                event_ts=float(ev["timestamp"]),
+                review_ts=now_ts,
+                identity=wl_owner,
+                identity_confidence=1.0 if wl_owner else None,
+                plate=clean_plate,
+                plate_raw=ev.get("plate_raw") or clean_plate,
+                plate_confidence=1.0,
+                plate_format=ev.get("plate_format"),
+                plate_whitelisted=wl_whitelisted,
+                plate_owner=wl_owner,
+                best_crop_id=ev.get("best_crop_id"),
+                quality_score=float(ev.get("quality_score") or 0.0),
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Modalita evento non supportata: {modality}")
+
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "event": service.sanitize_biometric_event_row(updated or ev),
+            "enrolled_sample": enrolled_sample,
+            "enroll_note": enroll_note,
+            "backfilled_rows": backfilled_rows,
+        }
+
+    @app.post("/api/v1/biometrics/identities/reload")
+    async def reload_biometrics_identities(
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        service.reload_face_gallery()
+        identities = service.get_biometric_gallery_summary()
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(identities), "identities": identities}
+
+    @app.delete("/api/v1/biometrics/identities/{person_name}")
+    async def delete_biometrics_identity(
+        person_name: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        clean_name = re.sub(r"[\r\n\t]+", " ", person_name or "").strip()
+        if not clean_name:
+            raise HTTPException(status_code=400, detail="Nome persona non valido")
+
+        gallery = service.get_face_gallery()
+        with gallery._lock:
+            target_name = next((n for n in gallery.person_names if n.lower() == clean_name.lower()), clean_name)
+        removed_gallery = gallery.remove_person(target_name, persist=True)
+        removed_db = service.repository.delete_face_embeddings(clean_name)
+        if not removed_gallery and removed_db == 0:
+            raise HTTPException(status_code=404, detail=f"Identita '{clean_name}' non trovata")
+
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "deleted": target_name if removed_gallery else clean_name,
+            "removed_from_gallery": removed_gallery,
+            "removed_db_embeddings": removed_db,
+        }
+
+    @app.put("/api/v1/biometrics/plates")
+    async def upsert_biometrics_plate(
+        payload: PlateWhitelistUpsertRequest,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        try:
+            entry = service.repository.upsert_plate_whitelist(
+                payload.plate,
+                payload.owner_name,
+                vehicle_label=payload.vehicle_label,
+                notes=payload.notes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        plates = service.sync_plate_whitelist_to_matcher_and_json()
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "entry": entry, "count": len(plates), "plates": plates}
+
+    @app.delete("/api/v1/biometrics/plates/{plate}")
+    async def delete_biometrics_plate(
+        plate: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        key = PlateWhitelistMatcher.normalize_key(plate)
+        if len(key) < 4:
+            raise HTTPException(status_code=400, detail="Formato targa non valido")
+        deleted = service.repository.delete_plate_whitelist(key)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Targa '{key}' non presente in whitelist")
+        plates = service.sync_plate_whitelist_to_matcher_and_json()
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "deleted": key, "count": len(plates), "plates": plates}
+
+    @app.post("/api/v1/biometrics/crops/prune")
+    async def prune_biometrics_crops(
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        cutoff_bio = time.time() - service.config.biometrics_crop_retention_days * 86400
+        deleted_events, relpaths = service.repository.prune_biometric_events_older_than(cutoff_bio)
+        crop_store = service.get_biometric_crop_store()
+        if crop_store is not None:
+            deleted_files = crop_store.prune(
+                retention_days=service.config.biometrics_crop_retention_days,
+                max_disk_mb=service.config.biometrics_crop_max_mb,
+                extra_relpaths=relpaths,
+            )
+            stats = crop_store.get_usage_stats()
+        else:
+            deleted_files = 0
+            stats = {"files_count": 0, "total_mb": 0.0}
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "deleted_events": deleted_events,
+            "deleted_files": deleted_files,
+            "crop_storage": stats,
         }
 
     @app.get("/api/v1/timeline-density")
@@ -949,6 +1947,7 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         details = await service.set_ingestion_mode(req.mode)
         return {
             "status": "ok",
+            "dev_mode": service.config.dev_mode,
             "ingestion_mode": service.ingestion_mode,
             "source_details": details,
         }

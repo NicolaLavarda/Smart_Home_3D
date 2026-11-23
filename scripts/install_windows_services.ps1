@@ -71,6 +71,8 @@ if (-not (Test-Path $DistIndex)) {
 }
 
 New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
+$BiometricsDataDir = Join-Path $RepoRoot "spatial_server\data\biometrics"
+New-Item -ItemType Directory -Force -Path $BiometricsDataDir | Out-Null
 
 # 4. Parsing .env (UTF8, gestione export, commenti, virgolette esterne, = / ! / # interni)
 $EnvMap = [ordered]@{}
@@ -126,6 +128,26 @@ foreach ($entry in $EnvMap.GetEnumerator()) {
 }
 $SpatialMap["SPATIAL_SERVER_HOST"] = "127.0.0.1"
 $SpatialMap["SPATIAL_SERVER_PORT"] = $SpatialPort
+if (-not $SpatialMap.Contains("OMP_NUM_THREADS") -or [string]::IsNullOrWhiteSpace($SpatialMap["OMP_NUM_THREADS"])) {
+    # Mantiene al massimo 2 thread OpenMP/ONNX per preservare risorse alla VM Home Assistant su i5-6400 (4 core)
+    $SpatialMap["OMP_NUM_THREADS"] = "2"
+}
+
+if ($SpatialMap.Contains("SH3D_DEV_MODE") -and $SpatialMap["SH3D_DEV_MODE"].Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+    Write-Host "[WARN] SH3D_DEV_MODE=true rilevato in .env! Sul PC Fisso di produzione imposta SH3D_DEV_MODE=false." -ForegroundColor Yellow
+}
+
+$BioEnabledVal = if ($SpatialMap.Contains("BIOMETRICS_ENABLED")) {
+    $SpatialMap["BIOMETRICS_ENABLED"].Trim().ToLowerInvariant()
+} else {
+    "false"
+}
+if ($BioEnabledVal -eq "true") {
+    $BioModelsDir = Join-Path $RepoRoot "spatial_server\models\biometrics"
+    if (-not (Test-Path $BioModelsDir)) {
+        Write-Host "[WARN] BIOMETRICS_ENABLED=true ma cartella modelli non trovata ($BioModelsDir). Esegui setup_windows_node.ps1 -WithBiometrics o tools\download_biometric_models.py." -ForegroundColor Yellow
+    }
+}
 
 $SpatialEnv = New-Object System.Collections.Generic.List[string]
 foreach ($entry in $SpatialMap.GetEnumerator()) {

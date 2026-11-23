@@ -1,10 +1,11 @@
-﻿<#
+<#
 .SYNOPSIS
 Setup one-click ambiente di produzione nativo Windows 10 (Zero Docker) per Smart Home 3D Digital Twin.
 Eseguibile sia sul portatile di sviluppo che sul PC Fisso server (Intel Core i5-6400 / 8 GB RAM / Intel HD 530).
 #>
 param(
     [switch]$WithOpenVINO,
+    [switch]$WithBiometrics,
     [switch]$InstallServices,
     [string]$LanCidr = "192.168.86.0/24"
 )
@@ -242,6 +243,16 @@ if ($WithOpenVINO) {
     & $VenvPy -m pip install "openvino>=2024.4.0"
 }
 
+if ($WithBiometrics) {
+    $BioDownloadScript = Join-Path $RepoRoot "tools\download_biometric_models.py"
+    if (Test-Path $BioDownloadScript) {
+        Write-Host "[*] Download modelli ONNX Biometria (Face Recognition SCRFD/MobileFaceNet + ALPR IT/EU)..." -ForegroundColor Cyan
+        & $VenvPy $BioDownloadScript
+    } else {
+        Write-Host "[WARN] Script tools\download_biometric_models.py non trovato." -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
 Write-Host "=== SETUP COMPLETATO CON SUCCESSO! ===" -ForegroundColor Green
 Write-Host "1) Verifica in .env le credenziali Reolink: REOLINK_CARRAIO_IP / REOLINK_CARRAIO_USER / REOLINK_CARRAIO_PASS"
@@ -249,14 +260,15 @@ Write-Host "2) Per PRODUZIONE (Tailscale Serve + OAuth2 HA):"
 Write-Host "   - Imposta VITE_HA_PUBLIC_URL=https://<pc-fisso>.<tailnet>.ts.net:8443 e lascia VITE_HA_TOKEN= vuoto"
 Write-Host "   - Imposta SPATIAL_SERVER_HOST=127.0.0.1, SPATIAL_AUTH_REQUIRED=true, SPATIAL_ALLOWED_ORIGINS=https://<pc-fisso>.<tailnet>.ts.net"
 Write-Host "   - Imposta SPATIAL_SESSION_SECRET, GO2RTC_CANDIDATE_LAN=<IP_LAN>:8555 e GO2RTC_CANDIDATE_TAILSCALE=<IP_TAILSCALE>:8555"
-Write-Host "3) Compila il frontend PWA di produzione: npm.cmd install && npm.cmd run build"
-Write-Host "4) Registra i servizi NSSM e Firewall (PowerShell Amministratore):"
+Write-Host "3) (Opzionale - Biometria locale) Scarica modelli con -WithBiometrics, genera la galleria volti (.venv\Scripts\python.exe tools\enroll_faces.py), valida con tools\benchmark_biometrics.py e imposta BIOMETRICS_ENABLED=true in .env"
+Write-Host "4) Compila il frontend PWA di produzione: npm.cmd install && npm.cmd run build"
+Write-Host "5) Registra i servizi NSSM e Firewall (PowerShell Amministratore):"
 Write-Host "   powershell -ExecutionPolicy Bypass -File scripts\install_windows_services.ps1 -LanCidr $LanCidr"
-Write-Host "5) Esponi con Tailscale Serve (PowerShell Amministratore):"
+Write-Host "6) Esponi con Tailscale Serve (PowerShell Amministratore):"
 Write-Host "   tailscale serve --bg 8080"
 Write-Host "   netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=8123 connectaddress=192.168.86.24 connectport=8123"
 Write-Host "   tailscale serve --bg --https=8443 8123"
-Write-Host "6) (Solo sviluppo) Avvio manuale: scripts\start_services.bat + npm.cmd run dev"
+Write-Host "7) (Solo sviluppo) Avvio manuale: scripts\start_services.bat + npm.cmd run dev"
 
 if ($InstallServices) {
     $InstallServicesScript = Join-Path $PSScriptRoot "install_windows_services.ps1"
