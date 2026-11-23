@@ -21,6 +21,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from spatial_server.automations import (
+    AutomationEngineService,
+    AutomationRuleDefinition,
+    SpatialZoneDefinition,
+    VirtualEntityDefinition,
+)
 from spatial_server.biometrics import (
     BiometricCropStore,
     BiometricEligibilityGate,
@@ -106,6 +112,21 @@ class PlateWhitelistUpsertRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class VirtualEntityStateChangeRequest(BaseModel):
+    state: Optional[str] = None
+    operation: str = "set"
+    attributes: Optional[dict[str, Any]] = None
+
+
+class AutomationRuleToggleRequest(BaseModel):
+    enabled: bool
+
+
+class HaStatesSyncRequest(BaseModel):
+    entities: dict[str, dict[str, Any]]
+    trigger_on_diff: bool = True
+
+
 @dataclass
 class _PersistAnchor:
     x: float
@@ -178,6 +199,13 @@ class SpatialPipelineService:
         self._lazy_crop_store: Optional[BiometricCropStore] = None
         self._lazy_face_gallery: Optional[FaceGalleryIndex] = None
         self._lazy_whitelist_matcher: Optional[PlateWhitelistMatcher] = None
+        self.automation_engine = AutomationEngineService(
+            config=self.config,
+            repository=self.repository,
+            broadcast_callback=self._broadcast_json,
+            known_identities_provider=lambda: {str(x["name"]) for x in self.get_biometric_gallery_summary()},
+            whitelisted_plates_provider=lambda: {str(x["plate"]) for x in self.repository.list_plate_whitelist()},
+        )
 
     def get_optical_model(self, camera_id: str) -> Optional[ICameraOpticalModel]:
         return self.optical_models.get(camera_id)
@@ -266,11 +294,13 @@ class SpatialPipelineService:
             )
         if self.biometric_coordinator is not None:
             await self.biometric_coordinator.start()
+        await self.automation_engine.start()
         self._flush_task = asyncio.create_task(self._db_flush_loop())
         await self.set_ingestion_mode(self.ingestion_mode)
 
     async def stop(self) -> None:
         await self._stop_sources()
+        await self.automation_engine.stop()
         if self.biometric_coordinator is not None:
             try:
                 await self.biometric_coordinator.stop()
@@ -708,6 +738,10 @@ class SpatialPipelineService:
                 self._pending_persist.extend(persistable)
 
         await self.broadcast_frame(active_tracks, now_ts)
+        try:
+            await self.automation_engine.on_tracks_updated(active_tracks, now_ts)
+        except Exception as exc:
+            logger.warning("Automation evaluation warning on tracks update: %s", exc)
         return active_tracks
 
     async def broadcast_biometric_event(
@@ -912,6 +946,21 @@ class SpatialPipelineService:
         if updated_track is not None:
             await self.broadcast_frame(active_tracks, review_ts)
             await self.broadcast_biometric_event(manual_update, event_id=event_id)
+            try:
+                await self.automation_engine.on_biometric_update(
+                    {
+                        "track_id": track_id,
+                        "modality": modality,
+                        "camera_id": camera_id,
+                        "identity": identity,
+                        "plate": plate,
+                        "plate_whitelisted": plate_whitelisted,
+                    },
+                    active_tracks,
+                    review_ts,
+                )
+            except Exception as exc:
+                logger.warning("Automation evaluation warning on HITL review: %s", exc)
 
         return backfilled
 
@@ -1038,6 +1087,21 @@ class SpatialPipelineService:
         await self.broadcast_frame(active_tracks, update.timestamp)
         if update.biometric_status in ("locked", "unknown"):
             await self.broadcast_biometric_event(update, event_id=event_id)
+            try:
+                await self.automation_engine.on_biometric_update(
+                    {
+                        "track_id": update.track_id,
+                        "modality": update.modality,
+                        "camera_id": update.camera_id,
+                        "identity": update.identity,
+                        "plate": update.plate,
+                        "plate_whitelisted": update.plate_whitelisted,
+                    },
+                    active_tracks,
+                    update.timestamp,
+                )
+            except Exception as exc:
+                logger.warning("Automation evaluation warning on biometric update: %s", exc)
 
     async def _broadcast_json(self, message: dict[str, Any]) -> None:
         if not self.ws_clients:
@@ -1996,6 +2060,239 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         response.headers["Cache-Control"] = "no-store"
         return {"status": "ok", "camera_id": camera_id, "calibration": meta}
 
+    # ========================================================================
+    # SPATIAL AUTOMATIONS, 2.5D ZONES & VIRTUAL ENTITIES ENDPOINTS
+    # ========================================================================
+
+    @app.get("/api/v1/automations/bootstrap")
+    async def get_automations_bootstrap(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        eng = service.automation_engine
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "zones": [z.model_dump() for z in eng.list_zones()],
+            "virtual_entities": [e.model_dump() for e in eng.list_virtual_entities()],
+            "rules": [r.model_dump() for r in eng.list_rules()],
+            "logs": service.repository.query_automation_logs(limit=60),
+            "sun": eng.astronomical_clock.get_sun_summary(time.time()),
+            "identities": service.get_biometric_gallery_summary(),
+            "plates": service.repository.list_plate_whitelist(),
+            "cameras": list(service.optical_models.keys()),
+        }
+
+    @app.get("/api/v1/automations/zones")
+    async def get_automation_zones(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        zones = [z.model_dump() for z in service.automation_engine.list_zones()]
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(zones), "zones": zones}
+
+    @app.put("/api/v1/automations/zones")
+    async def upsert_automation_zone(
+        payload: SpatialZoneDefinition,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        zone = await service.automation_engine.upsert_zone(payload)
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "zone": zone.model_dump(),
+            "zones": [z.model_dump() for z in service.automation_engine.list_zones()],
+        }
+
+    @app.delete("/api/v1/automations/zones/{zone_id}")
+    async def delete_automation_zone(
+        zone_id: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        deleted = await service.automation_engine.delete_zone(zone_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Area/perimetro '{zone_id}' non trovato")
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "deleted": zone_id,
+            "zones": [z.model_dump() for z in service.automation_engine.list_zones()],
+        }
+
+    @app.get("/api/v1/automations/virtual-entities")
+    async def get_virtual_entities(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        entities = [e.model_dump() for e in service.automation_engine.list_virtual_entities()]
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(entities), "virtual_entities": entities}
+
+    @app.put("/api/v1/automations/virtual-entities")
+    async def upsert_virtual_entity_endpoint(
+        payload: VirtualEntityDefinition,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        entity = await service.automation_engine.upsert_virtual_entity(payload)
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "entity": entity.model_dump(),
+            "virtual_entities": [e.model_dump() for e in service.automation_engine.list_virtual_entities()],
+        }
+
+    @app.post("/api/v1/automations/virtual-entities/{entity_id}/state")
+    async def change_virtual_entity_state(
+        entity_id: str,
+        payload: VirtualEntityStateChangeRequest,
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        try:
+            updated = await service.automation_engine.set_virtual_entity_state(
+                entity_id,
+                payload.state,
+                operation=payload.operation,
+                attributes_patch=payload.attributes,
+                trigger_automations=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "entity": updated.model_dump(),
+            "virtual_entities": [e.model_dump() for e in service.automation_engine.list_virtual_entities()],
+        }
+
+    @app.delete("/api/v1/automations/virtual-entities/{entity_id}")
+    async def delete_virtual_entity_endpoint(
+        entity_id: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        deleted = await service.automation_engine.delete_virtual_entity(entity_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Entità virtuale '{entity_id}' non trovata")
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "deleted": entity_id,
+            "virtual_entities": [e.model_dump() for e in service.automation_engine.list_virtual_entities()],
+        }
+
+    @app.get("/api/v1/automations/rules")
+    async def get_automation_rules(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        rules = [r.model_dump() for r in service.automation_engine.list_rules()]
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(rules), "rules": rules}
+
+    @app.put("/api/v1/automations/rules")
+    async def upsert_automation_rule_endpoint(
+        payload: AutomationRuleDefinition,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        rule = await service.automation_engine.upsert_rule(payload)
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "rule": rule.model_dump(),
+            "rules": [r.model_dump() for r in service.automation_engine.list_rules()],
+        }
+
+    @app.post("/api/v1/automations/rules/{rule_id}/toggle")
+    async def toggle_automation_rule_endpoint(
+        rule_id: str,
+        payload: AutomationRuleToggleRequest,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        existing = service.automation_engine.rules.get(rule_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"Automazione '{rule_id}' non trovata")
+        updated = existing.model_copy(update={"enabled": bool(payload.enabled)})
+        saved = await service.automation_engine.upsert_rule(updated)
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "rule": saved.model_dump(),
+            "rules": [r.model_dump() for r in service.automation_engine.list_rules()],
+        }
+
+    @app.post("/api/v1/automations/rules/{rule_id}/trigger")
+    async def trigger_automation_rule_manually(
+        rule_id: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        try:
+            log_entry = await service.automation_engine.trigger_rule_manually(rule_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "log": log_entry.model_dump(),
+            "rules": [r.model_dump() for r in service.automation_engine.list_rules()],
+        }
+
+    @app.delete("/api/v1/automations/rules/{rule_id}")
+    async def delete_automation_rule_endpoint(
+        rule_id: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        deleted = await service.automation_engine.delete_rule(rule_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Automazione '{rule_id}' non trovata")
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "deleted": rule_id,
+            "rules": [r.model_dump() for r in service.automation_engine.list_rules()],
+        }
+
+    @app.get("/api/v1/automations/logs")
+    async def get_automation_logs(
+        response: Response,
+        rule_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=80, ge=1, le=500),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        logs = service.repository.query_automation_logs(rule_id=rule_id, limit=limit)
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(logs), "logs": logs}
+
+    @app.delete("/api/v1/automations/logs")
+    async def clear_automation_logs_endpoint(
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        deleted = service.repository.clear_automation_logs()
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "deleted": deleted}
+
+    @app.post("/api/v1/automations/ha-states")
+    async def sync_ha_states_to_automations(
+        payload: HaStatesSyncRequest,
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        changed = await service.automation_engine.sync_ha_states_batch(
+            payload.entities,
+            trigger_on_diff=payload.trigger_on_diff,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "changed_count": changed}
+
     @app.post("/api/v1/ingestion/mode")
     async def switch_ingestion_mode(
         req: IngestionModeRequest,
@@ -2125,6 +2422,16 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
                 msg = await websocket.receive_text()
                 if msg == "ping":
                     await websocket.send_text("pong")
+                elif msg.startswith("{"):
+                    try:
+                        parsed_msg = json.loads(msg)
+                        if parsed_msg.get("type") == "ha_states_sync" and isinstance(parsed_msg.get("entities"), dict):
+                            await service.automation_engine.sync_ha_states_batch(
+                                parsed_msg["entities"],
+                                trigger_on_diff=bool(parsed_msg.get("trigger_on_diff", True)),
+                            )
+                    except Exception:
+                        pass
         except WebSocketDisconnect:
             service.ws_clients.discard(websocket)
         except Exception:

@@ -56,6 +56,7 @@ export class SpatialStreamClient {
     this.authErrorListeners = new Set();
     this.calibrationListeners = new Set();
     this.biometricEventListeners = new Set();
+    this.automationEventListeners = new Set();
     this.lastStatusPayload = null;
   }
 
@@ -96,6 +97,11 @@ export class SpatialStreamClient {
   onBiometricEvent(callback) {
     this.biometricEventListeners.add(callback);
     return () => this.biometricEventListeners.delete(callback);
+  }
+
+  onAutomationEvent(callback) {
+    this.automationEventListeners.add(callback);
+    return () => this.automationEventListeners.delete(callback);
   }
 
   emitStatus(connected, meta = null) {
@@ -154,6 +160,22 @@ export class SpatialStreamClient {
               cb(msg);
             } catch (e) {
               console.warn('[SpatialStreamClient] Errore listener biometric_event:', e);
+            }
+          });
+        } else if (
+          msg.type === 'automation_triggered' ||
+          msg.type === 'automation_ui_alert' ||
+          msg.type === 'automation_ha_service_call' ||
+          msg.type === 'automation_zones_updated' ||
+          msg.type === 'automation_rules_updated' ||
+          msg.type === 'virtual_entity_updated' ||
+          msg.type === 'virtual_entities_list'
+        ) {
+          this.automationEventListeners.forEach((cb) => {
+            try {
+              cb(msg);
+            } catch (e) {
+              console.warn('[SpatialStreamClient] Errore listener automationEvent:', e);
             }
           });
         }
@@ -518,6 +540,152 @@ export class SpatialStreamClient {
       });
     }
     return res;
+  }
+
+  // =========================================================================
+  // Spatial Automations, 2.5D Zones & Virtual Entities API
+  // =========================================================================
+
+  async fetchAutomationsBootstrap() {
+    return await this.requestJson('/api/v1/automations/bootstrap', {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 6000,
+    });
+  }
+
+  async fetchAutomationZones() {
+    return await this.requestJson('/api/v1/automations/zones', {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async upsertAutomationZone(zonePayload) {
+    return await this.requestJson('/api/v1/automations/zones', {
+      method: 'PUT',
+      body: JSON.stringify(zonePayload),
+      cache: 'no-store',
+    });
+  }
+
+  async deleteAutomationZone(zoneId) {
+    return await this.requestJson(`/api/v1/automations/zones/${encodeURIComponent(zoneId)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+    });
+  }
+
+  async fetchVirtualEntities() {
+    return await this.requestJson('/api/v1/automations/virtual-entities', {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async upsertVirtualEntity(entityPayload) {
+    return await this.requestJson('/api/v1/automations/virtual-entities', {
+      method: 'PUT',
+      body: JSON.stringify(entityPayload),
+      cache: 'no-store',
+    });
+  }
+
+  async setVirtualEntityState(entityId, { state = null, operation = 'set', attributes = null } = {}) {
+    return await this.requestJson(`/api/v1/automations/virtual-entities/${encodeURIComponent(entityId)}/state`, {
+      method: 'POST',
+      body: JSON.stringify({ state, operation, attributes }),
+      cache: 'no-store',
+    });
+  }
+
+  async deleteVirtualEntity(entityId) {
+    return await this.requestJson(`/api/v1/automations/virtual-entities/${encodeURIComponent(entityId)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+    });
+  }
+
+  async fetchAutomationRules() {
+    return await this.requestJson('/api/v1/automations/rules', {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async upsertAutomationRule(rulePayload) {
+    return await this.requestJson('/api/v1/automations/rules', {
+      method: 'PUT',
+      body: JSON.stringify(rulePayload),
+      cache: 'no-store',
+    });
+  }
+
+  async toggleAutomationRule(ruleId, enabled) {
+    return await this.requestJson(`/api/v1/automations/rules/${encodeURIComponent(ruleId)}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled: Boolean(enabled) }),
+      cache: 'no-store',
+    });
+  }
+
+  async triggerAutomationRule(ruleId) {
+    return await this.requestJson(`/api/v1/automations/rules/${encodeURIComponent(ruleId)}/trigger`, {
+      method: 'POST',
+      cache: 'no-store',
+    });
+  }
+
+  async deleteAutomationRule(ruleId) {
+    return await this.requestJson(`/api/v1/automations/rules/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+    });
+  }
+
+  async fetchAutomationLogs({ ruleId = null, limit = 80 } = {}) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (ruleId) params.set('rule_id', String(ruleId));
+    return await this.requestJson(`/api/v1/automations/logs?${params.toString()}`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async clearAutomationLogs() {
+    return await this.requestJson('/api/v1/automations/logs', {
+      method: 'DELETE',
+      cache: 'no-store',
+    });
+  }
+
+  syncHaStates(entitiesMap, { triggerOnDiff = true } = {}) {
+    if (!entitiesMap || typeof entitiesMap !== 'object') return;
+    const compact = {};
+    for (const [eid, st] of Object.entries(entitiesMap)) {
+      if (!st || typeof st !== 'object') continue;
+      compact[eid] = {
+        state: String(st.state ?? 'unknown'),
+        attributes: st.attributes || {},
+      };
+    }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: 'ha_states_sync',
+            entities: compact,
+            trigger_on_diff: triggerOnDiff,
+          })
+        );
+        return;
+      } catch {}
+    }
+    this.requestJson('/api/v1/automations/ha-states', {
+      method: 'POST',
+      body: JSON.stringify({ entities: compact, trigger_on_diff: triggerOnDiff }),
+      cache: 'no-store',
+    }).catch(() => null);
   }
 }
 

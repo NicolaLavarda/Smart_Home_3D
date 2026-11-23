@@ -150,6 +150,63 @@ class SQLiteWALTrackRepository(ITrackRepository):
                 """
             )
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS spatial_zones (
+                    zone_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    geometry_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS virtual_entities (
+                    entity_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS automation_rules (
+                    rule_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    payload_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS automation_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_id TEXT NOT NULL,
+                    rule_name TEXT NOT NULL,
+                    timestamp REAL NOT NULL,
+                    trigger_type TEXT NOT NULL,
+                    trigger_summary TEXT NOT NULL,
+                    track_id INTEGER,
+                    identity TEXT,
+                    plate TEXT,
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_logs_ts ON automation_logs(timestamp DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_logs_rule ON automation_logs(rule_id, timestamp DESC);")
+
             try:
                 cur.execute(
                     """
@@ -870,6 +927,195 @@ class SQLiteWALTrackRepository(ITrackRepository):
         with self._lock:
             cur = self._conn.cursor()
             cur.execute("DELETE FROM face_embeddings WHERE LOWER(person_name) = LOWER(?);", (clean_name,))
+            self._conn.commit()
+            return int(cur.rowcount or 0)
+
+    # --- Spatial Automations, Zones & Virtual Entities Persistence ---
+
+    def list_spatial_zones(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload_json FROM spatial_zones ORDER BY LOWER(name) ASC;"
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                result.append(json.loads(r["payload_json"]))
+            except Exception:
+                continue
+        return result
+
+    def upsert_spatial_zone(self, zone: dict[str, Any]) -> dict[str, Any]:
+        zone_id = str(zone.get("zone_id") or "").strip()
+        name = str(zone.get("name") or zone_id).strip()
+        gtype = str(zone.get("geometry_type") or "polygon").strip()
+        ts = float(zone.get("updated_at") or time.time())
+        payload = json.dumps(zone)
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO spatial_zones (zone_id, name, geometry_type, payload_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(zone_id) DO UPDATE SET
+                    name = excluded.name,
+                    geometry_type = excluded.geometry_type,
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (zone_id, name, gtype, payload, ts),
+            )
+            self._conn.commit()
+        return zone
+
+    def delete_spatial_zone(self, zone_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("DELETE FROM spatial_zones WHERE zone_id = ?;", (zone_id,))
+            self._conn.commit()
+            return bool(cur.rowcount and cur.rowcount > 0)
+
+    def list_virtual_entities(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload_json FROM virtual_entities ORDER BY entity_id ASC;"
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                result.append(json.loads(r["payload_json"]))
+            except Exception:
+                continue
+        return result
+
+    def upsert_virtual_entity(self, entity: dict[str, Any]) -> dict[str, Any]:
+        eid = str(entity.get("entity_id") or "").strip()
+        name = str(entity.get("name") or eid).strip()
+        domain = str(entity.get("domain") or "switch").strip()
+        state = str(entity.get("state") or "off")
+        ts = float(entity.get("updated_at") or time.time())
+        payload = json.dumps(entity)
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO virtual_entities (entity_id, name, domain, state, payload_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(entity_id) DO UPDATE SET
+                    name = excluded.name,
+                    domain = excluded.domain,
+                    state = excluded.state,
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (eid, name, domain, state, payload, ts),
+            )
+            self._conn.commit()
+        return entity
+
+    def delete_virtual_entity(self, entity_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("DELETE FROM virtual_entities WHERE entity_id = ?;", (entity_id,))
+            self._conn.commit()
+            return bool(cur.rowcount and cur.rowcount > 0)
+
+    def list_automation_rules(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload_json FROM automation_rules ORDER BY LOWER(name) ASC;"
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                result.append(json.loads(r["payload_json"]))
+            except Exception:
+                continue
+        return result
+
+    def upsert_automation_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
+        rule_id = str(rule.get("rule_id") or "").strip()
+        name = str(rule.get("name") or rule_id).strip()
+        enabled_int = 1 if rule.get("enabled", True) else 0
+        ts = float(rule.get("updated_at") or time.time())
+        payload = json.dumps(rule)
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO automation_rules (rule_id, name, enabled, payload_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(rule_id) DO UPDATE SET
+                    name = excluded.name,
+                    enabled = excluded.enabled,
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (rule_id, name, enabled_int, payload, ts),
+            )
+            self._conn.commit()
+        return rule
+
+    def delete_automation_rule(self, rule_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("DELETE FROM automation_rules WHERE rule_id = ?;", (rule_id,))
+            self._conn.commit()
+            return bool(cur.rowcount and cur.rowcount > 0)
+
+    def record_automation_log(self, log_entry: dict[str, Any]) -> int:
+        rule_id = str(log_entry.get("rule_id") or "")
+        rule_name = str(log_entry.get("rule_name") or rule_id)
+        ts = float(log_entry.get("timestamp") or time.time())
+        trig_type = str(log_entry.get("trigger_type") or "")
+        trig_sum = str(log_entry.get("trigger_summary") or "")
+        track_id = log_entry.get("track_id")
+        identity = log_entry.get("identity")
+        plate = log_entry.get("plate")
+        status = str(log_entry.get("status") or "executed")
+        payload = json.dumps(log_entry)
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO automation_logs (
+                    rule_id, rule_name, timestamp, trigger_type, trigger_summary,
+                    track_id, identity, plate, status, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (rule_id, rule_name, ts, trig_type, trig_sum, track_id, identity, plate, status, payload),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def query_automation_logs(
+        self,
+        *,
+        rule_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        eff_limit = max(1, min(int(limit), 500))
+        sql = "SELECT id, payload_json FROM automation_logs WHERE 1=1"
+        params: list[Any] = []
+        if rule_id and rule_id.strip():
+            sql += " AND rule_id = ?"
+            params.append(rule_id.strip())
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT ?;"
+        params.append(eff_limit)
+
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        result: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                item = json.loads(r["payload_json"])
+                item["id"] = int(r["id"])
+                result.append(item)
+            except Exception:
+                continue
+        return result
+
+    def clear_automation_logs(self) -> int:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("DELETE FROM automation_logs;")
             self._conn.commit()
             return int(cur.rowcount or 0)
 

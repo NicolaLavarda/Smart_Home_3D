@@ -8,6 +8,7 @@ export class TopBar {
     interactionManager,
     haClient,
     calibrationAssistant = null,
+    automationStudio = null,
     assetLoader = null,
     deviceModals = null,
     cameraCatalog = null,
@@ -19,6 +20,7 @@ export class TopBar {
     this.interactionManager = interactionManager;
     this.haClient = haClient;
     this.calibrationAssistant = calibrationAssistant;
+    this.automationStudio = automationStudio;
     this.assetLoader = assetLoader;
     this.deviceModals = deviceModals;
     this.cameraCatalog = cameraCatalog;
@@ -69,6 +71,10 @@ export class TopBar {
               </div>
             </div>
             <div class="settings-dropdown-divider" id="top-settings-divider"></div>
+            <button class="settings-dropdown-item" id="btn-open-automations" title="Apri Automazioni Spaziali 3D, Aree e Perimetri" hidden disabled style="display: none;">
+              ${icon('zap', { size: 15 })}
+              <span>Automazioni</span>
+            </button>
             <button class="settings-dropdown-item" id="btn-open-cam-calib" title="Apri calibrazione ottica POV telecamere" hidden disabled style="display: none;">
               ${icon('sliders-horizontal', { size: 15 })}
               <span>Calibra Cam</span>
@@ -93,6 +99,7 @@ export class TopBar {
     this.userProfileEl = this.container.querySelector('#top-user-profile');
     this.userNameEl = this.container.querySelector('#top-user-name');
     this.userRoleEl = this.container.querySelector('#top-user-role');
+    this.automationsBtn = this.container.querySelector('#btn-open-automations');
     this.calibBtn = this.container.querySelector('#btn-open-cam-calib');
     this.authActionBtn = this.container.querySelector('#btn-ha-auth-action');
     this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
@@ -150,6 +157,16 @@ export class TopBar {
       }
     }
 
+    if (this.automationsBtn) {
+      const canManageAutomations = isAdmin || isMock;
+      this.automationsBtn.hidden = !canManageAutomations;
+      this.automationsBtn.disabled = !canManageAutomations;
+      this.automationsBtn.style.display = canManageAutomations ? '' : 'none';
+      if (!canManageAutomations) {
+        this.automationsBtn.classList.remove('active');
+      }
+    }
+
     if (this.calibBtn) {
       this.calibBtn.hidden = !isAdmin;
       this.calibBtn.disabled = !isAdmin;
@@ -159,6 +176,9 @@ export class TopBar {
       }
     }
 
+    if (!isAdmin && !isMock && this.automationStudio?.isOpen) {
+      this.automationStudio.close();
+    }
     if (!isAdmin && this.calibrationAssistant?.isOpen) {
       this.calibrationAssistant.close();
     }
@@ -206,6 +226,9 @@ export class TopBar {
       this.settingsDropdown.classList.toggle('open', willOpen);
       this.settingsBtn.classList.toggle('active', willOpen);
       this.settingsBtn.setAttribute('aria-expanded', String(willOpen));
+      if (willOpen && this.automationsBtn) {
+        this.automationsBtn.classList.toggle('active', Boolean(this.automationStudio?.isOpen));
+      }
       if (willOpen && this.calibBtn) {
         this.calibBtn.classList.toggle('active', Boolean(this.calibrationAssistant?.isOpen));
       }
@@ -226,6 +249,24 @@ export class TopBar {
       if (e.key === 'Escape') {
         this.closeSettingsDropdown();
       }
+    });
+
+    // Apertura Automation Studio 3D (sopra Calibra Cam)
+    this.automationsBtn?.addEventListener('click', () => {
+      this.closeSettingsDropdown();
+      if (!this.haClient?.isAdmin && !this.haClient?.isMockMode) return;
+      if (!this.automationStudio) return;
+      if (this.automationStudio.isOpen) {
+        this.automationStudio.close();
+        this.automationsBtn.classList.remove('active');
+        return;
+      }
+      this.deviceModals?.close();
+      if (this.calibrationAssistant?.isOpen) {
+        this.calibrationAssistant.close();
+      }
+      this.automationsBtn.classList.add('active');
+      this.automationStudio.open();
     });
 
     // Apertura Calibrazione Ottica POV multi-camera (solo Admin)

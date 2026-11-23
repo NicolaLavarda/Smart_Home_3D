@@ -10,6 +10,8 @@ import { CameraPovOverlayController } from './spatial/CameraPovOverlayController
 import { TrajectoryRenderer } from './spatial/TrajectoryRenderer.js';
 import { SpatialStreamClient } from './spatial/network/SpatialStreamClient.js';
 import { CalibrationAssistantUI } from './spatial/calibration/CalibrationAssistantUI.js';
+import { SpatialZoneRenderer3D } from './spatial/automations/SpatialZoneRenderer3D.js';
+import { AutomationStudioUI } from './spatial/automations/AutomationStudioUI.js';
 import { VideoStreamManager } from './video/VideoStreamManager.js';
 import { CameraCatalog } from './video/CameraCatalog.js';
 import {
@@ -177,6 +179,19 @@ async function bootstrap() {
     cameraCatalog,
   });
 
+  const spatialZoneRenderer = new SpatialZoneRenderer3D({
+    sceneManager,
+    cameraProjector,
+  });
+  const automationStudio = new AutomationStudioUI({
+    sceneManager,
+    cameraController,
+    spatialStreamClient,
+    zoneRenderer: spatialZoneRenderer,
+    haClient,
+    uiLayer,
+  });
+
   const secCamCtrl = deviceRegistry.get('security_camera');
   if (secCamCtrl) {
     secCamCtrl.setServices({
@@ -199,6 +214,7 @@ async function bootstrap() {
     interactionManager,
     haClient,
     calibrationAssistant,
+    automationStudio,
     assetLoader,
     deviceModals,
     cameraCatalog,
@@ -209,7 +225,10 @@ async function bootstrap() {
   let povOverlayController = null;
 
   const syncUiLayerState = () => {
-    const anyDrawerOpen = modalContainer.classList.contains('open') || Boolean(calibrationAssistant?.isOpen);
+    const anyDrawerOpen =
+      modalContainer.classList.contains('open') ||
+      Boolean(calibrationAssistant?.isOpen) ||
+      Boolean(automationStudio?.isOpen);
     const secStripActive = Boolean(securityFabHub?.isStrip);
     const secExpanded = Boolean(securityFabHub?.isExpanded);
     const navExpanded = Boolean(navFabHub?.isOpen);
@@ -219,6 +238,7 @@ async function bootstrap() {
     uiLayer?.classList.toggle('sec-expanded-active', secExpanded);
     uiLayer?.classList.toggle('nav-expanded-active', navExpanded);
     topBar?.calibBtn?.classList.toggle('active', Boolean(calibrationAssistant?.isOpen));
+    topBar?.automationsBtn?.classList.toggle('active', Boolean(automationStudio?.isOpen));
   };
 
   navFabHub = new NavigationFabHub(navHubContainer, {
@@ -289,6 +309,9 @@ async function bootstrap() {
       if (modalContainer.classList.contains('open')) {
         deviceModals.close();
       }
+      if (automationStudio?.isOpen) {
+        automationStudio.close();
+      }
       navFabHub?.close();
       if (securityFabHub?.isExpanded) {
         securityFabHub.close();
@@ -299,6 +322,23 @@ async function bootstrap() {
       povOverlayController?.resumeAfterCalibration?.();
       syncUiLayerState();
     },
+  });
+
+  automationStudio.setLifecycleHooks({
+    onOpen: () => {
+      if (modalContainer.classList.contains('open')) {
+        deviceModals.close();
+      }
+      if (calibrationAssistant?.isOpen) {
+        calibrationAssistant.close();
+      }
+      navFabHub?.close();
+      if (window.innerWidth <= 1024 && securityFabHub?.isExpanded) {
+        securityFabHub.close();
+      }
+      syncUiLayerState();
+    },
+    onClose: syncUiLayerState,
   });
 
   // 9b. Overlay Auth OAuth2 Home Assistant, PWA Update Prompt & Sincronizzazione Spatial Session

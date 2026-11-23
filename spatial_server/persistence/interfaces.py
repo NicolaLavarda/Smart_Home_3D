@@ -144,3 +144,59 @@ class ITrackRepository(ABC):
         """Delete persisted face embedding samples for `person_name` and return removed row count."""
         return 0
 
+    # --- Spatial Automations, Zones & Virtual Entities Persistence ---
+
+    def list_spatial_zones(self) -> list[dict[str, Any]]:
+        """Return all persisted 2.5D spatial zones and oriented perimeters."""
+        return []
+
+    def upsert_spatial_zone(self, zone: dict[str, Any]) -> dict[str, Any]:
+        """Insert or update a spatial zone definition."""
+        raise NotImplementedError("Spatial zones persistence not implemented")
+
+    def delete_spatial_zone(self, zone_id: str) -> bool:
+        """Delete a spatial zone by zone_id and return True if removed."""
+        return False
+
+    def list_virtual_entities(self) -> list[dict[str, Any]]:
+        """Return all persisted internal program virtual entities (sh3d.*)."""
+        return []
+
+    def upsert_virtual_entity(self, entity: dict[str, Any]) -> dict[str, Any]:
+        """Insert or update an internal virtual entity definition and state."""
+        raise NotImplementedError("Virtual entities persistence not implemented")
+
+    def delete_virtual_entity(self, entity_id: str) -> bool:
+        """Delete a virtual entity by entity_id and return True if removed."""
+        return False
+
+    def list_automation_rules(self) -> list[dict[str, Any]]:
+        """Return all persisted automation rules."""
+        return []
+
+    def upsert_automation_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
+        """Insert or update an automation rule definition."""
+        raise NotImplementedError("Automation rules persistence not implemented")
+
+    def delete_automation_rule(self, rule_id: str) -> bool:
+        """Delete an automation rule by rule_id and return True if removed."""
+        return False
+
+    def record_automation_log(self, log_entry: dict[str, Any]) -> int:
+        """Persist an automation execution log entry and return its primary key id."""
+        return 0
+
+    def query_automation_logs(
+        self,
+        *,
+        rule_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return recent automation execution logs."""
+        return []
+
+    def clear_automation_logs(self) -> int:
+        """Delete all automation execution logs and return deleted row count."""
+        return 0
+
+
