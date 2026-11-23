@@ -139,6 +139,8 @@ class SpatialPipelineService:
         self.raycaster = raycaster
         self.identity_resolver = identity_resolver
         self.tracker = tracker
+        if hasattr(self.tracker, "camera_visibility_fn") and getattr(self.tracker, "camera_visibility_fn", None) is None:
+            setattr(self.tracker, "camera_visibility_fn", self.is_world_point_visible_in_camera)
         self.repository = repository
         self.calibration_solver = calibration_solver
         self.camera_manifest_meta: dict[str, dict[str, Any]] = dict(camera_manifest_meta or {})
@@ -476,6 +478,49 @@ class SpatialPipelineService:
         meta = self.camera_manifest_meta.get(camera_id) or {}
         return bool(meta.get("is_panoramic_180") or meta.get("optical_model") == "equirectangular_180")
 
+    def is_world_point_visible_in_camera(
+        self,
+        camera_id: str,
+        point_3d: tuple[float, float, float],
+    ) -> bool:
+        model = self.optical_models.get(camera_id)
+        if model is None:
+            return False
+        uv = model.world_point_to_pixel(point_3d)
+        if uv is None:
+            return False
+        u, v = float(uv[0]), float(uv[1])
+        return -0.05 <= u <= 1.05 and -0.05 <= v <= 1.05
+
+    @staticmethod
+    def _apply_vehicle_footprint_center_offset(
+        class_label: str,
+        hit_pt: tuple[float, float, float],
+        ray_direction: tuple[float, float, float],
+        v_norm: float,
+    ) -> tuple[float, float, float]:
+        """
+        Shift the near-edge ground contact point (bottom-center of 2D bbox) slightly inward
+        along the horizontal line-of-sight toward the 3D vehicle footprint centroid.
+        Reduces cross-camera parallax when two cameras view opposite bumpers/sides of a car.
+        """
+        if class_label not in ("car", "truck", "motorbike"):
+            return hit_pt
+        if v_norm >= 0.965:
+            return hit_pt
+        dx, _dy, dz = float(ray_direction[0]), float(ray_direction[1]), float(ray_direction[2])
+        horiz_norm = math.hypot(dx, dz)
+        if horiz_norm < 1e-6:
+            return hit_pt
+        base_offset = 0.65 if class_label in ("car", "truck") else 0.25
+        edge_taper = 1.0 if v_norm <= 0.88 else max(0.0, (0.965 - v_norm) / 0.085)
+        shift = base_offset * edge_taper
+        return (
+            float(hit_pt[0] + (dx / horiz_norm) * shift),
+            float(hit_pt[1]),
+            float(hit_pt[2] + (dz / horiz_norm) * shift),
+        )
+
     def _prune_biometric_consensus(self, active_tracks: list[TrackedEntity3D]) -> None:
         if self.biometric_coordinator is None:
             return
@@ -600,18 +645,30 @@ class SpatialPipelineService:
                 else (0.85 if plate_val else 0.0)
             )
             obs_range_m = float(math.dist(ray.origin, hit_pt))
+            is_pano = self._is_camera_panoramic_180(evt.camera_id)
+            ray_grazing_sin = float(abs(ray.direction[1]))
+            obs_pos = self._apply_vehicle_footprint_center_offset(
+                evt.class_label,
+                hit_pt,
+                ray.direction,
+                v,
+            )
             observations.append(
                 TrackObservation3D(
                     camera_id=evt.camera_id,
                     timestamp=evt.timestamp,
                     class_label=evt.class_label,
-                    position=hit_pt,
+                    position=obs_pos,
                     confidence=evt.confidence,
                     identity=identity,
                     identity_confidence=id_conf,
                     plate=plate_val,
                     plate_confidence=plate_conf,
                     range_m=obs_range_m,
+                    is_panoramic=is_pano,
+                    uv_contact=(u, v),
+                    bbox_2d=(evt.bbox.x_min, evt.bbox.y_min, evt.bbox.x_max, evt.bbox.y_max),
+                    ray_grazing_sin=ray_grazing_sin,
                 )
             )
             obs_meta.append((evt, obs_range_m))

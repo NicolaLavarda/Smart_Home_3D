@@ -18,6 +18,10 @@ class TrackObservation3D:
     plate: Optional[str] = None
     plate_confidence: float = 0.0
     range_m: Optional[float] = None
+    is_panoramic: bool = False
+    uv_contact: Optional[tuple[float, float]] = None
+    bbox_2d: Optional[tuple[float, float, float, float]] = None
+    ray_grazing_sin: Optional[float] = None
 
 
 class IMultiTargetTracker3D(ABC):

@@ -26,6 +26,74 @@ COCO_TO_DOMAIN = {
 }
 
 
+def _coarse_detection_group(label: str) -> str:
+    if label in ("car", "truck", "motorbike", "motorcycle", "bus"):
+        return "vehicle"
+    return label
+
+
+def deduplicate_2d_detections(events: list[DetectionEvent]) -> list[DetectionEvent]:
+    """
+    Coarse-class 2D Non-Maximum & Containment Suppression within a single camera frame.
+    Prevents the same physical vehicle (e.g. classified simultaneously as 'car' and 'truck'
+    or split across a 180-deg panoramic stitching seam) or person from emitting multiple boxes.
+    """
+    if len(events) <= 1:
+        return events
+
+    ordered = sorted(events, key=lambda e: float(e.confidence), reverse=True)
+    kept: list[DetectionEvent] = []
+
+    for cand in ordered:
+        c_grp = _coarse_detection_group(cand.class_label)
+        cb = cand.bbox
+        cw = max(1e-6, cb.x_max - cb.x_min)
+        ch = max(1e-6, cb.y_max - cb.y_min)
+        c_area = cw * ch
+        c_cx = 0.5 * (cb.x_min + cb.x_max)
+
+        is_dup = False
+        for prev in kept:
+            if _coarse_detection_group(prev.class_label) != c_grp:
+                continue
+            pb = prev.bbox
+            pw = max(1e-6, pb.x_max - pb.x_min)
+            ph = max(1e-6, pb.y_max - pb.y_min)
+            p_area = pw * ph
+            p_cx = 0.5 * (pb.x_min + pb.x_max)
+
+            ix1 = max(cb.x_min, pb.x_min)
+            iy1 = max(cb.y_min, pb.y_min)
+            ix2 = min(cb.x_max, pb.x_max)
+            iy2 = min(cb.y_max, pb.y_max)
+            iw = max(0.0, ix2 - ix1)
+            ih = max(0.0, iy2 - iy1)
+            inter = iw * ih
+
+            union = max(1e-6, c_area + p_area - inter)
+            iou = inter / union
+            containment = inter / max(1e-6, min(c_area, p_area))
+
+            # Same ground contact point check (very close bottom-center UV)
+            du_bottom = abs(c_cx - p_cx)
+            dv_bottom = abs(cb.y_max - pb.y_max)
+            close_bottom = (
+                du_bottom <= 0.35 * max(cw, pw)
+                and dv_bottom <= 0.22 * max(ch, ph)
+            )
+
+            iou_thresh = 0.38 if c_grp == "vehicle" else 0.45
+            contain_thresh = 0.72 if c_grp == "vehicle" else 0.80
+            if iou >= iou_thresh or containment >= contain_thresh or (close_bottom and inter > 0.0):
+                is_dup = True
+                break
+
+        if not is_dup:
+            kept.append(cand)
+
+    return kept
+
+
 class OpenVINORtspDetectionSource(IDetectionSource):
     """
     Local CPU/iGPU (Intel HD Graphics 530) CV detector reading go2rtc RTSP sub-stream
@@ -387,10 +455,10 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                             ),
                         )
                     )
-            return events
+            return deduplicate_2d_detections(events)
 
         if self._compiled_ov is not None:
-            return self._infer_openvino_yolo(frame, ts)
+            return deduplicate_2d_detections(self._infer_openvino_yolo(frame, ts))
 
         if self._hog is not None:
             # OpenCV HOG fallback (persons)
@@ -522,5 +590,5 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                     ),
                 )
             )
-        return events
+        return deduplicate_2d_detections(events)
 

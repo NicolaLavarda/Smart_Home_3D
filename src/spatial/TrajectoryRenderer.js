@@ -212,9 +212,9 @@ export class TrajectoryRenderer {
       }
     });
 
-    // Pulisce entità assenti da > 6 secondi
+    // Rimuove immediatamente dal 3D le tracce fuse o scadute non più presenti in activeTracks del backend
     for (const [id, entry] of this.liveEntities.entries()) {
-      if (!seenIds.has(id) && nowPerf - entry.lastSeenPerf > 6.0) {
+      if (!seenIds.has(id)) {
         this.removeLiveEntity(id, entry);
       }
     }

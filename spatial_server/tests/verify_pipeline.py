@@ -846,6 +846,173 @@ def test_multicam_stradina_180_equirectangular_4cam_openvino_and_overlap() -> No
     print("[PASS] Cam_Stradina 180-deg equirectangular SSoT optics, 4-cam OpenVINO & overlap fusion")
 
 
+def test_multicam_anti_cloning_cardinality_and_miscalibration_fusion() -> None:
+    from spatial_server.ingestion.openvino_rtsp_source import deduplicate_2d_detections
+
+    # 1. 2D Coarse-class NMS suppresses simultaneous 'car' + 'truck' boxes on the same vehicle
+    dup_2d = deduplicate_2d_detections(
+        [
+            DetectionEvent(
+                camera_id="Cam_Carraio",
+                timestamp=5000.0,
+                class_label="car",
+                confidence=0.82,
+                bbox=BoundingBox2D(x_min=0.30, y_min=0.40, x_max=0.62, y_max=0.82),
+            ),
+            DetectionEvent(
+                camera_id="Cam_Carraio",
+                timestamp=5000.0,
+                class_label="truck",
+                confidence=0.46,
+                bbox=BoundingBox2D(x_min=0.31, y_min=0.38, x_max=0.63, y_max=0.83),
+            ),
+            DetectionEvent(
+                camera_id="Cam_Carraio",
+                timestamp=5000.0,
+                class_label="person",
+                confidence=0.88,
+                bbox=BoundingBox2D(x_min=0.10, y_min=0.45, x_max=0.18, y_max=0.80),
+            ),
+        ]
+    )
+    assert len(dup_2d) == 2
+    assert {e.class_label for e in dup_2d} == {"car", "person"}
+
+    # 2. Anti-ping-pong across 3 miscalibrated cameras observing 1 stationary person asynchronously
+    tracker = Kalman3DMultiTracker()
+    base_ts = 5100.0
+    first_tid = None
+    for step in range(18):
+        ts = base_ts + step * 0.08
+        cam_cycle = step % 3
+        if cam_cycle == 0:
+            # Close pinhole camera at (-3.0, 0, 9.0)
+            obs = TrackObservation3D(
+                camera_id="Cam_Carraio",
+                timestamp=ts,
+                class_label="person",
+                position=(-3.0, 0.0, 9.0),
+                confidence=0.92,
+                range_m=5.2,
+                is_panoramic=False,
+                uv_contact=(0.50, 0.78),
+                ray_grazing_sin=0.35,
+            )
+        elif cam_cycle == 1:
+            # Second pinhole camera miscalibrated by ~2.5m at (-1.1, 0, 10.6)
+            obs = TrackObservation3D(
+                camera_id="Cam_Portico",
+                timestamp=ts,
+                class_label="person",
+                position=(-1.1, 0.0, 10.6),
+                confidence=0.85,
+                range_m=11.0,
+                is_panoramic=False,
+                uv_contact=(0.35, 0.72),
+                ray_grazing_sin=0.24,
+            )
+        else:
+            # 180-deg panoramic camera miscalibrated by ~3.1m near right edge at (-5.2, 0, 6.8)
+            obs = TrackObservation3D(
+                camera_id="Cam_Ingresso",
+                timestamp=ts,
+                class_label="person",
+                position=(-5.2, 0.0, 6.8),
+                confidence=0.80,
+                range_m=8.5,
+                is_panoramic=True,
+                uv_contact=(0.86, 0.75),
+                ray_grazing_sin=0.22,
+            )
+
+        active = tracker.update([obs], now_ts=ts)
+        assert len(active) == 1, f"Expected 1 fused person track at step {step}, got {len(active)}"
+        if first_tid is None:
+            first_tid = active[0].track_id
+        else:
+            assert active[0].track_id == first_tid, "Track ID must remain stable without spawning clones"
+
+    final_person = tracker.get_active_tracks()[0]
+    assert set(final_person.state.camera_sources) == {"Cam_Carraio", "Cam_Portico", "Cam_Ingresso"}
+    speed_person = math.hypot(final_person.state.vx, final_person.state.vz)
+    assert speed_person < 0.25, f"Stationary person across miscalibrated cams must not have fake ping-pong speed: {speed_person}"
+    # Close pinhole Cam_Carraio (-3.0, 9.0) must have stronger pull than far/panoramic edge Cam_Ingresso (-5.2, 6.8)
+    dist_to_carraio = math.hypot(final_person.state.x - (-3.0), final_person.state.z - 9.0)
+    dist_to_ingresso = math.hypot(final_person.state.x - (-5.2), final_person.state.z - 6.8)
+    assert dist_to_carraio < dist_to_ingresso
+
+    # 3. Logical cardinality cap + intra-camera vehicle dedup + large 6.2m cross-camera car miscalibration
+    v_tracker = Kalman3DMultiTracker()
+    v_tracks_1, v_assign_1 = v_tracker.update_with_assignments(
+        [
+            TrackObservation3D(
+                camera_id="Cam_Carraio",
+                timestamp=5200.0,
+                class_label="car",
+                position=(-3.5, 0.0, 12.0),
+                confidence=0.91,
+                range_m=7.0,
+                bbox_2d=(0.30, 0.40, 0.60, 0.82),
+            ),
+            # Duplicate 'truck' detection of the same vehicle in the same camera batch
+            TrackObservation3D(
+                camera_id="Cam_Carraio",
+                timestamp=5200.0,
+                class_label="truck",
+                position=(-3.2, 0.0, 12.4),
+                confidence=0.52,
+                range_m=7.3,
+                bbox_2d=(0.31, 0.39, 0.61, 0.83),
+            ),
+        ],
+        now_ts=5200.0,
+    )
+    assert len(v_tracks_1) == 1, f"Intra-camera car+truck duplicate must yield 1 track, got {len(v_tracks_1)}"
+    assert v_assign_1[0] == v_assign_1[1]
+
+    # Cam_Portico sees 1 car in the shared zone, but projected 6.2m away due to bumper parallax + miscalibration
+    v_tracks_2 = v_tracker.update(
+        [
+            TrackObservation3D(
+                camera_id="Cam_Portico",
+                timestamp=5200.12,
+                class_label="car",
+                position=(2.5, 0.0, 13.5),
+                confidence=0.89,
+                range_m=11.5,
+            )
+        ],
+        now_ts=5200.12,
+    )
+    assert len(v_tracks_2) == 1, f"Logical cardinality (1 car in Cam_Carraio, 1 in Cam_Portico) must fuse into 1 track, got {len(v_tracks_2)}"
+    assert set(v_tracks_2[0].state.camera_sources) == {"Cam_Carraio", "Cam_Portico"}
+
+    # 4. Multi-person cardinality: 2 real people seen by Cam_Carraio & 2 seen by miscalibrated Cam_Ingresso -> exactly 2 tracks
+    p2_tracker = Kalman3DMultiTracker()
+    p2_t1 = p2_tracker.update(
+        [
+            TrackObservation3D("Cam_Carraio", 5300.0, "person", (-4.5, 0.0, 8.0), 0.93, range_m=6.0),
+            TrackObservation3D("Cam_Carraio", 5300.0, "person", (-1.5, 0.0, 8.5), 0.90, range_m=7.2),
+        ],
+        now_ts=5300.0,
+    )
+    assert len(p2_t1) == 2
+
+    # Cam_Ingresso sees both people shifted by ~1.8m -> must associate 1-to-1 and keep strictly 2 tracks (never 3 or 4)
+    p2_t2 = p2_tracker.update(
+        [
+            TrackObservation3D("Cam_Ingresso", 5300.1, "person", (-3.1, 0.0, 9.1), 0.86, range_m=7.5, is_panoramic=True),
+            TrackObservation3D("Cam_Ingresso", 5300.1, "person", (-0.1, 0.0, 9.6), 0.85, range_m=8.8, is_panoramic=True),
+        ],
+        now_ts=5300.1,
+    )
+    assert len(p2_t2) == 2, f"Expected strictly 2 tracks for 2 people seen by 2 cameras, got {len(p2_t2)}"
+    for tr in p2_t2:
+        assert set(tr.state.camera_sources) == {"Cam_Carraio", "Cam_Ingresso"}
+
+    print("[PASS] Multi-camera anti-cloning, 2D/3D coarse-class NMS, anti-ping-pong & logical zone cardinality cap")
+
+
 if __name__ == "__main__":
     test_optics_pinhole_and_panoramic()
     test_openvino_letterbox_and_ovdict_parsing()
@@ -857,5 +1024,6 @@ if __name__ == "__main__":
     test_multicam_portico_raycast_openvino_and_overlap_fusion()
     test_multicam_ingresso_180_equirectangular_raycast_and_3cam_fusion()
     test_multicam_stradina_180_equirectangular_4cam_openvino_and_overlap()
+    test_multicam_anti_cloning_cardinality_and_miscalibration_fusion()
     print("\nALL SPATIAL SERVER PIPELINE CHECKS PASSED!")
 
