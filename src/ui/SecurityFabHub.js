@@ -137,11 +137,24 @@ export class SecurityFabHub {
     this._activeHitlEvent = null;
     this._bioPlateTimer = null;
     this._unsubBioEvents = null;
+    this._unsubAutoEvents = null;
     this._unsubHaAuth = null;
 
+    this._alarmEntityId = 'sh3d.allarme';
+    this._alarmEntity = null;
+    this._alarmModalOpen = false;
+    this._alarmLoading = false;
+    this._alarmBusy = false;
+
     this._onKeyDown = (e) => {
-      if (e.key === 'Escape' && this.panelState === 'expanded') {
-        this.close();
+      if (e.key === 'Escape') {
+        if (this._alarmModalOpen) {
+          this.closeAlarmModal();
+          return;
+        }
+        if (this.panelState === 'expanded') {
+          this.close();
+        }
       }
     };
 
@@ -200,15 +213,6 @@ export class SecurityFabHub {
     if (this.camerasTrackEl) {
       this.camerasTrackEl.classList.toggle('layout-compact', isCompact);
       this.camerasTrackEl.dataset.layoutMode = mode;
-    }
-
-    if (this.layoutToggleBtn) {
-      this.layoutToggleBtn.classList.toggle('active', isCompact);
-      this.layoutToggleBtn.setAttribute('aria-checked', String(isCompact));
-      this.layoutToggleBtn.dataset.layoutMode = mode;
-      this.layoutToggleBtn.title = isCompact
-        ? 'Vista compatta 2×2 attiva • Clicca per vista proporzionata (2 + 180° intere)'
-        : 'Vista proporzionata (2 normali + 180° intere) • Clicca per vista compatta 2×2';
     }
 
     if (this.settingsLayoutPropBtn) {
@@ -284,15 +288,13 @@ export class SecurityFabHub {
           <div class="m3-sec-header-actions">
             <button
               type="button"
-              class="m3-icon-btn m3-layout-toggle-btn"
-              id="btn-sec-layout-toggle"
-              role="switch"
-              aria-checked="false"
-              title="Vista proporzionata (2 normali + 180° intere) • Clicca per vista compatta 2×2"
-              aria-label="Alterna vista proporzionata e vista compatta 2×2"
+              class="m3-icon-btn m3-alarm-header-btn"
+              id="btn-sec-alarm-control"
+              title="Gestisci stato allarme (sh3d.allarme)"
+              aria-label="Gestisci stato allarme sh3d.allarme"
             >
-              ${icon('layout-grid', { size: 15 })}
-              <span class="m3-layout-toggle-label">2×2</span>
+              ${icon('shield-alert', { size: 15 })}
+              <span class="m3-alarm-btn-label" id="sec-alarm-btn-label">Allarme</span>
             </button>
             <button type="button" class="m3-icon-btn m3-strip-toggle-btn" id="btn-sec-strip-toggle" title="Riduci a striscia in basso per vedere tutto il 3D" aria-label="Riduci a striscia in basso">
               ${icon('panel-bottom-close', { size: 17 })}
@@ -575,6 +577,24 @@ export class SecurityFabHub {
         <span class="m3-fab-label">Sicurezza</span>
         <span class="m3-fab-badge" id="sec-fab-cam-count">1</span>
       </button>
+
+      <div class="m3-alarm-modal-overlay" id="sec-alarm-modal-overlay" hidden aria-hidden="true">
+        <div class="m3-alarm-modal" id="sec-alarm-modal" role="dialog" aria-modal="true" aria-labelledby="sec-alarm-modal-title">
+          <header class="m3-alarm-modal-header">
+            <div class="m3-alarm-modal-title-wrap">
+              <span class="m3-alarm-modal-icon">${icon('siren', { size: 22 })}</span>
+              <div class="m3-alarm-modal-copy">
+                <h3 class="m3-alarm-modal-title" id="sec-alarm-modal-title">Allarme Casa</h3>
+                <code class="m3-alarm-modal-eid">sh3d.allarme</code>
+              </div>
+            </div>
+            <button type="button" class="m3-icon-btn" id="btn-sec-alarm-modal-close" title="Chiudi finestra allarme" aria-label="Chiudi finestra allarme">
+              ${icon('x', { size: 18 })}
+            </button>
+          </header>
+          <div class="m3-alarm-modal-body" id="sec-alarm-modal-body"></div>
+        </div>
+      </div>
     `;
 
     this.panelEl = this.container.querySelector('#m3-security-panel');
@@ -588,7 +608,13 @@ export class SecurityFabHub {
     this.replayBtn = this.container.querySelector('#btn-sec-mode-replay');
     this.settingsBtn = this.container.querySelector('#btn-sec-mode-settings');
     this.panelBodyEl = this.container.querySelector('#sec-panel-body');
-    this.layoutToggleBtn = this.container.querySelector('#btn-sec-layout-toggle');
+    this.alarmControlBtn = this.container.querySelector('#btn-sec-alarm-control');
+    this.alarmBtnLabelEl = this.container.querySelector('#sec-alarm-btn-label');
+    this.alarmModalOverlayEl = this.container.querySelector('#sec-alarm-modal-overlay');
+    this.alarmModalEl = this.container.querySelector('#sec-alarm-modal');
+    this.alarmModalTitleEl = this.container.querySelector('#sec-alarm-modal-title');
+    this.alarmModalBodyEl = this.container.querySelector('#sec-alarm-modal-body');
+    this.alarmModalCloseBtn = this.container.querySelector('#btn-sec-alarm-modal-close');
     this.stripToggleBtn = this.container.querySelector('#btn-sec-strip-toggle');
     this.closeBtn = this.container.querySelector('#btn-sec-close');
 
@@ -675,8 +701,19 @@ export class SecurityFabHub {
       else this.minimizeToStrip();
     });
 
-    this.layoutToggleBtn?.addEventListener('click', () => {
-      this.setGridLayoutMode(this.gridLayoutMode === 'compact' ? 'proportional' : 'compact');
+    this.alarmControlBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void this.openAlarmModal();
+    });
+
+    this.alarmModalCloseBtn?.addEventListener('click', () => this.closeAlarmModal());
+    this.alarmModalOverlayEl?.addEventListener('click', (e) => {
+      if (e.target === this.alarmModalOverlayEl) {
+        this.closeAlarmModal();
+      }
+    });
+    this.alarmModalEl?.addEventListener('click', (e) => {
+      e.stopPropagation();
     });
 
     this.stripExpandBtn?.addEventListener('click', () => this.openExpanded());
@@ -1010,6 +1047,27 @@ export class SecurityFabHub {
         this._pushLiveBiometricEvent(ev);
       });
     }
+
+    if (typeof this.spatialStreamClient.onAutomationEvent === 'function') {
+      this._unsubAutoEvents = this.spatialStreamClient.onAutomationEvent((msg) => {
+        if (msg?.type === 'virtual_entity_updated' && msg.entity?.entity_id === this._alarmEntityId) {
+          this._setAlarmEntityState(msg.entity);
+        } else if (msg?.type === 'virtual_entities_list' && Array.isArray(msg.entities)) {
+          const found = msg.entities.find((e) => e.entity_id === this._alarmEntityId) || null;
+          this._setAlarmEntityState(found);
+        }
+      });
+    }
+
+    this.spatialStreamClient.onStatusChange((connected) => {
+      if (connected) {
+        void this.refreshAlarmEntity();
+      }
+    });
+
+    if (this.spatialStreamClient.connected) {
+      void this.refreshAlarmEntity();
+    }
   }
 
   /**
@@ -1275,9 +1333,6 @@ export class SecurityFabHub {
     this.panelEl?.classList.toggle('mode-settings', isSettings);
     this.container?.classList.toggle('mode-settings', isSettings);
 
-    if (this.layoutToggleBtn) {
-      this.layoutToggleBtn.hidden = isSettings;
-    }
     if (this.historySectionEl) {
       this.historySectionEl.hidden = !isReplay;
     }
@@ -2466,6 +2521,10 @@ export class SecurityFabHub {
       this._unsubBioEvents();
       this._unsubBioEvents = null;
     }
+    if (typeof this._unsubAutoEvents === 'function') {
+      this._unsubAutoEvents();
+      this._unsubAutoEvents = null;
+    }
     if (typeof this._unsubHaAuth === 'function') {
       this._unsubHaAuth();
       this._unsubHaAuth = null;
@@ -2483,5 +2542,244 @@ export class SecurityFabHub {
     }
     this.disconnectAllLiveStreams();
     this.recordingManager?.detachAll?.();
+  }
+
+  // --- Controllo Rapido Allarme Famiglia (`sh3d.allarme`) ---
+
+  _isAlarmEntityActiveState(entity) {
+    if (!entity) return false;
+    const st = String(entity.state ?? '').trim().toLowerCase();
+    return Boolean(st && !['off', 'false', '0', 'disarmed', 'disarmato', 'spento', 'idle', 'none'].includes(st));
+  }
+
+  _setAlarmEntityState(entity) {
+    this._alarmEntity = entity || null;
+    const isActive = this._isAlarmEntityActiveState(this._alarmEntity);
+    if (this.alarmControlBtn) {
+      this.alarmControlBtn.classList.toggle('is-armed', isActive);
+      const stText = this._alarmEntity?.state ? ` (${this._alarmEntity.state})` : '';
+      this.alarmControlBtn.title = `Gestisci stato allarme sh3d.allarme${stText}`;
+    }
+    if (this.alarmBtnLabelEl) {
+      this.alarmBtnLabelEl.textContent = isActive ? String(this._alarmEntity.state).toUpperCase() : 'Allarme';
+    }
+    if (this._alarmModalOpen) {
+      this._renderAlarmModalBody();
+    }
+  }
+
+  async refreshAlarmEntity() {
+    if (typeof this.spatialStreamClient?.fetchVirtualEntities !== 'function') return null;
+    this._alarmLoading = true;
+    if (this._alarmModalOpen) this._renderAlarmModalBody();
+    const res = await this.spatialStreamClient.fetchVirtualEntities().catch(() => null);
+    this._alarmLoading = false;
+    if (res && Array.isArray(res.virtual_entities)) {
+      const found = res.virtual_entities.find((e) => e.entity_id === this._alarmEntityId) || null;
+      this._setAlarmEntityState(found);
+      return found;
+    }
+    if (this._alarmModalOpen) this._renderAlarmModalBody();
+    return this._alarmEntity;
+  }
+
+  async openAlarmModal() {
+    if (!this.alarmModalOverlayEl) return;
+    this._alarmModalOpen = true;
+    this.container?.classList.add('alarm-modal-open');
+    this.alarmModalOverlayEl.hidden = false;
+    this.alarmModalOverlayEl.setAttribute('aria-hidden', 'false');
+    this._renderAlarmModalBody();
+    await this.refreshAlarmEntity();
+  }
+
+  closeAlarmModal() {
+    if (!this.alarmModalOverlayEl) return;
+    this._alarmModalOpen = false;
+    this.container?.classList.remove('alarm-modal-open');
+    this.alarmModalOverlayEl.hidden = true;
+    this.alarmModalOverlayEl.setAttribute('aria-hidden', 'true');
+  }
+
+  async _applyAlarmEntityState({ state = null, operation = 'set' } = {}) {
+    if (this._alarmBusy || typeof this.spatialStreamClient?.setVirtualEntityState !== 'function') return;
+    this._alarmBusy = true;
+    this._renderAlarmModalBody();
+    try {
+      const res = await this.spatialStreamClient.setVirtualEntityState(this._alarmEntityId, {
+        state,
+        operation,
+      });
+      if (res?.entity) {
+        this._setAlarmEntityState(res.entity);
+      }
+    } finally {
+      this._alarmBusy = false;
+      if (this._alarmModalOpen) {
+        this._renderAlarmModalBody();
+      }
+    }
+  }
+
+  _renderAlarmModalBody() {
+    if (!this.alarmModalBodyEl) return;
+    const entity = this._alarmEntity;
+    if (this.alarmModalTitleEl) {
+      this.alarmModalTitleEl.textContent = entity?.name || 'Allarme Casa';
+    }
+
+    if (this._alarmLoading && !entity) {
+      this.alarmModalBodyEl.innerHTML = `
+        <div class="m3-alarm-empty">
+          <div class="m3-alarm-empty-title">Caricamento stato allarme...</div>
+        </div>
+      `;
+      return;
+    }
+
+    if (!entity) {
+      this.alarmModalBodyEl.innerHTML = `
+        <div class="m3-alarm-empty">
+          <div class="m3-alarm-empty-icon">${icon('shield-alert', { size: 36 })}</div>
+          <div class="m3-alarm-empty-title">Entità <code>sh3d.allarme</code> non ancora creata</div>
+          <p class="m3-alarm-empty-sub">
+            L'amministratore può crearla da <strong>Impostazioni → Automazioni → Entità</strong> con ID <code>sh3d.allarme</code> (tipo Interruttore ON/OFF, Selettore modalità, ecc.).
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    const domain = String(entity.domain || 'switch').toLowerCase();
+    const currState = String(entity.state ?? '');
+    const isActive = this._isAlarmEntityActiveState(entity);
+    const disabledAttr = this._alarmBusy ? 'disabled' : '';
+
+    let controlBlockHtml = '';
+
+    if (domain === 'switch' || domain === 'boolean') {
+      const isOn = currState.toLowerCase() === 'on' || currState.toLowerCase() === 'true';
+      controlBlockHtml = `
+        <div class="m3-alarm-switch-panel ${isOn ? 'is-on' : 'is-off'}">
+          <div class="m3-alarm-state-hero">
+            <span class="m3-alarm-state-dot ${isOn ? 'on' : 'off'}"></span>
+            <span class="m3-alarm-state-text">${isOn ? 'ALLARME ATTIVO (ON)' : 'ALLARME DISATTIVO (OFF)'}</span>
+          </div>
+          <button
+            type="button"
+            class="m3-alarm-big-switch ${isOn ? 'checked' : ''}"
+            id="btn-alarm-modal-switch"
+            role="switch"
+            aria-checked="${isOn}"
+            aria-label="Attiva o disattiva allarme"
+            ${disabledAttr}
+          >
+            <span class="m3-alarm-big-switch-thumb"></span>
+          </button>
+          <div class="m3-alarm-action-pair">
+            <button
+              type="button"
+              class="m3-alarm-mode-btn ${isOn ? 'active-danger' : ''}"
+              id="btn-alarm-modal-on"
+              ${disabledAttr}
+            >
+              ${icon('shield-alert', { size: 18 })}
+              <span>ATTIVA</span>
+            </button>
+            <button
+              type="button"
+              class="m3-alarm-mode-btn ${!isOn ? 'active-safe' : ''}"
+              id="btn-alarm-modal-off"
+              ${disabledAttr}
+            >
+              ${icon('shield-check', { size: 18 })}
+              <span>DISATTIVA</span>
+            </button>
+          </div>
+        </div>
+      `;
+    } else if (domain === 'select' && Array.isArray(entity.options) && entity.options.length > 0) {
+      const optionsHtml = entity.options
+        .map((opt) => {
+          const isSelected = currState === opt;
+          return `
+            <button
+              type="button"
+              class="m3-alarm-option-item ${isSelected ? 'selected' : ''}"
+              data-alarm-option="${escapeHtml(opt)}"
+              role="radio"
+              aria-checked="${isSelected}"
+              ${disabledAttr}
+            >
+              <span class="m3-alarm-option-radio"></span>
+              <span class="m3-alarm-option-label">${escapeHtml(opt)}</span>
+              ${isSelected ? `<span class="m3-alarm-option-check">${icon('check', { size: 18 })}</span>` : ''}
+            </button>
+          `;
+        })
+        .join('');
+
+      controlBlockHtml = `
+        <div class="m3-alarm-select-panel">
+          <div class="m3-alarm-state-hero">
+            <span class="m3-alarm-state-dot ${isActive ? 'on' : 'off'}"></span>
+            <span class="m3-alarm-state-text">Stato attuale: <strong>${escapeHtml(currState)}</strong></span>
+          </div>
+          <div class="m3-alarm-options-list" role="radiogroup" aria-label="Seleziona modalità allarme">
+            ${optionsHtml}
+          </div>
+        </div>
+      `;
+    } else if (domain === 'number') {
+      controlBlockHtml = `
+        <div class="m3-alarm-input-panel">
+          <div class="m3-alarm-state-hero">
+            <span class="m3-alarm-state-dot ${isActive ? 'on' : 'off'}"></span>
+            <span class="m3-alarm-state-text">Valore attuale: <strong>${escapeHtml(currState)}</strong></span>
+          </div>
+          <div class="m3-alarm-input-row">
+            <input type="number" step="any" class="m3-alarm-large-input" id="inp-alarm-modal-value" value="${escapeHtml(currState)}" ${disabledAttr} />
+            <button type="button" class="m3-alarm-submit-btn" id="btn-alarm-modal-apply" ${disabledAttr}>Applica</button>
+          </div>
+        </div>
+      `;
+    } else {
+      controlBlockHtml = `
+        <div class="m3-alarm-input-panel">
+          <div class="m3-alarm-state-hero">
+            <span class="m3-alarm-state-dot ${isActive ? 'on' : 'off'}"></span>
+            <span class="m3-alarm-state-text">Stato attuale: <strong>${escapeHtml(currState)}</strong></span>
+          </div>
+          <div class="m3-alarm-input-row">
+            <input type="text" class="m3-alarm-large-input" id="inp-alarm-modal-value" value="${escapeHtml(currState)}" ${disabledAttr} />
+            <button type="button" class="m3-alarm-submit-btn" id="btn-alarm-modal-apply" ${disabledAttr}>Imposta</button>
+          </div>
+        </div>
+      `;
+    }
+
+    this.alarmModalBodyEl.innerHTML = controlBlockHtml;
+
+    this.alarmModalBodyEl.querySelector('#btn-alarm-modal-switch')?.addEventListener('click', () => {
+      void this._applyAlarmEntityState({ operation: 'toggle' });
+    });
+    this.alarmModalBodyEl.querySelector('#btn-alarm-modal-on')?.addEventListener('click', () => {
+      void this._applyAlarmEntityState({ state: 'on', operation: 'turn_on' });
+    });
+    this.alarmModalBodyEl.querySelector('#btn-alarm-modal-off')?.addEventListener('click', () => {
+      void this._applyAlarmEntityState({ state: 'off', operation: 'turn_off' });
+    });
+    this.alarmModalBodyEl.querySelectorAll('[data-alarm-option]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const nextOpt = btn.dataset.alarmOption;
+        if (nextOpt !== undefined) {
+          void this._applyAlarmEntityState({ state: nextOpt, operation: 'set' });
+        }
+      });
+    });
+    this.alarmModalBodyEl.querySelector('#btn-alarm-modal-apply')?.addEventListener('click', () => {
+      const val = this.alarmModalBodyEl.querySelector('#inp-alarm-modal-value')?.value ?? '';
+      void this._applyAlarmEntityState({ state: val, operation: 'set' });
+    });
   }
 }

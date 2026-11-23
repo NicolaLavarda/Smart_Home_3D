@@ -94,7 +94,6 @@ class AutomationEngineService:
         self._lock = asyncio.Lock()
 
         self.reload_from_repository()
-        self._ensure_default_starter_entities()
 
     def reload_from_repository(self) -> None:
         """Load persisted spatial zones, virtual entities, and automation rules from SQLite."""
@@ -121,43 +120,6 @@ class AutomationEngineService:
                 self.rules[rule.rule_id] = rule
             except Exception as exc:
                 logger.warning("Skipping invalid automation rule from DB: %s", exc)
-
-    def _ensure_default_starter_entities(self) -> None:
-        """Seed core virtual alarm/security entities on first boot so they are immediately available."""
-        defaults = [
-            VirtualEntityDefinition(
-                entity_id="sh3d.allarme_perimetrale",
-                name="Allarme Perimetrale 3D",
-                domain="switch",
-                state="off",
-                icon="shield-alert",
-                attributes={"friendly_name": "Allarme Perimetrale 3D"},
-            ),
-            VirtualEntityDefinition(
-                entity_id="sh3d.sirena_allarme",
-                name="Stato Sirena / Allarme Scattato",
-                domain="switch",
-                state="off",
-                icon="siren",
-                attributes={"friendly_name": "Stato Sirena / Allarme Scattato"},
-            ),
-            VirtualEntityDefinition(
-                entity_id="sh3d.modalita_sicurezza",
-                name="Modalità Sicurezza Casa",
-                domain="select",
-                state="disarmed",
-                options=["disarmed", "armed_home", "armed_night", "armed_away"],
-                icon="shield-check",
-                attributes={"friendly_name": "Modalità Sicurezza Casa"},
-            ),
-        ]
-        for item in defaults:
-            if item.entity_id not in self.virtual_entities:
-                self.virtual_entities[item.entity_id] = item
-                try:
-                    self.repository.upsert_virtual_entity(item.model_dump())
-                except Exception as exc:
-                    logger.warning("Failed to seed default virtual entity %s: %s", item.entity_id, exc)
 
     async def start(self) -> None:
         if self._clock_task is None or self._clock_task.done():

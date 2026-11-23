@@ -169,9 +169,11 @@ def test_automation_engine_end_to_end_rules_and_if_else_actions(tmp_path: Path) 
         )
         assert zone.zone_id in engine.zones
 
-        # 2. Arm the internal alarm entity (`sh3d.allarme_perimetrale` = 'on')
+        # 2. Create & arm the internal alarm entities explicitly (no pre-seeded defaults)
         await engine.set_virtual_entity_state("sh3d.allarme_perimetrale", "on", operation="turn_on")
+        await engine.set_virtual_entity_state("sh3d.sirena_allarme", "off", operation="turn_off")
         assert engine.virtual_entities["sh3d.allarme_perimetrale"].state == "on"
+        assert engine.virtual_entities["sh3d.sirena_allarme"].state == "off"
 
         # 3. Create an automation rule:
         # WHEN person (anyone EXCEPT Nicola) enters zone_ingresso
@@ -270,8 +272,21 @@ def test_automations_rest_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         assert boot.status_code == 200
         data = boot.json()
         assert data["status"] == "ok"
-        assert len(data["virtual_entities"]) >= 3
+        assert data["virtual_entities"] == []
         assert "sunrise_hhmm" in data["sun"]
+
+        # Create sh3d.allarme via PUT
+        create_ve = client.put(
+            "/api/v1/automations/virtual-entities",
+            json={
+                "entity_id": "sh3d.allarme",
+                "name": "Allarme Casa",
+                "domain": "switch",
+                "state": "off",
+            },
+        )
+        assert create_ve.status_code == 200
+        assert create_ve.json()["entity"]["entity_id"] == "sh3d.allarme"
 
         # Create a perimeter zone via PUT
         z_resp = client.put(
@@ -289,7 +304,7 @@ def test_automations_rest_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
         # Toggle virtual entity state
         ve_resp = client.post(
-            "/api/v1/automations/virtual-entities/sh3d.allarme_perimetrale/state",
+            "/api/v1/automations/virtual-entities/sh3d.allarme/state",
             json={"operation": "turn_on"},
         )
         assert ve_resp.status_code == 200

@@ -4944,25 +4944,375 @@ body, html {
   flex-shrink: 0;
 }
 
-.m3-layout-toggle-btn {
+.security-hub-root.alarm-modal-open {
+  z-index: 140;
+}
+
+.m3-alarm-header-btn {
   width: auto;
-  padding: 0 10px;
-  gap: 5px;
-  font-size: 11px;
+  padding: 0 11px;
+  gap: 6px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  background: rgba(220, 38, 38, 0.24);
+  border-color: rgba(248, 113, 113, 0.58);
+  color: #fecaca;
+  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
 }
 
-.m3-layout-toggle-btn.active {
-  background: rgba(56, 189, 248, 0.22);
-  border-color: rgba(56, 189, 248, 0.55);
-  color: #bae6fd;
+.m3-alarm-header-btn:hover {
+  background: rgba(220, 38, 38, 0.38);
+  border-color: rgba(252, 165, 165, 0.85);
+  color: #ffffff;
 }
 
-.m3-layout-toggle-label {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
+.m3-alarm-header-btn.is-armed {
+  background: #dc2626;
+  border-color: #fca5a5;
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.55);
+}
+
+.m3-alarm-btn-label {
   line-height: 1;
+  white-space: nowrap;
+}
+
+/* Big Alarm Pop-Up Modal (accessible to all family members) */
+.m3-alarm-modal-overlay {
+  pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 145;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top, 16px)) max(16px, env(safe-area-inset-right, 16px)) max(16px, env(safe-area-inset-bottom, 16px)) max(16px, env(safe-area-inset-left, 16px));
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.m3-alarm-modal-overlay[hidden] {
+  display: none !important;
+}
+
+.m3-alarm-modal {
+  width: min(460px, 100%);
+  max-height: min(86dvh, 680px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 26px;
+  background: var(--md-surface-container-low);
+  border: 1px solid rgba(248, 113, 113, 0.36);
+  box-shadow: 0 28px 72px rgba(2, 6, 23, 0.85);
+  overflow: hidden;
+}
+
+.m3-alarm-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--md-outline-variant);
+  background: rgba(220, 38, 38, 0.10);
+}
+
+.m3-alarm-modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.m3-alarm-modal-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: rgba(220, 38, 38, 0.22);
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  color: #fca5a5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.m3-alarm-modal-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.m3-alarm-modal-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m3-alarm-modal-eid {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #fca5a5;
+}
+
+.m3-alarm-modal-body {
+  padding: 22px 20px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.m3-alarm-state-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--md-surface-container);
+  border: 1px solid var(--md-outline-variant);
+}
+
+.m3-alarm-state-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.m3-alarm-state-dot.on {
+  background: #ef4444;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.85);
+}
+
+.m3-alarm-state-dot.off {
+  background: #10b981;
+}
+
+.m3-alarm-state-text {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: 0.01em;
+}
+
+.m3-alarm-switch-panel,
+.m3-alarm-select-panel,
+.m3-alarm-input-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18px;
+}
+
+.m3-alarm-big-switch {
+  align-self: center;
+  position: relative;
+  width: 118px;
+  height: 62px;
+  border-radius: 999px;
+  border: 2px solid rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.85);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.m3-alarm-big-switch-thumb {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  transition: transform 0.2s var(--md-ease-standard), background 0.2s ease;
+}
+
+.m3-alarm-big-switch.checked {
+  background: #dc2626;
+  border-color: #fca5a5;
+  box-shadow: 0 0 28px rgba(220, 38, 38, 0.45);
+}
+
+.m3-alarm-big-switch.checked .m3-alarm-big-switch-thumb {
+  transform: translateX(56px);
+  background: #ffffff;
+}
+
+.m3-alarm-action-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.m3-alarm-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 50px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container);
+  color: #cbd5e1;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.m3-alarm-mode-btn.active-danger {
+  background: #dc2626;
+  border-color: #fca5a5;
+  color: #ffffff;
+}
+
+.m3-alarm-mode-btn.active-safe {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(52, 211, 153, 0.55);
+  color: #d1fae5;
+}
+
+.m3-alarm-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.m3-alarm-option-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 54px;
+  padding: 12px 16px;
+  border-radius: 15px;
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container);
+  color: var(--text-main);
+  font-size: 15.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.m3-alarm-option-item:hover {
+  background: var(--md-surface-container-high);
+}
+
+.m3-alarm-option-item.selected {
+  background: rgba(220, 38, 38, 0.22);
+  border-color: rgba(248, 113, 113, 0.72);
+  color: #ffffff;
+}
+
+.m3-alarm-option-radio {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(148, 163, 184, 0.65);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.m3-alarm-option-item.selected .m3-alarm-option-radio {
+  border-color: #f87171;
+}
+
+.m3-alarm-option-item.selected .m3-alarm-option-radio::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+.m3-alarm-option-label {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.m3-alarm-option-check {
+  color: #fca5a5;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.m3-alarm-input-row {
+  display: flex;
+  gap: 10px;
+}
+
+.m3-alarm-large-input {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  padding: 0 14px;
+  border-radius: 13px;
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container);
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.m3-alarm-submit-btn {
+  height: 48px;
+  padding: 0 18px;
+  border-radius: 13px;
+  border: none;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 14.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.m3-alarm-empty {
+  padding: 18px 10px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.m3-alarm-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  background: rgba(220, 38, 38, 0.14);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.m3-alarm-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.m3-alarm-empty-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 36ch;
 }
 
 /* Strip Toolbar (nascosta in modalità espansa) */

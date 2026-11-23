@@ -73,6 +73,13 @@ export class AutomationStudioUI {
 
     this.editingRule = null;
     this.editingZone = null;
+    this.newEntityDraft = {
+      entity_id: '',
+      name: '',
+      domain: 'switch',
+      state: 'off',
+      optionsText: 'disarmed, armed_home, armed_away',
+    };
     this.statusMessage = null;
 
     this.onOpenCallback = null;
@@ -684,7 +691,7 @@ export class AutomationStudioUI {
             type: 'entity_state',
             children: [],
             params: {
-              entity_id: 'sh3d.allarme_perimetrale',
+              entity_id: 'sh3d.allarme',
               operator: '==',
               value: 'on',
             },
@@ -693,17 +700,6 @@ export class AutomationStudioUI {
         params: {},
       },
       actions: [
-        {
-          action_id: uid('act'),
-          type: 'set_virtual_entity',
-          params: {
-            entity_id: 'sh3d.sirena_allarme',
-            operation: 'turn_on',
-            state: 'on',
-          },
-          then_actions: [],
-          else_actions: [],
-        },
         {
           action_id: uid('act'),
           type: 'ui_alert',
@@ -2097,7 +2093,37 @@ export class AutomationStudioUI {
   // TAB 3: INTERNAL PROGRAM VIRTUAL ENTITIES (sh3d.*)
   // =========================================================================
 
+  _parseOptionsText(raw) {
+    const seen = new Set();
+    const out = [];
+    for (const part of String(raw || '').split(',')) {
+      const clean = part.trim();
+      if (clean && !seen.has(clean)) {
+        seen.add(clean);
+        out.push(clean);
+      }
+    }
+    return out;
+  }
+
   _renderVirtualEntitiesTab() {
+    const draft = this.newEntityDraft || {
+      entity_id: '',
+      name: '',
+      domain: 'switch',
+      state: 'off',
+      optionsText: 'disarmed, armed_home, armed_away',
+    };
+    const draftDomain = draft.domain || 'switch';
+    const parsedOptions = this._parseOptionsText(draft.optionsText);
+    const effectiveOptions = parsedOptions.length > 0 ? parsedOptions : ['opzione_1', 'opzione_2'];
+    const selectedInitialState =
+      draftDomain === 'select'
+        ? (effectiveOptions.includes(draft.state) ? draft.state : effectiveOptions[0])
+        : draftDomain === 'switch'
+          ? (String(draft.state).toLowerCase() === 'on' ? 'on' : 'off')
+          : (draft.state ?? '');
+
     const rowsHtml = this.virtualEntities
       .map((ve) => {
         const isSwitch = ve.domain === 'switch' || ve.domain === 'boolean';
@@ -2138,6 +2164,9 @@ export class AutomationStudioUI {
               </div>
               <div class="auto-item-actions">
                 ${controlHtml}
+                <button type="button" class="auto-btn icon-only ghost xs" data-ve-edit="${escapeHtml(ve.entity_id)}" title="Modifica entità">
+                  ${icon('sliders-horizontal', { size: 12 })}
+                </button>
                 <button type="button" class="auto-btn icon-only danger xs" data-ve-del="${escapeHtml(ve.entity_id)}" title="Elimina entità">
                   ${icon('x', { size: 13 })}
                 </button>
@@ -2148,36 +2177,64 @@ export class AutomationStudioUI {
       })
       .join('');
 
+    let initialStateControlHtml = '';
+    if (draftDomain === 'switch') {
+      initialStateControlHtml = `
+        <select id="ve-new-state">
+          <option value="off" ${selectedInitialState === 'off' ? 'selected' : ''}>off</option>
+          <option value="on" ${selectedInitialState === 'on' ? 'selected' : ''}>on</option>
+        </select>
+      `;
+    } else if (draftDomain === 'select') {
+      initialStateControlHtml = `
+        <select id="ve-new-state">
+          ${effectiveOptions.map((opt) => `<option value="${escapeHtml(opt)}" ${selectedInitialState === opt ? 'selected' : ''}>${escapeHtml(opt)}</option>`).join('')}
+        </select>
+      `;
+    } else if (draftDomain === 'number') {
+      initialStateControlHtml = `<input type="number" step="any" id="ve-new-state" value="${escapeHtml(selectedInitialState || '0')}" />`;
+    } else {
+      initialStateControlHtml = `<input type="text" id="ve-new-state" value="${escapeHtml(selectedInitialState)}" placeholder="Valore iniziale" />`;
+    }
+
     return `
       <section class="auto-block is-first">
         <div class="auto-block-header">
-          <h3 class="auto-block-title">Nuova entità interna (sh3d.*)</h3>
+          <h3 class="auto-block-title">Nuova o modifica entità (sh3d.*)</h3>
         </div>
         <div class="auto-grid-2">
           <label class="auto-field">
             <span>ID entità</span>
-            <input type="text" id="ve-new-id" placeholder="sh3d.allarme_notte" />
+            <input type="text" id="ve-new-id" value="${escapeHtml(draft.entity_id)}" placeholder="sh3d.allarme_notte" />
           </label>
           <label class="auto-field">
             <span>Nome</span>
-            <input type="text" id="ve-new-name" placeholder="Allarme Notturno" />
+            <input type="text" id="ve-new-name" value="${escapeHtml(draft.name)}" placeholder="Allarme Notturno" />
           </label>
           <label class="auto-field">
             <span>Tipo</span>
             <select id="ve-new-domain">
-              <option value="switch">Interruttore ON/OFF</option>
-              <option value="select">Selettore modalità</option>
-              <option value="number">Valore numerico</option>
-              <option value="sensor">Testo / stato</option>
+              <option value="switch" ${draftDomain === 'switch' ? 'selected' : ''}>Interruttore ON/OFF</option>
+              <option value="select" ${draftDomain === 'select' ? 'selected' : ''}>Selettore modalità</option>
+              <option value="number" ${draftDomain === 'number' ? 'selected' : ''}>Valore numerico</option>
+              <option value="sensor" ${draftDomain === 'sensor' ? 'selected' : ''}>Testo / stato</option>
             </select>
           </label>
           <label class="auto-field">
             <span>Stato iniziale</span>
-            <input type="text" id="ve-new-state" value="off" />
+            ${initialStateControlHtml}
           </label>
+          ${
+            draftDomain === 'select'
+              ? `<label class="auto-field span-2">
+                   <span>Stati possibili (separati da virgola)</span>
+                   <input type="text" id="ve-new-options" value="${escapeHtml(draft.optionsText)}" placeholder="es. disarmed, armed_home, armed_night, armed_away" />
+                 </label>`
+              : ''
+          }
         </div>
         <button type="button" class="auto-btn tonal sm full" id="btn-ve-create">
-          ${icon('plus', { size: 14 })} <span>Crea entità</span>
+          ${icon('plus', { size: 14 })} <span>Salva entità</span>
         </button>
       </section>
 
@@ -2188,26 +2245,123 @@ export class AutomationStudioUI {
   }
 
   _bindVirtualEntitiesEvents() {
+    const draft = this.newEntityDraft;
+    const idInp = this.panelEl.querySelector('#ve-new-id');
+    const nameInp = this.panelEl.querySelector('#ve-new-name');
+    const domainSel = this.panelEl.querySelector('#ve-new-domain');
+    const stateInp = this.panelEl.querySelector('#ve-new-state');
+    const optionsInp = this.panelEl.querySelector('#ve-new-options');
+
+    idInp?.addEventListener('input', (e) => {
+      draft.entity_id = e.target.value;
+    });
+    nameInp?.addEventListener('input', (e) => {
+      draft.name = e.target.value;
+    });
+    stateInp?.addEventListener('input', (e) => {
+      draft.state = e.target.value;
+    });
+    stateInp?.addEventListener('change', (e) => {
+      draft.state = e.target.value;
+    });
+
+    domainSel?.addEventListener('change', (e) => {
+      const nextDomain = e.target.value;
+      draft.domain = nextDomain;
+      if (nextDomain === 'switch') {
+        draft.state = 'off';
+      } else if (nextDomain === 'select') {
+        const opts = this._parseOptionsText(draft.optionsText);
+        if (opts.length === 0) {
+          draft.optionsText = 'disarmed, armed_home, armed_away';
+          draft.state = 'disarmed';
+        } else if (!opts.includes(draft.state)) {
+          draft.state = opts[0];
+        }
+      } else if (nextDomain === 'number') {
+        draft.state = Number.isFinite(Number(draft.state)) && draft.state !== '' ? draft.state : '0';
+      }
+      this.render();
+    });
+
+    optionsInp?.addEventListener('input', (e) => {
+      draft.optionsText = e.target.value;
+      const opts = this._parseOptionsText(draft.optionsText);
+      const stateSelectEl = this.panelEl.querySelector('#ve-new-state');
+      if (stateSelectEl && stateSelectEl.tagName === 'SELECT') {
+        const effective = opts.length > 0 ? opts : ['opzione_1', 'opzione_2'];
+        if (!effective.includes(draft.state)) {
+          draft.state = effective[0];
+        }
+        stateSelectEl.innerHTML = effective
+          .map((opt) => `<option value="${escapeHtml(opt)}" ${draft.state === opt ? 'selected' : ''}>${escapeHtml(opt)}</option>`)
+          .join('');
+      }
+    });
+
     this.panelEl.querySelector('#btn-ve-create')?.addEventListener('click', async () => {
-      const rawId = this.panelEl.querySelector('#ve-new-id')?.value?.trim() || '';
-      const rawName = this.panelEl.querySelector('#ve-new-name')?.value?.trim() || '';
-      const domain = this.panelEl.querySelector('#ve-new-domain')?.value || 'switch';
-      const state = this.panelEl.querySelector('#ve-new-state')?.value?.trim() || 'off';
+      const rawId = (draft.entity_id || '').trim();
+      const rawName = (draft.name || '').trim();
+      const domain = draft.domain || 'switch';
+      let state = String(draft.state ?? '').trim();
+      let options = [];
+
       if (!rawId || !rawName) {
         this.setStatus('Specifica ID e nome per la nuova entità.', 'error');
         return;
       }
+
+      if (domain === 'select') {
+        options = this._parseOptionsText(draft.optionsText);
+        if (options.length < 2) {
+          this.setStatus('Inserisci almeno 2 stati possibili separati da virgola per il selettore.', 'error');
+          return;
+        }
+        if (!state || !options.includes(state)) {
+          state = options[0];
+        }
+      } else if (!state) {
+        state = domain === 'number' ? '0' : 'off';
+      }
+
       const res = await this.spatialStreamClient?.upsertVirtualEntity?.({
         entity_id: rawId,
         name: rawName,
         domain,
         state,
-        options: domain === 'select' ? ['disarmed', 'armed_home', 'armed_away'] : [],
+        options,
       });
       if (res?.status === 'ok') {
-        this.setStatus(`Entità ${res.entity.entity_id} creata.`, 'success');
+        this.newEntityDraft = {
+          entity_id: '',
+          name: '',
+          domain: 'switch',
+          state: 'off',
+          optionsText: 'disarmed, armed_home, armed_away',
+        };
+        this.setStatus(`Entità ${res.entity.entity_id} salvata.`, 'success');
         await this.refreshBootstrapData();
+      } else {
+        this.setStatus('Errore durante il salvataggio dell\'entità.', 'error');
       }
+    });
+
+    this.panelEl.querySelectorAll('[data-ve-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const eid = btn.dataset.veEdit;
+        const found = this.virtualEntities.find((e) => e.entity_id === eid);
+        if (!found) return;
+        this.newEntityDraft = {
+          entity_id: found.entity_id,
+          name: found.name,
+          domain: found.domain === 'boolean' ? 'switch' : (found.domain || 'switch'),
+          state: String(found.state ?? ''),
+          optionsText: Array.isArray(found.options) && found.options.length > 0
+            ? found.options.join(', ')
+            : 'disarmed, armed_home, armed_away',
+        };
+        this.render();
+      });
     });
 
     this.panelEl.querySelectorAll('[data-ve-toggle]').forEach((btn) => {

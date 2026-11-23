@@ -1838,23 +1838,44 @@ def test_f17_panoramic_aspect_preservation_ordering_and_layout_switch():
 
       const orderedIds = hubRoot.querySelectorAll('.m3-cam-tile').map((t) => t.dataset.cameraId);
       const trackEl = hubRoot.querySelector('#sec-cameras-track');
-      const toggleBtn = hubRoot.querySelector('#btn-sec-layout-toggle');
+      const layoutPropBtn = hubRoot.querySelector('#btn-sec-settings-layout-prop');
+      const layoutCompactBtn = hubRoot.querySelector('#btn-sec-settings-layout-compact');
+      const alarmBtn = hubRoot.querySelector('#btn-sec-alarm-control');
 
       // Default: modalità proporzionata (2 normali affiancate + 180° una sotto l'altra = 3 righe)
       const defaultLayout = hub.gridLayoutMode;
       const defaultHasCompact = trackEl.classList.contains('layout-compact');
-      const defaultAriaChecked = toggleBtn.getAttribute('aria-checked');
+      const defaultAriaChecked = layoutCompactBtn.getAttribute('aria-pressed');
 
-      // Click switch -> modalità compatta 2x2
-      toggleBtn.click();
+      // Click in Impostazioni -> modalità compatta 2x2
+      layoutCompactBtn.click();
       const afterToggleLayout = hub.gridLayoutMode;
       const afterToggleHasCompact = trackEl.classList.contains('layout-compact');
-      const afterToggleAriaChecked = toggleBtn.getAttribute('aria-checked');
+      const afterToggleAriaChecked = layoutCompactBtn.getAttribute('aria-pressed');
 
-      // Click di nuovo -> torna proporzionata
-      toggleBtn.click();
+      // Click di nuovo su Proporzionata -> torna proporzionata
+      layoutPropBtn.click();
       const restoredLayout = hub.gridLayoutMode;
       const restoredHasCompact = trackEl.classList.contains('layout-compact');
+      const alarmBtnExists = Boolean(alarmBtn);
+
+      // Verifica modale Allarme (switch & select dinamici per sh3d.allarme)
+      alarmBtn.click();
+      const alarmOverlay = hubRoot.querySelector('#sec-alarm-modal-overlay');
+      const alarmOpened = Boolean(alarmOverlay && !alarmOverlay.hidden);
+      const emptyMsgPresent = Boolean(hubRoot.querySelector('.m3-alarm-empty'));
+      hub._setAlarmEntityState({{ entity_id: 'sh3d.allarme', name: 'Allarme', domain: 'switch', state: 'off' }});
+      const switchModeRendered = Boolean(hubRoot.querySelector('#btn-alarm-modal-switch'));
+      hub._setAlarmEntityState({{
+        entity_id: 'sh3d.allarme',
+        name: 'Allarme',
+        domain: 'select',
+        state: 'casa',
+        options: ['disattivato', 'casa', 'notte'],
+      }});
+      const selectOptionsCount = hubRoot.querySelectorAll('[data-alarm-option]').length;
+      hub.closeAlarmModal();
+      const alarmClosed = Boolean(alarmOverlay && alarmOverlay.hidden);
 
       // 3. Verifica che un evento loadedmetadata temporaneo 640x360 NON tolga is-panoramic a Cam_Ingresso,
       //    e che un successivo resize 1536x576 aggiorni --cam-aspect a 2.6667 mantenendo is-panoramic
@@ -1887,6 +1908,12 @@ def test_f17_panoramic_aspect_preservation_ordering_and_layout_switch():
         afterToggleAriaChecked,
         restoredLayout,
         restoredHasCompact,
+        alarmBtnExists,
+        alarmOpened,
+        emptyMsgPresent,
+        switchModeRendered,
+        selectOptionsCount,
+        alarmClosed,
         ingStillPanoAfter16x9,
         ingAspectAfter16x9,
         ingStillPanoAfterSub,
@@ -1909,6 +1936,12 @@ def test_f17_panoramic_aspect_preservation_ordering_and_layout_switch():
     assert d["afterToggleAriaChecked"] == "true"
     assert d["restoredLayout"] == "proportional"
     assert d["restoredHasCompact"] is False
+    assert d["alarmBtnExists"] is True
+    assert d["alarmOpened"] is True
+    assert d["emptyMsgPresent"] is True
+    assert d["switchModeRendered"] is True
+    assert d["selectOptionsCount"] == 3
+    assert d["alarmClosed"] is True
     assert d["ingStillPanoAfter16x9"] is True
     assert abs(d["ingAspectAfter16x9"] - (32.0 / 9.0)) < 0.01
     assert d["ingStillPanoAfterSub"] is True
