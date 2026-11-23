@@ -241,6 +241,11 @@ Write-Host "[*] Installazione dipendenze spatial_server\requirements.txt..." -Fo
 if ($WithOpenVINO) {
     Write-Host "[*] Installazione runtime OpenVINO leggero (supporto iGPU Intel HD 530 / CPU Skylake)..." -ForegroundColor Cyan
     & $VenvPy -m pip install "openvino>=2024.4.0"
+    $YoloDownloadScript = Join-Path $RepoRoot "tools\download_yolo_openvino_model.py"
+    if (Test-Path $YoloDownloadScript) {
+        Write-Host "[*] Download e conversione modello YOLOv8n OpenVINO IR (FP16)..." -ForegroundColor Cyan
+        & $VenvPy $YoloDownloadScript
+    }
 }
 
 if ($WithBiometrics) {

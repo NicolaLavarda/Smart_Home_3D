@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import threading
 import time
+import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
@@ -15,6 +17,22 @@ from spatial_server.domain.models import BoundingBox2D, DetectionEvent
 from .interfaces import DetectionBatchCallback, IDetectionSource
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_import_openvino():
+    """Import OpenVINO while stubbing openvino_telemetry to avoid Windows AppData CID permission errors."""
+    if "openvino_telemetry" not in sys.modules:
+        sys.modules["openvino_telemetry"] = types.SimpleNamespace(
+            Telemetry=lambda *a, **k: types.SimpleNamespace(
+                send_event=lambda *a, **k: None,
+                start_session=lambda *a, **k: None,
+                end_session=lambda *a, **k: None,
+                init=lambda *a, **k: None,
+            )
+        )
+    import openvino as ov
+
+    return ov
 
 COCO_TO_DOMAIN = {
     0: "person",
@@ -137,6 +155,8 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self._latest_frame_ts: float = 0.0
         self._backend_name = "initializing"
         self._compiled_ov = None
+        self._ort_session = None
+        self._ort_input_name: Optional[str] = None
         self._yolo_model = None
         self._hog = None
         self._bg_sub = None
@@ -148,9 +168,13 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self._last_frame_ts = 0.0
         self._last_error: Optional[str] = None
         if shared_compiled_ov is not None:
-            self._compiled_ov = shared_compiled_ov
+            if hasattr(shared_compiled_ov, "run") and hasattr(shared_compiled_ov, "get_inputs"):
+                self._ort_session = shared_compiled_ov
+                self._ort_input_name = shared_compiled_ov.get_inputs()[0].name
+            else:
+                self._compiled_ov = shared_compiled_ov
             self._backend_name = shared_backend_name or "openvino_ir(shared)"
-            logger.info("Reusing shared OpenVINO compiled model for %s (%s)", self.camera_id, self._backend_name)
+            logger.info("Reusing shared detector model for %s (%s)", self.camera_id, self._backend_name)
         else:
             self._init_detector()
 
@@ -224,28 +248,64 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             pass
         return compiled, exec_dev
 
-    def _init_detector(self) -> None:
-        # 1. Try native OpenVINO Runtime IR model (with warmup & safe CPU fallback)
-        xml_path = None
-        if self.model_path:
-            if self.model_path.is_file() and self.model_path.suffix == ".xml":
-                xml_path = self.model_path
-            elif self.model_path.is_dir():
-                xml_candidates = list(self.model_path.glob("*.xml"))
-                if xml_candidates:
-                    xml_path = xml_candidates[0]
+    def _resolve_model_candidate_paths(self) -> tuple[Optional[Path], Optional[Path]]:
+        """Resolve (xml_path, onnx_path) from `self.model_path`."""
+        xml_path: Optional[Path] = None
+        onnx_path: Optional[Path] = None
+        if not self.model_path:
+            return None, None
 
-        if xml_path is not None:
+        if self.model_path.is_file():
+            suf = self.model_path.suffix.lower()
+            if suf == ".xml":
+                xml_path = self.model_path
+                cand_onnx = self.model_path.with_suffix(".onnx")
+                if cand_onnx.is_file():
+                    onnx_path = cand_onnx
+            elif suf == ".onnx":
+                onnx_path = self.model_path
+                cand_xml = self.model_path.with_suffix(".xml")
+                if cand_xml.is_file():
+                    xml_path = cand_xml
+        elif self.model_path.is_dir():
+            xml_candidates = sorted(self.model_path.glob("*.xml"))
+            if xml_candidates:
+                xml_path = xml_candidates[0]
+            onnx_candidates = sorted(self.model_path.glob("*.onnx"))
+            if onnx_candidates:
+                onnx_path = onnx_candidates[0]
+        else:
+            # Check sibling .onnx if model_path points to non-existent dir `models/yolov8n_openvino_model`
+            parent_onnx = self.model_path.parent / "yolov8n.onnx"
+            if parent_onnx.is_file():
+                onnx_path = parent_onnx
+
+        return xml_path, onnx_path
+
+    def _init_detector(self) -> None:
+        # 1. Try native OpenVINO Runtime on .xml IR or .onnx model (with warmup & safe CPU fallback)
+        xml_path, onnx_path = self._resolve_model_candidate_paths()
+        ov_source_path = xml_path or onnx_path
+
+        if ov_source_path is not None:
             try:
-                import openvino as ov
+                ov = _safe_import_openvino()
 
                 core = ov.Core()
-                ov_model = core.read_model(str(xml_path))
+                ov_model = core.read_model(str(ov_source_path))
+                # If loaded from .onnx and .xml doesn't exist yet, cache FP16 OpenVINO IR on disk
+                if xml_path is None and onnx_path is not None and hasattr(ov, "save_model"):
+                    try:
+                        target_xml = onnx_path.with_suffix(".xml")
+                        ov.save_model(ov_model, str(target_xml), compress_to_fp16=True)
+                    except Exception:
+                        pass
+
                 try:
                     compiled, exec_dev = self._compile_and_warmup_ov(core, ov_model, self.openvino_device)
                     self._compiled_ov = compiled
                     self._backend_name = f"openvino_ir({exec_dev})"
-                    logger.info("Compiled & warmed up OpenVINO model %s on %s (requested=%s)", xml_path.name, exec_dev, self.openvino_device)
+                    logger.info("Compiled & warmed up OpenVINO model %s on %s (requested=%s)", ov_source_path.name, exec_dev, self.openvino_device)
                     return
                 except Exception as primary_exc:
                     if self.openvino_device.upper() != "CPU":
@@ -257,14 +317,36 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                         compiled, exec_dev = self._compile_and_warmup_ov(core, ov_model, "CPU")
                         self._compiled_ov = compiled
                         self._backend_name = f"openvino_ir({exec_dev}<-{self.openvino_device})"
-                        logger.info("Compiled & warmed up OpenVINO model %s on fallback CPU", xml_path.name)
+                        logger.info("Compiled & warmed up OpenVINO model %s on fallback CPU", ov_source_path.name)
                         return
                     raise primary_exc
             except Exception as exc:
                 self._last_error = f"init_ov: {type(exc).__name__}: {exc}"
-                logger.warning("OpenVINO IR load skipped (%s)", exc)
+                logger.warning("OpenVINO load skipped (%s)", exc)
 
-        # 2. Try Ultralytics YOLO wrapper if available
+        # 2. Try ONNX Runtime on .onnx model if available
+        if onnx_path is not None and onnx_path.is_file():
+            try:
+                import onnxruntime as ort
+
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = max(1, int(getattr(self, "cpu_threads", 2)))
+                opts.inter_op_num_threads = 1
+                sess = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"])
+                inp_name = sess.get_inputs()[0].name
+                dummy = np.zeros((1, 3, 640, 640), dtype=np.float32)
+                _ = sess.run(None, {inp_name: dummy})
+                self._ort_session = sess
+                self._ort_input_name = inp_name
+                self._backend_name = "onnxruntime_cpu"
+                self._last_error = None
+                logger.info("Initialized ONNX Runtime YOLOv8n detector from %s", onnx_path.name)
+                return
+            except Exception as exc:
+                self._last_error = f"init_ort: {type(exc).__name__}: {exc}"
+                logger.warning("ONNX Runtime load skipped (%s)", exc)
+
+        # 3. Try Ultralytics YOLO wrapper if available
         if self.model_path and self.model_path.exists():
             try:
                 from ultralytics import YOLO
@@ -275,18 +357,20 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             except Exception:
                 pass
 
-        # 3. Lightweight built-in OpenCV HOG fallback (OpenCV 4.x)
+        # 4. Lightweight built-in OpenCV HOG fallback (OpenCV 4.x)
         if hasattr(cv2, "HOGDescriptor"):
             self._hog = cv2.HOGDescriptor()
             self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
             self._backend_name = "opencv_hog_fallback"
             return
 
-        # 4. OpenCV 5.x fallback: lightweight MOG2 motion detector until yolov8n_openvino_model is added
-        self._bg_sub = cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=36, detectShadows=False)
-        self._backend_name = "opencv_mog2_fallback"
+        # Do NOT activate MOG2 background subtraction by default on real camera streams,
+        # because IR night-vision noise and moving foliage generate dozens of fake 60% detections.
+        self._bg_sub = None
+        self._backend_name = "model_missing"
         logger.warning(
-            "OpenVINO YOLO model not found at %s and cv2.HOGDescriptor unavailable; using MOG2 motion fallback.",
+            "YOLOv8n OpenVINO/ONNX model not found at %s (run `python tools/download_yolo_openvino_model.py`). "
+            "MOG2 motion fallback is disabled to prevent false-positive detections.",
             self.model_path,
         )
 
@@ -457,7 +541,7 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                     )
             return deduplicate_2d_detections(events)
 
-        if self._compiled_ov is not None:
+        if self._compiled_ov is not None or getattr(self, "_ort_session", None) is not None:
             return deduplicate_2d_detections(self._infer_openvino_yolo(frame, ts))
 
         if self._hog is not None:
@@ -532,12 +616,24 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         img = cv2.cvtColor(blob, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         inp = np.ascontiguousarray(np.transpose(img, (2, 0, 1))[None, ...], dtype=np.float32)
         lock = getattr(self, "_infer_lock", None)
-        if lock is not None:
-            with lock:
+        ort_sess = getattr(self, "_ort_session", None)
+        if self._compiled_ov is not None:
+            if lock is not None:
+                with lock:
+                    raw_result = self._compiled_ov([inp])
+            else:
                 raw_result = self._compiled_ov([inp])
+            output = self._extract_ov_output(self._compiled_ov, raw_result)  # Expected shape (1, 84, 8400) for YOLOv8/11
+        elif ort_sess is not None:
+            inp_name = getattr(self, "_ort_input_name", None) or ort_sess.get_inputs()[0].name
+            if lock is not None:
+                with lock:
+                    raw_ort = ort_sess.run(None, {inp_name: inp})[0]
+            else:
+                raw_ort = ort_sess.run(None, {inp_name: inp})[0]
+            output = np.asarray(raw_ort)
         else:
-            raw_result = self._compiled_ov([inp])
-        output = self._extract_ov_output(self._compiled_ov, raw_result)  # Expected shape (1, 84, 8400) for YOLOv8/11
+            return []
         if output.ndim == 3:
             raw = output[0]
             preds = raw.T if raw.shape[0] < raw.shape[1] else raw

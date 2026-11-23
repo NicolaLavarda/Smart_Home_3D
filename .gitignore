@@ -15,5 +15,6 @@ spatial_server/data/biometrics/
 caddy/caddy.exe
 tools/nssm.exe
 logs/
+kernel.errors.txt
 
 

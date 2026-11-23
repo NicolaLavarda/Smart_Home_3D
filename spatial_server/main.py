@@ -381,9 +381,13 @@ class SpatialPipelineService:
                 infer_lock=shared_lock,
                 cpu_threads=self.config.openvino_cpu_threads,
             )
-            if idx == 0 and src._compiled_ov is not None:
-                shared_ov = src._compiled_ov
-                shared_backend = src._backend_name
+            if idx == 0:
+                if src._compiled_ov is not None:
+                    shared_ov = src._compiled_ov
+                    shared_backend = src._backend_name
+                elif getattr(src, "_ort_session", None) is not None:
+                    shared_ov = src._ort_session
+                    shared_backend = src._backend_name
             sources.append(src)
         return sources
 
