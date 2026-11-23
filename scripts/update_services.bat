@@ -92,6 +92,15 @@ if "%NEED_PIP%"=="1" (
     )
 )
 
+if exist "%REPO_ROOT%\tools\download_yolo_openvino_model.py" if not exist "%REPO_ROOT%\spatial_server\models\yolov8n_openvino_model\yolov8n.xml" (
+    echo [*] Modello YOLOv8n OpenVINO mancante: download e conversione in corso...
+    "%REPO_ROOT%\.venv\Scripts\python.exe" "%REPO_ROOT%\tools\download_yolo_openvino_model.py"
+    if errorlevel 1 (
+        echo [ERRORE] Download/conversione modello YOLOv8n fallito.
+        exit /b 1
+    )
+)
+
 if "%NEED_NPM%"=="1" (
     where npm.cmd >nul 2>&1
     if errorlevel 1 (
