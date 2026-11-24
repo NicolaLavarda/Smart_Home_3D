@@ -50,8 +50,8 @@ export class TopBar {
           ${icon('moon', { size: 15 })} <span class="top-btn-label" id="night-text">Notte</span>
         </button>
 
-        <button class="btn-icon-text" id="btn-toggle-frustums" title="Mostra/Nascondi coni visivi telecamere" aria-label="Mostra o nascondi copertura telecamere">
-          ${icon('cctv', { size: 15 })} <span class="top-btn-label">Copertura Camere</span>
+        <button class="btn-icon-text" id="btn-toggle-frustums" data-coverage-mode="off" title="Copertura telecamere: disattivata (clicca per 3D)" aria-label="Copertura telecamere: disattivata">
+          ${icon('cctv', { size: 15 })} <span class="top-btn-label" id="frustums-text">Copertura Camere</span>
         </button>
 
         <button class="btn-icon-text" id="btn-toggle-badges" title="Mostra/Nascondi badge dei dispositivi" aria-label="Mostra o nascondi badge dei dispositivi">
@@ -105,6 +105,7 @@ export class TopBar {
     this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
     this.perfStatsEl = this.container.querySelector('#top-perf-stats');
 
+    this.updateFrustumsButtonUI(this.cameraProjector?.getFrustumMode?.() || 'off');
     this.updateAuthUI();
 
     // Ascolta lo stato di HA
@@ -196,6 +197,30 @@ export class TopBar {
     }
   }
 
+  updateFrustumsButtonUI(mode = 'off') {
+    if (!this.frustumsBtn) return;
+    const normalized = mode === '3d' || mode === '2d' ? mode : 'off';
+    const labelEl = this.frustumsBtn.querySelector('#frustums-text') || this.frustumsBtn.querySelector('.top-btn-label');
+
+    this.frustumsBtn.dataset.coverageMode = normalized;
+    this.frustumsBtn.classList.toggle('active', normalized !== 'off');
+    this.frustumsBtn.classList.toggle('active-2d', normalized === '2d');
+
+    if (normalized === '3d') {
+      if (labelEl) labelEl.textContent = 'Copertura 3D';
+      this.frustumsBtn.title = 'Copertura telecamere 3D (clicca per vista 2D al suolo)';
+      this.frustumsBtn.setAttribute('aria-label', 'Copertura telecamere 3D');
+    } else if (normalized === '2d') {
+      if (labelEl) labelEl.textContent = 'Copertura 2D';
+      this.frustumsBtn.title = 'Copertura telecamere 2D al suolo (clicca per disattivare)';
+      this.frustumsBtn.setAttribute('aria-label', 'Copertura telecamere 2D al suolo');
+    } else {
+      if (labelEl) labelEl.textContent = 'Copertura Camere';
+      this.frustumsBtn.title = 'Copertura telecamere disattivata (clicca per vista 3D)';
+      this.frustumsBtn.setAttribute('aria-label', 'Copertura telecamere disattivata');
+    }
+  }
+
   closeSettingsDropdown() {
     this.settingsDropdown?.classList.remove('open');
     this.settingsBtn?.classList.remove('active');
@@ -213,10 +238,13 @@ export class TopBar {
         : `${icon('moon', { size: 15 })} <span class="top-btn-label" id="night-text">Notte</span>`;
     });
 
-    // Toggle Frustum Telecamere
+    // Toggle Frustum Telecamere (3 stati: off -> 3d -> 2d -> off)
     this.frustumsBtn.addEventListener('click', () => {
-      const isVisible = this.cameraProjector.toggleFrustums();
-      this.frustumsBtn.classList.toggle('active', isVisible);
+      const nextMode =
+        typeof this.cameraProjector?.cycleFrustumMode === 'function'
+          ? this.cameraProjector.cycleFrustumMode()
+          : (this.cameraProjector?.toggleFrustums?.() ? '3d' : 'off');
+      this.updateFrustumsButtonUI(nextMode);
     });
 
     // Menu Impostazioni a Tendina

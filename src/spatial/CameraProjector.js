@@ -5,7 +5,98 @@ import { decomposeWorldMatrixToCalibState } from './calibration/PnPSolver.js';
 export const CALIBRATION_STORAGE_PREFIX = 'sh3d_camera_calibration_v2_';
 export const FRUSTUM_DEPTH = 16.0; // Copertura ottica fino a 16 metri su strada e ingressi
 export const GROUND_CLIP_Y = 0.015; // Piano terra (z=0 in Blender -> y=0 in Three.js) con leggero offset anti z-fighting
+export const FRUSTUM_MODES = ['off', '3d', '2d'];
+export const MAX_CALIBRATION_POS_OFFSET_M = 2.2;
 const GROUND_EPS = 1e-5;
+const RAY_NEAR = 0.15;
+const CURTAIN_JUMP_THRESHOLD = 0.8;
+
+function intersectRayAABB(ox, oy, oz, dx, dy, dz, box, tMin, tMax) {
+  let t0 = tMin;
+  let t1 = tMax;
+
+  if (Math.abs(dx) < 1e-9) {
+    if (ox < box.minX || ox > box.maxX) return Infinity;
+  } else {
+    const inv = 1.0 / dx;
+    let a = (box.minX - ox) * inv;
+    let b = (box.maxX - ox) * inv;
+    if (a > b) { const tmp = a; a = b; b = tmp; }
+    if (a > t0) t0 = a;
+    if (b < t1) t1 = b;
+    if (t0 > t1) return Infinity;
+  }
+
+  if (Math.abs(dy) < 1e-9) {
+    if (oy < box.minY || oy > box.maxY) return Infinity;
+  } else {
+    const inv = 1.0 / dy;
+    let a = (box.minY - oy) * inv;
+    let b = (box.maxY - oy) * inv;
+    if (a > b) { const tmp = a; a = b; b = tmp; }
+    if (a > t0) t0 = a;
+    if (b < t1) t1 = b;
+    if (t0 > t1) return Infinity;
+  }
+
+  if (Math.abs(dz) < 1e-9) {
+    if (oz < box.minZ || oz > box.maxZ) return Infinity;
+  } else {
+    const inv = 1.0 / dz;
+    let a = (box.minZ - oz) * inv;
+    let b = (box.maxZ - oz) * inv;
+    if (a > b) { const tmp = a; a = b; b = tmp; }
+    if (a > t0) t0 = a;
+    if (b < t1) t1 = b;
+    if (t0 > t1) return Infinity;
+  }
+
+  return t0 >= tMin && t0 <= tMax ? t0 : Infinity;
+}
+
+function castRayObstacles(ox, oy, oz, dx, dy, dz, tMin, tMax, boxes) {
+  let bestT = tMax;
+  let hit = false;
+  for (let i = 0; i < boxes.length; i++) {
+    const t = intersectRayAABB(ox, oy, oz, dx, dy, dz, boxes[i], tMin, bestT);
+    if (t < bestT) {
+      bestT = t;
+      hit = true;
+    }
+  }
+  return hit ? bestT : Infinity;
+}
+
+function hasAnyObstacleHit(ox, oy, oz, dx, dy, dz, tMin, tMax, boxes) {
+  for (let i = 0; i < boxes.length; i++) {
+    if (intersectRayAABB(ox, oy, oz, dx, dy, dz, boxes[i], tMin, tMax) < Infinity) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function filterNearbyOccluders(worldPos, maxRadius, occluders) {
+  const pad = maxRadius + 1.0;
+  const minX = worldPos.x - pad;
+  const maxX = worldPos.x + pad;
+  const minY = worldPos.y - pad;
+  const maxY = worldPos.y + pad;
+  const minZ = worldPos.z - pad;
+  const maxZ = worldPos.z + pad;
+  const local = [];
+  for (let i = 0; i < occluders.length; i++) {
+    const b = occluders[i];
+    if (
+      b.maxX >= minX && b.minX <= maxX &&
+      b.maxY >= minY && b.minY <= maxY &&
+      b.maxZ >= minZ && b.minZ <= maxZ
+    ) {
+      local.push(b);
+    }
+  }
+  return local;
+}
 
 function resolveFovH(fovV, aspect, explicitFovH) {
   if (explicitFovH) return Number(explicitFovH);
@@ -78,7 +169,7 @@ function clipPolygonAboveY(poly, groundY) {
 
 /**
  * Calcola la geometria del frustum tagliata al piano ground (y >= groundY)
- * e la relativa impronta di proiezione a terra (anche fuori dai confini delle mesh del modello).
+ * e la relativa impronta di proiezione a terra, con raycasting contro eventuali ostacoli AABB.
  * Tutte le posizioni restituite sono nello spazio locale di (worldPos, worldQuat).
  */
 export function computeClippedFrustumData(
@@ -87,13 +178,20 @@ export function computeClippedFrustumData(
   fovV,
   fovH,
   depth = FRUSTUM_DEPTH,
-  groundY = GROUND_CLIP_Y
+  groundY = GROUND_CLIP_Y,
+  occluders = null
 ) {
+  const hasOccluders = Array.isArray(occluders) && occluders.length > 0;
+  const isPanoramic = Number(fovH) >= 150;
+
+  if (hasOccluders) {
+    return computeOccludedFrustumData(worldPos, worldQuat, fovV, fovH, depth, groundY, occluders, isPanoramic);
+  }
+
   const toWorld = (lx, ly, lz) =>
     new THREE.Vector3(lx, ly, lz).applyQuaternion(worldQuat).add(worldPos);
 
   const v0 = worldPos.clone();
-  const isPanoramic = Number(fovH) >= 150;
   let faces = [];
   const panoSliceGround = [];
 
@@ -316,6 +414,440 @@ export function computeClippedFrustumData(
   };
 }
 
+function buildAngularSamples(baseCount, worldPos, invWorldQuat, isPanoramic, halfHRad, tanH, localBoxes) {
+  const samples = [];
+  for (let i = 0; i <= baseCount; i++) {
+    samples.push(i / baseCount);
+  }
+
+  if (localBoxes && localBoxes.length > 0) {
+    const corner = new THREE.Vector3();
+    const eps = 1e-4;
+    for (let i = 0; i < localBoxes.length; i++) {
+      const b = localBoxes[i];
+      const xs = [b.minX, b.maxX];
+      const zs = [b.minZ, b.maxZ];
+      for (let xi = 0; xi < 2; xi++) {
+        for (let zi = 0; zi < 2; zi++) {
+          corner.set(xs[xi] - worldPos.x, 0, zs[zi] - worldPos.z).applyQuaternion(invWorldQuat);
+          let uCorner;
+          if (isPanoramic) {
+            const theta = Math.atan2(corner.x, -corner.z);
+            uCorner = 0.5 + theta / (2.0 * halfHRad);
+          } else {
+            if (corner.z >= -1e-4) continue;
+            uCorner = 0.5 + (corner.x / -corner.z) / (2.0 * tanH);
+          }
+          if (uCorner > 2.0 * eps && uCorner < 1.0 - 2.0 * eps) {
+            samples.push(uCorner - eps, uCorner + eps);
+          }
+        }
+      }
+    }
+  }
+
+  samples.sort((a, b) => a - b);
+  const deduped = [samples[0]];
+  for (let i = 1; i < samples.length; i++) {
+    if (samples[i] - deduped[deduped.length - 1] > 2e-5) {
+      deduped.push(samples[i]);
+    }
+  }
+  return deduped;
+}
+
+function subtractIntervals(t0, t1, overlaps) {
+  if (!overlaps || overlaps.length === 0) {
+    return t1 - t0 > 1e-4 ? [[t0, t1]] : [];
+  }
+  const sorted = overlaps.slice().sort((a, b) => a[0] - b[0]);
+  const out = [];
+  let cursor = t0;
+  for (let i = 0; i < sorted.length; i++) {
+    const [o0, o1] = sorted[i];
+    if (o0 > cursor + 1e-4) {
+      out.push([cursor, Math.min(t1, o0)]);
+    }
+    if (o1 > cursor) {
+      cursor = o1;
+    }
+  }
+  if (t1 > cursor + 1e-4) {
+    out.push([cursor, t1]);
+  }
+  return out;
+}
+
+function computeOccludedFrustumData(
+  worldPos,
+  worldQuat,
+  fovV,
+  fovH,
+  depth,
+  groundY,
+  occluders,
+  isPanoramic
+) {
+  const v0 = worldPos.clone();
+  const invWorldQuat = worldQuat.clone().invert();
+  const localBoxes = filterNearbyOccluders(worldPos, depth * 1.5, occluders);
+
+  const clampedFovH = isPanoramic
+    ? Math.min(Math.max(Number(fovH) || 180, 150), 350)
+    : Math.max(1, Number(fovH) || 80);
+  const clampedFovV = isPanoramic
+    ? Math.min(Math.max(Number(fovV) || 55, 10), 160)
+    : Math.max(1, Number(fovV) || 42);
+
+  const halfHRad = THREE.MathUtils.degToRad(clampedFovH * 0.5);
+  const halfVRad = THREE.MathUtils.degToRad(clampedFovV * 0.5);
+  const tanH = Math.tan(halfHRad);
+  const tanV = Math.tan(halfVRad);
+
+  const sampleRay = (u, v) => {
+    const dir = new THREE.Vector3();
+    let maxDist;
+    if (isPanoramic) {
+      const th = (u * 2.0 - 1.0) * halfHRad;
+      const ph = (v * 2.0 - 1.0) * halfVRad;
+      const cosPh = Math.cos(ph);
+      dir.set(cosPh * Math.sin(th), Math.sin(ph), -cosPh * Math.cos(th));
+      maxDist = depth;
+    } else {
+      const lx = (u * 2.0 - 1.0) * tanH;
+      const ly = (v * 2.0 - 1.0) * tanV;
+      const len = Math.hypot(lx, ly, 1.0);
+      dir.set(lx / len, ly / len, -1.0 / len);
+      maxDist = depth * len;
+    }
+    dir.applyQuaternion(worldQuat).normalize();
+    return { dir, maxDist };
+  };
+
+  // 1. Volume 3D con campionamento ad alta densità + raggi iniettati sugli spigoli dei muri
+  const u3d = buildAngularSamples(
+    isPanoramic ? 180 : 96,
+    worldPos,
+    invWorldQuat,
+    isPanoramic,
+    halfHRad,
+    tanH,
+    localBoxes
+  );
+  const cols3d = u3d.length - 1;
+  const rows = 12;
+  const gridPts = Array.from({ length: cols3d + 1 }, () => new Array(rows + 1));
+  const gridDist = Array.from({ length: cols3d + 1 }, () => new Float32Array(rows + 1));
+
+  for (let i = 0; i <= cols3d; i++) {
+    const u = u3d[i];
+    for (let j = 0; j <= rows; j++) {
+      const v = j / rows;
+      const { dir, maxDist } = sampleRay(u, v);
+      const tGround =
+        dir.y < -1e-6 && worldPos.y > groundY
+          ? (groundY - worldPos.y) / dir.y
+          : (worldPos.y <= groundY && dir.y < 0 ? 0 : Infinity);
+      const tLimit = Math.min(maxDist, tGround);
+      const tObs =
+        tLimit > RAY_NEAR && localBoxes.length > 0
+          ? castRayObstacles(v0.x, v0.y, v0.z, dir.x, dir.y, dir.z, RAY_NEAR, tLimit, localBoxes)
+          : Infinity;
+      const tFinal = Math.min(tLimit, tObs);
+      const pt = new THREE.Vector3(
+        v0.x + dir.x * tFinal,
+        v0.y + dir.y * tFinal,
+        v0.z + dir.z * tFinal
+      );
+      if (tFinal === tGround && Number.isFinite(tGround)) {
+        pt.y = groundY;
+      }
+      gridPts[i][j] = pt;
+      gridDist[i][j] = tFinal;
+    }
+  }
+
+  const coneWorldPts = [];
+  const wireWorldPts = [];
+
+  for (let i = 0; i < cols3d; i++) {
+    coneWorldPts.push(v0, gridPts[i][rows], gridPts[i + 1][rows]);
+    coneWorldPts.push(v0, gridPts[i + 1][0], gridPts[i][0]);
+  }
+  for (let j = 0; j < rows; j++) {
+    coneWorldPts.push(v0, gridPts[0][j], gridPts[0][j + 1]);
+    coneWorldPts.push(v0, gridPts[cols3d][j + 1], gridPts[cols3d][j]);
+  }
+  for (let i = 0; i < cols3d; i++) {
+    for (let j = 0; j < rows; j++) {
+      const d00 = gridDist[i][j];
+      const d10 = gridDist[i + 1][j];
+      const d11 = gridDist[i + 1][j + 1];
+      const d01 = gridDist[i][j + 1];
+      const maxD = Math.max(d00, d10, d11, d01);
+      const minD = Math.min(d00, d10, d11, d01);
+      if (maxD - minD < CURTAIN_JUMP_THRESHOLD) {
+        coneWorldPts.push(gridPts[i][j], gridPts[i + 1][j], gridPts[i + 1][j + 1]);
+        coneWorldPts.push(gridPts[i][j], gridPts[i + 1][j + 1], gridPts[i][j + 1]);
+      }
+    }
+  }
+
+  wireWorldPts.push(v0, gridPts[0][0], v0, gridPts[0][rows], v0, gridPts[cols3d][0], v0, gridPts[cols3d][rows]);
+  for (let i = 0; i < cols3d; i++) {
+    const jump = Math.abs(gridDist[i][rows] - gridDist[i + 1][rows]);
+    if (jump < CURTAIN_JUMP_THRESHOLD || u3d[i + 1] - u3d[i] < 0.005) {
+      wireWorldPts.push(gridPts[i][rows], gridPts[i + 1][rows]);
+    }
+  }
+  for (let j = 0; j < rows; j++) {
+    if (Math.abs(gridDist[0][j] - gridDist[0][j + 1]) < CURTAIN_JUMP_THRESHOLD) {
+      wireWorldPts.push(gridPts[0][j], gridPts[0][j + 1]);
+    }
+    if (Math.abs(gridDist[cols3d][j] - gridDist[cols3d][j + 1]) < CURTAIN_JUMP_THRESHOLD) {
+      wireWorldPts.push(gridPts[cols3d][j], gridPts[cols3d][j + 1]);
+    }
+  }
+  for (let k = 1; k < 8; k++) {
+    const targetU = k / 8;
+    let bestIdx = 0;
+    let bestErr = Infinity;
+    for (let i = 0; i <= cols3d; i++) {
+      const err = Math.abs(u3d[i] - targetU);
+      if (err < bestErr) {
+        bestErr = err;
+        bestIdx = i;
+      }
+    }
+    wireWorldPts.push(v0, gridPts[bestIdx][rows]);
+  }
+
+  // 2. Proiezione 2D al suolo esatta: intervalli continui rifiniti con bisezione (precisione sub-millimetrica)
+  const intersectSegGround = (a, b) => {
+    const dy = b.y - a.y;
+    if (Math.abs(dy) < 1e-9) return null;
+    const t = (groundY - a.y) / dy;
+    if (t < -1e-6 || t > 1 + 1e-6) return null;
+    const tc = THREE.MathUtils.clamp(t, 0, 1);
+    return new THREE.Vector3(a.x + (b.x - a.x) * tc, groundY, a.z + (b.z - a.z) * tc);
+  };
+
+  const u2d = buildAngularSamples(
+    isPanoramic ? 360 : 180,
+    worldPos,
+    invWorldQuat,
+    isPanoramic,
+    halfHRad,
+    tanH,
+    localBoxes
+  );
+  const gCols = u2d.length - 1;
+  const probeSteps = 32;
+  const colSegments = new Array(u2d.length);
+  const colIntervals = new Array(u2d.length);
+
+  for (let i = 0; i <= gCols; i++) {
+    const u = u2d[i];
+    const bot = sampleRay(u, 0);
+    const top = sampleRay(u, 1);
+    const pBot = new THREE.Vector3(
+      v0.x + bot.dir.x * bot.maxDist,
+      v0.y + bot.dir.y * bot.maxDist,
+      v0.z + bot.dir.z * bot.maxDist
+    );
+    const pTop = new THREE.Vector3(
+      v0.x + top.dir.x * top.maxDist,
+      v0.y + top.dir.y * top.maxDist,
+      v0.z + top.dir.z * top.maxDist
+    );
+
+    const hits = [];
+    for (const [ea, eb] of [[v0, pBot], [v0, pTop], [pBot, pTop]]) {
+      const hit = intersectSegGround(ea, eb);
+      if (hit && !hits.some((h) => h.distanceToSquared(hit) <= 1e-8)) {
+        hits.push(hit);
+      }
+    }
+
+    if (hits.length < 2) {
+      colSegments[i] = null;
+      colIntervals[i] = [];
+      continue;
+    }
+
+    hits.sort((p1, p2) => p1.distanceToSquared(v0) - p2.distanceToSquared(v0));
+    const pNear = hits[0];
+    const pFar = hits[hits.length - 1];
+    colSegments[i] = { pNear, pFar };
+
+    const lerpPt = (t) =>
+      new THREE.Vector3(
+        pNear.x + (pFar.x - pNear.x) * t,
+        groundY,
+        pNear.z + (pFar.z - pNear.z) * t
+      );
+
+    if (localBoxes.length === 0) {
+      colIntervals[i] = [{ t0: 0, t1: 1, p0: pNear, p1: pFar }];
+      continue;
+    }
+
+    const isGroundParamVisible = (t) => {
+      const px = pNear.x + (pFar.x - pNear.x) * t;
+      const pz = pNear.z + (pFar.z - pNear.z) * t;
+      const vx = px - v0.x;
+      const vy = (groundY + 0.02) - v0.y;
+      const vz = pz - v0.z;
+      const dist = Math.hypot(vx, vy, vz);
+      if (dist <= RAY_NEAR) return true;
+      return !hasAnyObstacleHit(
+        v0.x, v0.y, v0.z,
+        vx / dist, vy / dist, vz / dist,
+        RAY_NEAR, dist - 0.002,
+        localBoxes
+      );
+    };
+
+    const intervals = [];
+    let curVis = isGroundParamVisible(0);
+    let segStart = curVis ? 0 : null;
+
+    for (let k = 1; k <= probeSteps; k++) {
+      const tPrev = (k - 1) / probeSteps;
+      const tCurr = k / probeSteps;
+      const nextVis = isGroundParamVisible(tCurr);
+      if (nextVis !== curVis) {
+        let lo = tPrev;
+        let hi = tCurr;
+        for (let iter = 0; iter < 10; iter++) {
+          const mid = 0.5 * (lo + hi);
+          if (isGroundParamVisible(mid) === curVis) {
+            lo = mid;
+          } else {
+            hi = mid;
+          }
+        }
+        const tEdge = 0.5 * (lo + hi);
+        if (curVis) {
+          if (segStart !== null && tEdge - segStart > 1e-4) {
+            intervals.push({ t0: segStart, t1: tEdge, p0: lerpPt(segStart), p1: lerpPt(tEdge) });
+          }
+          segStart = null;
+        } else {
+          segStart = tEdge;
+        }
+        curVis = nextVis;
+      }
+    }
+
+    if (curVis && segStart !== null && 1.0 - segStart > 1e-4) {
+      intervals.push({ t0: segStart, t1: 1.0, p0: lerpPt(segStart), p1: lerpPt(1.0) });
+    }
+    colIntervals[i] = intervals;
+  }
+
+  const groundWorldPts = [];
+  const groundLineWorldPts = [];
+  const lerpCol = (seg, t) =>
+    new THREE.Vector3(
+      seg.pNear.x + (seg.pFar.x - seg.pNear.x) * t,
+      groundY,
+      seg.pNear.z + (seg.pFar.z - seg.pNear.z) * t
+    );
+
+  // Bordo esterno sinistro (colonna 0)
+  if (colSegments[0]) {
+    for (const iv of colIntervals[0]) {
+      groundLineWorldPts.push(iv.p0, iv.p1);
+    }
+  }
+  // Bordo esterno destro (ultima colonna)
+  if (colSegments[gCols]) {
+    for (const iv of colIntervals[gCols]) {
+      groundLineWorldPts.push(iv.p0, iv.p1);
+    }
+  }
+
+  for (let i = 0; i < gCols; i++) {
+    const segA = colSegments[i];
+    const segB = colSegments[i + 1];
+    const listA = colIntervals[i];
+    const listB = colIntervals[i + 1];
+
+    if (!segA || !segB) {
+      if (segA) {
+        for (const a of listA) groundLineWorldPts.push(a.p0, a.p1);
+      }
+      if (segB) {
+        for (const b of listB) groundLineWorldPts.push(b.p0, b.p1);
+      }
+      continue;
+    }
+
+    const overlapsA = listA.map(() => []);
+    const overlapsB = listB.map(() => []);
+
+    for (let ai = 0; ai < listA.length; ai++) {
+      const a = listA[ai];
+      for (let bi = 0; bi < listB.length; bi++) {
+        const b = listB[bi];
+        const ov0 = Math.max(a.t0, b.t0);
+        const ov1 = Math.min(a.t1, b.t1);
+        if (ov1 - ov0 <= 1e-4) continue;
+
+        overlapsA[ai].push([ov0, ov1]);
+        overlapsB[bi].push([ov0, ov1]);
+
+        const pa0 = lerpCol(segA, ov0);
+        const pa1 = lerpCol(segA, ov1);
+        const pb0 = lerpCol(segB, ov0);
+        const pb1 = lerpCol(segB, ov1);
+
+        groundWorldPts.push(pa0, pa1, pb1);
+        groundWorldPts.push(pa0, pb1, pb0);
+        groundLineWorldPts.push(pa0, pb0);
+        groundLineWorldPts.push(pa1, pb1);
+      }
+    }
+
+    for (let ai = 0; ai < listA.length; ai++) {
+      const a = listA[ai];
+      for (const [u0, u1] of subtractIntervals(a.t0, a.t1, overlapsA[ai])) {
+        groundLineWorldPts.push(lerpCol(segA, u0), lerpCol(segA, u1));
+      }
+    }
+    for (let bi = 0; bi < listB.length; bi++) {
+      const b = listB[bi];
+      for (const [u0, u1] of subtractIntervals(b.t0, b.t1, overlapsB[bi])) {
+        groundLineWorldPts.push(lerpCol(segB, u0), lerpCol(segB, u1));
+      }
+    }
+  }
+
+  const worldMat = new THREE.Matrix4().compose(worldPos, worldQuat, new THREE.Vector3(1, 1, 1));
+  const invWorldMat = worldMat.clone().invert();
+
+  const toLocalBuffer = (points) => {
+    const arr = new Float32Array(points.length * 3);
+    const tmp = new THREE.Vector3();
+    for (let i = 0; i < points.length; i++) {
+      tmp.copy(points[i]).applyMatrix4(invWorldMat);
+      arr[i * 3] = tmp.x;
+      arr[i * 3 + 1] = tmp.y;
+      arr[i * 3 + 2] = tmp.z;
+    }
+    return arr;
+  };
+
+  return {
+    conePositions: toLocalBuffer(coneWorldPts),
+    wirePositions: toLocalBuffer(wireWorldPts),
+    groundPositions: toLocalBuffer(groundWorldPts),
+    groundLinePositions: toLocalBuffer(groundLineWorldPts),
+    groundPolygonWorld: groundLineWorldPts,
+  };
+}
+
 export class CameraProjector {
   constructor(scene, assetLoader) {
     this.scene = scene;
@@ -329,13 +861,36 @@ export class CameraProjector {
     this.calibratedPoses = new Map();
     this.calibratedStates = new Map();
     this.povActiveCameras = new Set();
+    this.frustumMode = 'off'; // 'off' | '3d' | '2d'
     this.frustumsVisible = false; // Nascosto di default all'avvio su richiesta dell'utente
     this.groundColliders = [];
+    this.occlusionColliders = [];
   }
 
   setGroundColliders(colliders) {
     this.groundColliders = colliders;
     console.log(`[CameraProjector] Ground colliders configurati: ${this.groundColliders.length}`);
+  }
+
+  setOcclusionColliders(colliders) {
+    this.occlusionColliders = Array.isArray(colliders) ? colliders : [];
+    console.log(`[CameraProjector] Occlusion colliders configurati: ${this.occlusionColliders.length}`);
+    if (this.frustumVolumes.size > 0) {
+      this.frustumVolumes.forEach((_, camName) => {
+        const pose = this.getCalibratedCameraPose(camName);
+        if (pose) {
+          this.updateFrustumVolumeGeometry(camName, pose.position, pose.quaternion, pose.fovV, pose.fovH, FRUSTUM_DEPTH);
+        }
+      });
+    }
+  }
+
+  isCalibrationPosePlausible(calibState) {
+    if (!calibState || typeof calibState !== 'object') return false;
+    const ox = Number(calibState.offsetX) || 0;
+    const oy = Number(calibState.offsetY) || 0;
+    const oz = Number(calibState.offsetZ) || 0;
+    return Math.hypot(ox, oy, oz) <= MAX_CALIBRATION_POS_OFFSET_M;
   }
 
   setupCameraFrustums() {
@@ -386,7 +941,15 @@ export class CameraProjector {
       // Ripristina eventuale cache locale in attesa della sincronizzazione autorevole dal backend
       const saved = this.readLocalCalibration(camName);
       if (saved) {
-        this.applyCameraCalibration(camName, saved);
+        const normalizedSaved = this.normalizeCalibrationState(camName, saved);
+        if (this.isCalibrationPosePlausible(normalizedSaved)) {
+          this.applyCameraCalibration(camName, normalizedSaved);
+        } else {
+          console.warn(
+            `[CameraProjector] Cache locale calibrazione scartata per ${camName}: offset posizione non plausibile (${normalizedSaved.offsetX}, ${normalizedSaved.offsetY}, ${normalizedSaved.offsetZ}).`
+          );
+          this.clearLocalCalibration(camName);
+        }
       }
     });
 
@@ -494,7 +1057,7 @@ export class CameraProjector {
       wirePositions,
       groundPositions,
       groundLinePositions,
-    } = computeClippedFrustumData(worldPos, worldQuat, fovV, fovH, depth, GROUND_CLIP_Y);
+    } = computeClippedFrustumData(worldPos, worldQuat, fovV, fovH, depth, GROUND_CLIP_Y, this.occlusionColliders);
 
     vol.coneMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(conePositions, 3));
     if (conePositions.length > 0) {
@@ -529,19 +1092,26 @@ export class CameraProjector {
     const overlay = this.frustumOverlays.get(camName);
     const vol = this.frustumVolumes.get(camName);
     const isPov = this.povActiveCameras.has(camName);
+    const is3d = this.frustumMode === '3d' && !isPov;
+    const is2d = this.frustumMode === '2d' && !isPov;
 
     if (vol) {
-      const showVolume = this.frustumsVisible && !isPov;
-      vol.coneMesh.visible = showVolume && vol.hasConeGeometry;
-      vol.wireLines.visible = showVolume && vol.hasWireGeometry;
-      vol.groundMesh.visible = showVolume && vol.hasGroundProjection;
-      vol.groundLines.visible = showVolume && vol.hasGroundProjection;
+      vol.coneMesh.visible = is3d && vol.hasConeGeometry;
+      vol.wireLines.visible = is3d && vol.hasWireGeometry;
+      vol.groundMesh.visible = (is3d || is2d) && vol.hasGroundProjection;
+      vol.groundLines.visible = (is3d || is2d) && vol.hasGroundProjection;
+      if (vol.groundMesh.material) {
+        vol.groundMesh.material.opacity = is2d ? 0.34 : 0.22;
+      }
+      if (vol.groundLines.material) {
+        vol.groundLines.material.opacity = is2d ? 0.95 : 0.90;
+      }
     }
     if (overlay) {
-      overlay.setVisible(isPov || (this.frustumsVisible && Boolean(overlay.videoTexture)));
+      overlay.setVisible(isPov || (is3d && Boolean(overlay.videoTexture)));
     }
     if (group) {
-      group.visible = this.frustumsVisible || isPov;
+      group.visible = isPov || is3d || is2d;
     }
   }
 
@@ -758,6 +1328,13 @@ export class CameraProjector {
       if (!calibState) {
         return { applied: false, reset: false, changed: false, state: null, pose: null };
       }
+      if (!this.isCalibrationPosePlausible(calibState)) {
+        console.warn(
+          `[CameraProjector] Calibrazione backend scartata per ${camName}: offset posizione non plausibile (${calibState.offsetX}, ${calibState.offsetY}, ${calibState.offsetZ}) -> ripristinata posa fisica.`
+        );
+        const pose = this.resetCameraCalibration(camName, { clearLocal: persistLocal });
+        return { applied: false, reset: true, changed: true, state: this.createDefaultCalibrationState(camName), pose };
+      }
       const pose = this.applyCameraCalibration(camName, calibState);
       if (persistLocal) {
         this.saveLocalCalibration(camName, calibState, {
@@ -891,11 +1468,39 @@ export class CameraProjector {
     return this.baseCameraPoses.get(camName) || null;
   }
 
-  toggleFrustums(visible) {
-    this.frustumsVisible = visible !== undefined ? visible : !this.frustumsVisible;
+  getFrustumMode() {
+    return this.frustumMode;
+  }
+
+  setFrustumMode(mode) {
+    let nextMode = this.frustumMode;
+    if (typeof mode === 'boolean') {
+      nextMode = mode ? '3d' : 'off';
+    } else if (FRUSTUM_MODES.includes(mode)) {
+      nextMode = mode;
+    } else {
+      return this.frustumMode;
+    }
+    this.frustumMode = nextMode;
+    this.frustumsVisible = nextMode !== 'off';
     this.frustumHelpers.forEach((_, camName) => {
       this.syncGroupVisibility(camName);
     });
+    return this.frustumMode;
+  }
+
+  cycleFrustumMode() {
+    const idx = FRUSTUM_MODES.indexOf(this.frustumMode);
+    const nextMode = FRUSTUM_MODES[(idx + 1) % FRUSTUM_MODES.length];
+    return this.setFrustumMode(nextMode);
+  }
+
+  toggleFrustums(visible) {
+    if (visible !== undefined) {
+      this.setFrustumMode(visible);
+    } else {
+      this.cycleFrustumMode();
+    }
     return this.frustumsVisible;
   }
 

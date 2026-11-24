@@ -465,15 +465,16 @@ async function bootstrap() {
 
   // 10. Carica Modello e Manifesto
   try {
-    const { model, manifest, haEntitiesMap, groundColliders } = await assetLoader.loadHouseModel('/models/house_optimized.glb');
+    const { model, manifest, haEntitiesMap, groundColliders, occlusionColliders } = await assetLoader.loadHouseModel('/models/house_optimized.glb');
     sceneManager.scene.add(model);
 
     // Sincronizza il catalogo telecamere e il controller multi-camera con Blender SSoT
     cameraCatalog.syncFromManifest(manifest);
     secCamCtrl?.syncFromManifest?.(manifest);
 
-    // Registra ground colliders per il raycasting spaziale
+    // Registra ground colliders e ostacoli architettonici per il raycasting spaziale
     cameraProjector.setGroundColliders(groundColliders);
+    cameraProjector.setOcclusionColliders(occlusionColliders);
     cameraProjector.setupCameraFrustums();
     frustumsReady = true;
     syncCalibrationsFromBackend();

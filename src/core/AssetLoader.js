@@ -16,6 +16,7 @@ export class AssetLoader {
     this.model = null;
     this.haEntitiesMap = new Map();
     this.groundColliders = [];
+    this.occlusionColliders = [];
     this.cameras = new Map();
     this.sharedMaterials = new Map();
 
@@ -228,6 +229,7 @@ export class AssetLoader {
                 manifest: this.manifest,
                 haEntitiesMap: this.haEntitiesMap,
                 groundColliders: this.groundColliders,
+                occlusionColliders: this.occlusionColliders,
                 cameras: this.cameras,
               });
             } catch (procErr) {
@@ -276,6 +278,7 @@ export class AssetLoader {
   }
 
   processScene(gltf) {
+    this.occlusionColliders = [];
     const groundNamesFromManifest = new Set(
       (this.manifest.ground_colliders || []).map((gc) => gc.object_name)
     );
@@ -572,10 +575,62 @@ export class AssetLoader {
       }
     });
 
+    this.model.updateMatrixWorld(true);
+    const tmpBox = new THREE.Box3();
+    this.model.traverse((node) => {
+      if (!node.isMesh || !node.geometry) return;
+      if (node.userData.collider_role === 'ground') return;
+      const objName = node.name || '';
+      const matName = node.material?.name || '';
+      if (
+        objName.startsWith('Security_Cam_') ||
+        objName.startsWith('Wall_Garden_Light_') ||
+        objName.startsWith('Portico_Wall_Light_') ||
+        objName.startsWith('Switch_') ||
+        objName.startsWith('Label_') ||
+        objName.startsWith('Fence_') ||
+        objName.includes('_Glass') ||
+        matName.includes('Vetro')
+      ) {
+        return;
+      }
+      const isOccluder =
+        objName.startsWith('Wall_') ||
+        objName.startsWith('Muro_') ||
+        objName.startsWith('Pillar_') ||
+        objName.startsWith('Beam_Portico_') ||
+        objName.startsWith('Garage_Door_Panel_') ||
+        objName.startsWith('Door_') ||
+        objName.startsWith('Gate_Pillar_') ||
+        objName.startsWith('Gate_Ped_Pillar_') ||
+        objName === 'Gate_Central_Low_Wall' ||
+        matName.includes('Esterno_Dark') ||
+        matName.includes('Interno_Light') ||
+        matName.includes('Muri_Esterni') ||
+        matName.includes('Muri_Interni');
+      if (!isOccluder) return;
+
+      if (!node.geometry.boundingBox) {
+        node.geometry.computeBoundingBox();
+      }
+      if (!node.geometry.boundingBox) return;
+      tmpBox.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+      if (tmpBox.max.y - tmpBox.min.y <= 0.05) return;
+      this.occlusionColliders.push({
+        name: objName,
+        minX: tmpBox.min.x,
+        minY: tmpBox.min.y,
+        minZ: tmpBox.min.z,
+        maxX: tmpBox.max.x,
+        maxY: tmpBox.max.y,
+        maxZ: tmpBox.max.z,
+      });
+    });
+
     this.batchStaticMeshes();
 
     console.log(
-      `[AssetLoader] Modello elaborato con successo: ${this.haEntitiesMap.size} entità HA, ${this.groundColliders.length} collider calpestabili.`
+      `[AssetLoader] Modello elaborato con successo: ${this.haEntitiesMap.size} entità HA, ${this.groundColliders.length} collider calpestabili, ${this.occlusionColliders.length} ostacoli occlusione.`
     );
   }
 
