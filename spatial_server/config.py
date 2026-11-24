@@ -140,6 +140,60 @@ def _parse_biometrics_camera_rules(raw: str) -> tuple[tuple[str, str, float], ..
     return tuple(rules)
 
 
+def _parse_nvr_trigger_classes(raw: str) -> tuple[str, ...]:
+    classes: list[str] = []
+    for item in (raw or "").split(","):
+        cleaned = item.strip().lower()
+        if cleaned and cleaned not in classes:
+            classes.append(cleaned)
+    return tuple(classes) if classes else ("person", "car", "truck", "motorbike")
+
+
+def _parse_nvr_clock_offsets(raw: str) -> tuple[tuple[str, str, float], ...]:
+    offsets: list[tuple[str, str, float]] = []
+    for item in (raw or "").split(","):
+        cleaned = item.strip()
+        if not cleaned or ":" not in cleaned or "=" not in cleaned:
+            continue
+        cam_part, rest = cleaned.split(":", 1)
+        tier_part, val_part = rest.split("=", 1)
+        cam_id = cam_part.strip()
+        tier = tier_part.strip().lower()
+        if not cam_id or tier not in ("sub", "main"):
+            continue
+        try:
+            offset_ms = float(val_part.strip())
+        except ValueError:
+            continue
+        offsets.append((cam_id, tier, offset_ms))
+    return tuple(offsets)
+
+
+def _parse_nvr_camera_streams(raw: str) -> tuple[tuple[str, str, str], ...]:
+    streams: list[tuple[str, str, str]] = []
+    for item in (raw or "").split(","):
+        cleaned = item.strip()
+        if not cleaned or "=" not in cleaned or "|" not in cleaned:
+            continue
+        cam_id, urls = cleaned.split("=", 1)
+        sub_url, main_url = urls.split("|", 1)
+        cam_id = cam_id.strip()
+        sub_url = sub_url.strip()
+        main_url = main_url.strip()
+        if cam_id and (sub_url or main_url):
+            streams.append((cam_id, sub_url, main_url))
+    return tuple(streams)
+
+
+def _sanitize_db_filename(raw: str, default: str = "nvr_index.db") -> str:
+    candidate = Path((raw or "").strip()).name
+    if not candidate or candidate in (".", ".."):
+        return default
+    if not all(ch.isalnum() or ch in "._-" for ch in candidate):
+        return default
+    return candidate
+
+
 @dataclass(frozen=True)
 class SpatialServerConfig:
     host: str
@@ -212,6 +266,22 @@ class SpatialServerConfig:
     biometrics_plates_whitelist_file: Optional[Path] = None
     biometrics_camera_rules: tuple[tuple[str, str, float], ...] = ()
     dev_mode: bool = False
+    nvr_recorder_enabled: bool = False
+    nvr_sub_segment_sec: float = 60.0
+    nvr_main_pre_roll_sec: float = 10.0
+    nvr_main_inertia_sec: float = 15.0
+    nvr_main_max_clip_sec: float = 300.0
+    nvr_ram_buffer_max_mb_per_cam: float = 48.0
+    nvr_trigger_classes: tuple[str, ...] = ("person", "car", "truck", "motorbike")
+    nvr_min_confidence: float = 0.55
+    nvr_max_storage_gb: float = 0.0
+    nvr_min_free_gb: float = 50.0
+    nvr_sub_retention_days: int = 30
+    nvr_main_retention_days: int = 60
+    nvr_prune_interval_sec: float = 300.0
+    nvr_index_db_name: str = "nvr_index.db"
+    nvr_camera_clock_offsets: tuple[tuple[str, str, float], ...] = ()
+    nvr_camera_streams: tuple[tuple[str, str, str], ...] = ()
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -345,5 +415,21 @@ class SpatialServerConfig:
             biometrics_plates_whitelist_file=biometrics_plates_whitelist_file,
             biometrics_camera_rules=_parse_biometrics_camera_rules(os.getenv("BIOMETRICS_CAMERA_RULES", "")),
             dev_mode=dev_mode,
+            nvr_recorder_enabled=_parse_bool_env("SPATIAL_NVR_RECORDER_ENABLED", False),
+            nvr_sub_segment_sec=max(10.0, float(os.getenv("SPATIAL_NVR_SUB_SEGMENT_SEC", "60.0"))),
+            nvr_main_pre_roll_sec=max(0.0, min(60.0, float(os.getenv("SPATIAL_NVR_MAIN_PRE_ROLL_SEC", "10.0")))),
+            nvr_main_inertia_sec=max(2.0, min(120.0, float(os.getenv("SPATIAL_NVR_MAIN_INERTIA_SEC", "15.0")))),
+            nvr_main_max_clip_sec=max(30.0, float(os.getenv("SPATIAL_NVR_MAIN_MAX_CLIP_SEC", "300.0"))),
+            nvr_ram_buffer_max_mb_per_cam=max(8.0, min(256.0, float(os.getenv("SPATIAL_NVR_RAM_BUFFER_MAX_MB_PER_CAM", "48.0")))),
+            nvr_trigger_classes=_parse_nvr_trigger_classes(os.getenv("SPATIAL_NVR_TRIGGER_CLASSES", "person,car,truck,motorbike")),
+            nvr_min_confidence=max(0.05, min(0.99, float(os.getenv("SPATIAL_NVR_MIN_CONFIDENCE", "0.55")))),
+            nvr_max_storage_gb=max(0.0, float(os.getenv("SPATIAL_NVR_MAX_STORAGE_GB", "0.0"))),
+            nvr_min_free_gb=max(1.0, float(os.getenv("SPATIAL_NVR_MIN_FREE_GB", "50.0"))),
+            nvr_sub_retention_days=max(1, int(os.getenv("SPATIAL_NVR_SUB_RETENTION_DAYS", "30"))),
+            nvr_main_retention_days=max(1, int(os.getenv("SPATIAL_NVR_MAIN_RETENTION_DAYS", "60"))),
+            nvr_prune_interval_sec=max(10.0, float(os.getenv("SPATIAL_NVR_PRUNE_INTERVAL_SEC", "300.0"))),
+            nvr_index_db_name=_sanitize_db_filename(os.getenv("SPATIAL_NVR_INDEX_DB_NAME", "nvr_index.db")),
+            nvr_camera_clock_offsets=_parse_nvr_clock_offsets(os.getenv("SPATIAL_NVR_CAMERA_CLOCK_OFFSETS", "")),
+            nvr_camera_streams=_parse_nvr_camera_streams(os.getenv("SPATIAL_NVR_CAMERA_STREAMS", "")),
         )
 

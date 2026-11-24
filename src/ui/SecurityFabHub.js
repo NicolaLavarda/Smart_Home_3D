@@ -250,7 +250,7 @@ export class SecurityFabHub {
     const tile = this.tileElements.get(cameraId);
     if (!tile || !tile.videoEl) return null;
     return {
-      videoEl: tile.videoEl,
+      videoEl: tile.activeReplayVideoEl || tile.videoEl,
       status: tile.lastReplayState?.status || RecordingPlaybackStatus.IDLE,
       state: tile.lastReplayState || null,
     };
@@ -1118,6 +1118,7 @@ export class SecurityFabHub {
 
       card.innerHTML = `
         <video class="m3-cam-video" autoplay muted playsinline crossorigin="use-credentials"></video>
+        <video class="m3-cam-video-buffer" muted playsinline crossorigin="use-credentials" aria-hidden="true"></video>
         <div class="m3-cam-dark-state" hidden>
           <span class="m3-dark-icon">${icon('video-off', { size: 22 })}</span>
           <span class="m3-dark-title">Nessuna registrazione</span>
@@ -1137,6 +1138,7 @@ export class SecurityFabHub {
       `;
 
       const videoEl = card.querySelector('.m3-cam-video');
+      const bufferVideoEl = card.querySelector('.m3-cam-video-buffer');
       const badgeEl = card.querySelector('.m3-cam-badge');
       const darkStateEl = card.querySelector('.m3-cam-dark-state');
       const darkTimeEl = card.querySelector('.m3-dark-time');
@@ -1146,6 +1148,8 @@ export class SecurityFabHub {
         cam,
         card,
         videoEl,
+        bufferVideoEl,
+        activeReplayVideoEl: videoEl,
         badgeEl,
         darkStateEl,
         darkTimeEl,
@@ -1360,6 +1364,9 @@ export class SecurityFabHub {
     if (isLive) {
       this.setPlaying(false);
       this.recordingManager?.detachAll?.();
+      for (const tile of this.tileElements.values()) {
+        tile.activeReplayVideoEl = tile.videoEl;
+      }
 
       const backendOnline = Boolean(this.spatialStreamClient?.connected);
       this.trajectoryRenderer?.setLiveMode?.(backendOnline);
@@ -1539,9 +1546,19 @@ export class SecurityFabHub {
     if (!this.recordingManager) return;
 
     for (const [camId, tile] of this.tileElements.entries()) {
-      this.recordingManager.registerSlot(tile.cam.recordingCameraId, tile.videoEl, (state) => {
-        this._handleHistoricalSlotState(tile, state);
-      });
+      this.recordingManager.registerSlot(
+        tile.cam.recordingCameraId,
+        tile.videoEl,
+        (state) => {
+          this._handleHistoricalSlotState(tile, state);
+        },
+        {
+          bufferVideoEl: tile.bufferVideoEl || null,
+          onActiveVideoChange: (activeEl) => {
+            tile.activeReplayVideoEl = activeEl || tile.videoEl;
+          },
+        }
+      );
     }
 
     this.recordingManager.setPlaybackRate(this.playbackSpeed);
@@ -1552,11 +1569,16 @@ export class SecurityFabHub {
   _handleHistoricalSlotState(tile, state) {
     if (!tile || this.mode !== 'replay') return;
     tile.lastReplayState = state;
+    if (state.activeVideoEl) {
+      tile.activeReplayVideoEl = state.activeVideoEl;
+    }
     const tsLabel = formatShortDateTime(state.timestampUnix || this.currentUnix);
 
     if (state.status === RecordingPlaybackStatus.PLAYING || state.status === RecordingPlaybackStatus.PAUSED) {
       this._setTileDarkState(tile, false);
-      this._setTileBadge(tile, state.status === RecordingPlaybackStatus.PLAYING ? 'REPLAY' : 'PAUSA', 'replay');
+      const isMainTier = (state.streamTier || state.segment?.streamTier) === 'main';
+      const baseLabel = state.status === RecordingPlaybackStatus.PLAYING ? 'REPLAY' : 'PAUSA';
+      this._setTileBadge(tile, isMainTier ? `${baseLabel} HD` : baseLabel, isMainTier ? 'replay is-hd' : 'replay');
     } else if (state.status === RecordingPlaybackStatus.LOADING) {
       this._setTileBadge(tile, 'CARICAMENTO', 'connecting');
     } else {
@@ -1969,15 +1991,27 @@ export class SecurityFabHub {
 
     const span = Math.max(1, this.windowEndUnix - this.windowStartUnix);
 
-    // 1. Fascia inferiore segmenti video registrati (verde smeraldo)
+    // 1. Fascia inferiore segmenti video registrati: Sub H24 (smeraldo) + Eventi Main HD (ambra)
     if (this.recordingSegmentsByCam && this.recordingSegmentsByCam.size > 0) {
-      ctx.fillStyle = 'rgba(16, 185, 129, 0.55)';
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.48)';
       for (const segments of this.recordingSegmentsByCam.values()) {
         for (const seg of segments) {
+          if (seg.streamTier === 'main') continue;
           const x0 = Math.max(0, ((seg.startUnix - this.windowStartUnix) / span) * w);
           const x1 = Math.min(w, ((seg.endUnix - this.windowStartUnix) / span) * w);
           if (x1 > x0) {
             ctx.fillRect(x0, h - 4, Math.max(2, x1 - x0), 4);
+          }
+        }
+      }
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.92)';
+      for (const segments of this.recordingSegmentsByCam.values()) {
+        for (const seg of segments) {
+          if (seg.streamTier !== 'main' && !seg.hasMotion) continue;
+          const x0 = Math.max(0, ((seg.startUnix - this.windowStartUnix) / span) * w);
+          const x1 = Math.min(w, ((seg.endUnix - this.windowStartUnix) / span) * w);
+          if (x1 > x0) {
+            ctx.fillRect(x0, h - 6, Math.max(3, x1 - x0), 6);
           }
         }
       }

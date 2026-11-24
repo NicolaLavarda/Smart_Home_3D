@@ -5456,7 +5456,30 @@ body, html {
   background: #04070d;
 }
 
-.m3-cam-tile.is-no-recording .m3-cam-video {
+.m3-cam-video-buffer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #04070d;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.m3-cam-video.is-buffer-hidden {
+  opacity: 0;
+}
+
+.m3-cam-video-buffer.is-buffer-visible {
+  opacity: 1;
+  z-index: 1;
+}
+
+.m3-cam-tile.is-no-recording .m3-cam-video,
+.m3-cam-tile.is-no-recording .m3-cam-video-buffer {
   opacity: 0;
 }
 
@@ -5537,6 +5560,11 @@ body, html {
 .m3-cam-badge.replay {
   background: rgba(56, 189, 248, 0.9);
   color: #041d2e;
+}
+
+.m3-cam-badge.replay.is-hd {
+  background: rgba(245, 158, 11, 0.94);
+  color: #261401;
 }
 
 .m3-cam-badge.connecting {

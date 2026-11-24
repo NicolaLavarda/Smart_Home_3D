@@ -50,8 +50,10 @@ export class CameraPovOverlayController {
     this._liveStreamName = null;
     this._previewTextureActive = false;
     this._replayTexture = null;
+    this._replayBoundVideoEl = null;
     this._replayAuxSlotKey = null;
     this._replayAuxVideoEl = null;
+    this._replayBoundVideoEl = null;
     this._replayHasVideo = false;
     this._suspendedForCalibration = false;
     this._attachSeq = 0;
@@ -86,6 +88,9 @@ export class CameraPovOverlayController {
         this.securityFabHub.onReplaySlotStateChange((camId, state) => {
           if (!this.activeCameraName || this.activeSourceMode !== 'replay' || this._isCalibrationActive()) return;
           if (camId !== this.activeCameraName) return;
+          if (state?.activeVideoEl && state.activeVideoEl !== this._replayBoundVideoEl) {
+            this._swapReplayOverlayVideoElement(this.activeCameraName, state.activeVideoEl);
+          }
           this._applyReplayAvailabilityState(state);
         })
       );
@@ -305,6 +310,7 @@ export class CameraPovOverlayController {
         return;
       }
       this._replayTexture = tex;
+      this._replayBoundVideoEl = tileInfo.videoEl;
       this.cameraProjector.attachOverlayTexture(info.cameraName, tex);
       this._applyReplayAvailabilityState(tileInfo.state || { status: tileInfo.status });
       return;
@@ -321,9 +327,15 @@ export class CameraPovOverlayController {
     videoEl.playsInline = true;
     videoEl.crossOrigin = 'use-credentials';
 
+    const bufferEl = document.createElement('video');
+    bufferEl.muted = true;
+    bufferEl.playsInline = true;
+    bufferEl.crossOrigin = 'use-credentials';
+
     const slotKey = `pov_overlay:${info.cameraName}`;
     this._replayAuxSlotKey = slotKey;
     this._replayAuxVideoEl = videoEl;
+    this._replayBoundVideoEl = videoEl;
 
     const tex = this._createVideoTexture(videoEl);
     this._replayTexture = tex;
@@ -334,9 +346,15 @@ export class CameraPovOverlayController {
       videoEl,
       (state) => {
         if (seq !== this._attachSeq || this.activeCameraName !== info.cameraName || this.activeSourceMode !== 'replay') return;
+        if (state?.activeVideoEl && state.activeVideoEl !== this._replayBoundVideoEl) {
+          this._swapReplayOverlayVideoElement(info.cameraName, state.activeVideoEl);
+        }
         this._applyReplayAvailabilityState(state);
       },
-      { cameraId: info.recordingCameraId }
+      {
+        cameraId: info.recordingCameraId,
+        bufferVideoEl: bufferEl,
+      }
     );
 
     const targetUnix = Number.isFinite(this.securityFabHub?.currentUnix)
@@ -347,6 +365,20 @@ export class CameraPovOverlayController {
       await this.recordingManager.syncSlotToTimestamp(slotKey, targetUnix);
     } else {
       await this.recordingManager.seekAllToTimestamp?.(targetUnix, { immediate: true });
+    }
+  }
+
+  _swapReplayOverlayVideoElement(cameraName, nextVideoEl) {
+    if (!cameraName || !nextVideoEl || !this.cameraProjector) return;
+    const oldTex = this._replayTexture;
+    const nextTex = this._createVideoTexture(nextVideoEl);
+    this._replayTexture = nextTex;
+    this._replayBoundVideoEl = nextVideoEl;
+    this.cameraProjector.attachOverlayTexture(cameraName, nextTex);
+    if (oldTex && oldTex !== nextTex) {
+      try {
+        oldTex.dispose();
+      } catch {}
     }
   }
 
@@ -427,6 +459,7 @@ export class CameraPovOverlayController {
     }
     this._replayAuxSlotKey = null;
     this._replayAuxVideoEl = null;
+    this._replayBoundVideoEl = null;
 
     if (this._replayTexture) {
       this._replayTexture.dispose();

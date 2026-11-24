@@ -80,7 +80,12 @@ from spatial_server.optics import (
 )
 from spatial_server.optics.pinhole_model import matrix_gl_to_cv
 from spatial_server.persistence import ITrackRepository, SQLiteWALTrackRepository
-from spatial_server.recordings import FilesystemNvrArchiveRepository, IVideoArchiveRepository
+from spatial_server.recordings import (
+    DualTierNvrRecorderCoordinator,
+    FilesystemNvrArchiveRepository,
+    IDualTierRecorderCoordinator,
+    IVideoArchiveRepository,
+)
 from spatial_server.tracking import IMultiTargetTracker3D, Kalman3DMultiTracker, TrackObservation3D
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s: %(message)s")
@@ -93,6 +98,10 @@ class IngestionModeRequest(BaseModel):
 
 class AuthSessionRequest(BaseModel):
     token: Optional[str] = None
+
+
+class NvrTriggerRequest(BaseModel):
+    duration_sec: Optional[float] = None
 
 
 class BiometricEventAssignRequest(BaseModel):
@@ -154,6 +163,8 @@ class SpatialPipelineService:
         camera_manifest_meta: Optional[dict[str, dict[str, Any]]] = None,
         saved_calibration_overrides: Optional[dict[str, dict[str, Any]]] = None,
         biometric_coordinator: Optional[IBiometricCoordinator] = None,
+        recording_archive: Optional[IVideoArchiveRepository] = None,
+        recorder_coordinator: Optional[IDualTierRecorderCoordinator] = None,
     ) -> None:
         self.config = config
         self.optical_models = optical_models
@@ -171,6 +182,8 @@ class SpatialPipelineService:
             if isinstance(ov, dict)
         }
         self.biometric_coordinator = biometric_coordinator
+        self.recording_archive: Optional[IVideoArchiveRepository] = recording_archive
+        self.recorder_coordinator: Optional[IDualTierRecorderCoordinator] = recorder_coordinator
         if self.biometric_coordinator is not None:
             if getattr(self.biometric_coordinator, "on_result", None) is None:
                 setattr(self.biometric_coordinator, "on_result", self._handle_biometric_update)
@@ -294,6 +307,8 @@ class SpatialPipelineService:
             )
         if self.biometric_coordinator is not None:
             await self.biometric_coordinator.start()
+        if self.recorder_coordinator is not None:
+            await self.recorder_coordinator.start()
         await self.automation_engine.start()
         self._flush_task = asyncio.create_task(self._db_flush_loop())
         await self.set_ingestion_mode(self.ingestion_mode)
@@ -301,6 +316,16 @@ class SpatialPipelineService:
     async def stop(self) -> None:
         await self._stop_sources()
         await self.automation_engine.stop()
+        if self.recorder_coordinator is not None:
+            try:
+                await self.recorder_coordinator.stop()
+            except Exception as exc:
+                logger.warning("Error stopping NVR recorder coordinator: %s", exc)
+        if self.recording_archive is not None and hasattr(self.recording_archive, "close"):
+            try:
+                self.recording_archive.close()
+            except Exception as exc:
+                logger.warning("Error closing NVR recording archive: %s", exc)
         if self.biometric_coordinator is not None:
             try:
                 await self.biometric_coordinator.stop()
@@ -711,6 +736,28 @@ class SpatialPipelineService:
             active_tracks, obs_assignments = self.tracker.update_with_assignments(observations, now_ts)
 
         self._prune_biometric_consensus(active_tracks)
+
+        if self.recorder_coordinator is not None and self.ingestion_mode != "synthetic":
+            notified_event_ids: set[int] = set()
+            for obs_idx, track_id in obs_assignments.items():
+                evt, _ = obs_meta[obs_idx]
+                notified_event_ids.add(id(evt))
+                self.recorder_coordinator.notify_detection_activity(
+                    camera_id=evt.camera_id,
+                    timestamp=evt.timestamp,
+                    class_label=evt.class_label,
+                    confidence=evt.confidence,
+                    track_id=track_id,
+                )
+            for evt in events:
+                if id(evt) not in notified_event_ids and evt.camera_id in self.optical_models:
+                    self.recorder_coordinator.notify_detection_activity(
+                        camera_id=evt.camera_id,
+                        timestamp=evt.timestamp,
+                        class_label=evt.class_label,
+                        confidence=evt.confidence,
+                        track_id=None,
+                    )
 
         if self.biometric_coordinator is not None and obs_assignments:
             tracks_by_id = {tr.track_id: tr for tr in active_tracks}
@@ -1393,6 +1440,16 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
         identity_resolver = NoOpIdentityResolver()
 
     tracker = Kalman3DMultiTracker(initial_next_track_id=repository.get_max_track_id() + 1)
+    recording_archive = FilesystemNvrArchiveRepository(
+        storage_dir=cfg.nvr_storage_dir,
+        default_segment_duration_s=cfg.nvr_sub_segment_sec,
+        index_db_name=cfg.nvr_index_db_name,
+    )
+    recorder_coordinator = DualTierNvrRecorderCoordinator(
+        config=cfg,
+        archive=recording_archive,
+        camera_manifest_meta=camera_manifest_meta,
+    )
 
     return SpatialPipelineService(
         config=cfg,
@@ -1405,6 +1462,8 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
         camera_manifest_meta=camera_manifest_meta,
         saved_calibration_overrides=saved_overrides,
         biometric_coordinator=biometric_coordinator,
+        recording_archive=recording_archive,
+        recorder_coordinator=recorder_coordinator,
     )
 
 
@@ -1435,9 +1494,12 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
     app.state.pipeline = service
     app.state.config = service.config
     app.state.auth_verifier = HomeAssistantAuthVerifier.from_config(service.config)
-    app.state.recording_archive: IVideoArchiveRepository = FilesystemNvrArchiveRepository(
-        storage_dir=service.config.nvr_storage_dir
+    app.state.recording_archive: IVideoArchiveRepository = service.recording_archive or FilesystemNvrArchiveRepository(
+        storage_dir=service.config.nvr_storage_dir,
+        default_segment_duration_s=service.config.nvr_sub_segment_sec,
+        index_db_name=service.config.nvr_index_db_name,
     )
+    app.state.recorder_coordinator: Optional[IDualTierRecorderCoordinator] = service.recorder_coordinator
 
     @app.post("/api/v1/auth/session")
     async def create_auth_session(
@@ -1508,6 +1570,18 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         bio_diag: dict[str, Any] = {"enabled": False, "running": False}
         if service.biometric_coordinator is not None:
             bio_diag = {"enabled": True, **service.biometric_coordinator.get_diagnostics()}
+        rec_diag = (
+            service.recorder_coordinator.get_diagnostics()
+            if service.recorder_coordinator is not None
+            else {"enabled": False, "state": "unconfigured", "ram_buffer_total_mb": 0.0}
+        )
+        nvr_summary = {
+            "configured": bool(service.recording_archive and service.recording_archive.is_configured),
+            "recorder_enabled": bool(rec_diag.get("enabled", False)),
+            "recorder_state": rec_diag.get("state", "disabled"),
+            "ram_buffer_total_mb": rec_diag.get("ram_buffer_total_mb", 0.0),
+            "disk_free_gb": (rec_diag.get("last_prune") or {}).get("disk_free_gb"),
+        }
         return {
             "status": "ok",
             "dev_mode": service.config.dev_mode,
@@ -1526,6 +1600,7 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "persist_skipped_count": service.persist_skipped_count,
             "last_detection": service.last_detection_info,
             "biometrics": bio_diag,
+            "nvr": nvr_summary,
         }
 
     @app.get("/api/v1/tracks")
@@ -1922,12 +1997,16 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> dict[str, Any]:
         archive: IVideoArchiveRepository = request.app.state.recording_archive
+        recorder: Optional[IDualTierRecorderCoordinator] = getattr(request.app.state, "recorder_coordinator", None)
+        storage_stats = archive.get_storage_stats() if hasattr(archive, "get_storage_stats") else None
         return {
             "status": "ok",
             "configured": archive.is_configured,
             "storage_type": archive.storage_type,
             "storage_dir": str(getattr(archive, "storage_dir", "") or ""),
             "cameras": archive.list_cameras(),
+            "storage_stats": storage_stats,
+            "recorder": recorder.get_diagnostics() if recorder is not None else None,
         }
 
     @app.get("/api/v1/recordings/{camera_id}/segments")
@@ -1936,10 +2015,17 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         camera_id: str,
         t_start: float = Query(...),
         t_end: float = Query(...),
+        tier: Optional[str] = Query(default=None),
         _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> dict[str, Any]:
         archive: IVideoArchiveRepository = request.app.state.recording_archive
-        segments = archive.query_segments(camera_id, t_start, t_end)
+        eff_tier = tier.strip().lower() if isinstance(tier, str) and tier.strip() else None
+        if eff_tier not in ("sub", "main"):
+            eff_tier = None
+        if isinstance(archive, FilesystemNvrArchiveRepository):
+            segments = archive.query_segments(camera_id, t_start, t_end, stream_tier=eff_tier)
+        else:
+            segments = archive.query_segments(camera_id, t_start, t_end)
         return {
             "status": "ok",
             "camera_id": camera_id,
@@ -1953,13 +2039,73 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         request: Request,
         camera_id: str,
         t: float = Query(...),
+        prefer_tier: str = Query(default="main"),
+        allow_hevc: bool = Query(default=True),
         _user: HAUserPrincipal = Depends(require_authenticated_user),
     ) -> dict[str, Any]:
         archive: IVideoArchiveRepository = request.app.state.recording_archive
-        resolution = archive.resolve_timestamp(camera_id, t)
+        eff_prefer = prefer_tier.strip().lower() if isinstance(prefer_tier, str) and prefer_tier.strip() else "main"
+        eff_allow_hevc = allow_hevc if isinstance(allow_hevc, bool) else True
+        if isinstance(archive, FilesystemNvrArchiveRepository):
+            resolution = archive.resolve_timestamp(
+                camera_id,
+                t,
+                prefer_tier=eff_prefer,
+                allow_hevc=eff_allow_hevc,
+            )
+        else:
+            resolution = archive.resolve_timestamp(camera_id, t)
         return {
             "status": "ok",
             **resolution.to_api_dict(),
+        }
+
+    @app.post("/api/v1/recordings/{camera_id}/trigger")
+    async def trigger_camera_recording_event(
+        request: Request,
+        camera_id: str,
+        payload: Optional[NvrTriggerRequest] = Body(default=None),
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        recorder: Optional[IDualTierRecorderCoordinator] = getattr(request.app.state, "recorder_coordinator", None)
+        if recorder is None:
+            raise HTTPException(status_code=503, detail="Coordinatore NVR non disponibile")
+        duration_sec = (
+            max(2.0, min(300.0, float(payload.duration_sec)))
+            if payload is not None and payload.duration_sec is not None
+            else None
+        )
+        try:
+            res = recorder.trigger_manual_event(camera_id, duration_sec=duration_sec)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Telecamera '{camera_id}' non registrata")
+        return {"status": "ok", **res}
+
+    @app.post("/api/v1/recordings/maintenance/prune")
+    async def run_recordings_maintenance_prune(
+        request: Request,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        archive: IVideoArchiveRepository = request.app.state.recording_archive
+        recorder: Optional[IDualTierRecorderCoordinator] = getattr(request.app.state, "recorder_coordinator", None)
+        reconciled = archive.reconcile_with_filesystem(force=True) if hasattr(archive, "reconcile_with_filesystem") else {}
+        report = recorder.run_maintenance_prune() if recorder is not None and hasattr(recorder, "run_maintenance_prune") else None
+        return {
+            "status": "ok",
+            "reconciled": reconciled,
+            "prune_report": (
+                {
+                    "deleted_sub_count": report.deleted_sub_count,
+                    "deleted_main_count": report.deleted_main_count,
+                    "reclaimed_bytes": report.reclaimed_bytes,
+                    "disk_total_gb": report.disk_total_gb,
+                    "disk_free_gb": report.disk_free_gb,
+                    "archive_used_gb": report.archive_used_gb,
+                    "ran_at_unix": report.ran_at_unix,
+                }
+                if report is not None
+                else None
+            ),
         }
 
     @app.get("/api/v1/recordings/{camera_id}/file/{filename}")

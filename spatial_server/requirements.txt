@@ -15,4 +15,5 @@ onnxruntime>=1.20.0,<2.0.0
 fast-plate-ocr[onnx]>=1.0.0
 open-image-models[onnx]>=0.4.0
 psutil>=6.0.0
+av>=13.0.0
 

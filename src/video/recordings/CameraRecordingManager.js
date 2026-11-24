@@ -1,3 +1,4 @@
+import { DualVideoBufferController } from './DualVideoBufferController.js';
 import { PlaybackResolution, RecordingPlaybackStatus } from './RecordingModels.js';
 
 /**
@@ -6,17 +7,17 @@ import { PlaybackResolution, RecordingPlaybackStatus } from './RecordingModels.j
  * Orchestratore OOP per la riproduzione storica sincronizzata multi-telecamera.
  * Responsabilità:
  * - Gestisce una catena ordinata di `IRecordingProvider` (es. HDD NVR su PC -> Edge SD camera).
- * - Mantiene gli slot video registrati dall'interfaccia Sicurezza (`cameraId -> slot`).
+ * - Mantiene gli slot video registrati dall'interfaccia Sicurezza (`cameraId -> slot`) con doppio buffer.
+ * - Precarica in standby il segmento successivo (`Sub -> Main` o `Main -> Sub`) e commuta senza schermo nero.
  * - Sincronizza seek, play/pause e velocità (1x, 2x, 5x) di tutte le telecamere con la timeline 3D.
- * - Garantisce transizioni robuste allo stato `NO_RECORDING` (riquadro nero/scuro) quando
- *   non esiste una registrazione all'orario richiesto, senza mai rompere il player o il 3D.
  */
 export class CameraRecordingManager {
   constructor(options = {}) {
     this.providers = Array.isArray(options.providers) ? [...options.providers] : [];
     this.cameraCatalog = options.cameraCatalog || null;
-    this.slots = new Map(); // cameraId -> { cameraId, videoElement, onStateChange, activeProvider, activeSegment, status }
-    this.segmentCache = new Map(); // `${cameraId}:${dayKey}` -> Array<RecordingSegment>
+    this.preloadLookaheadSec = Math.max(1.0, Number(options.preloadLookaheadSec) || 3.0);
+    this.slots = new Map();
+    this.segmentCache = new Map();
     this.isPlaying = false;
     this.playbackRate = 1.0;
     this.currentTimestampUnix = null;
@@ -35,21 +36,28 @@ export class CameraRecordingManager {
   }
 
   /**
-   * Registra un riquadro video nel gestore storico.
-   * Supporta sia `registerSlot(cameraId, videoEl, cb)` sia slot ausiliari con chiave dedicata
-   * (`registerSlot('pov_overlay:Cam_Portico', videoEl, cb, { cameraId: 'Cam_Portico' })`).
+   * Registra un riquadro video nel gestore storico (con supporto opzionale doppio `<video>`).
    */
   registerSlot(slotKey, videoElement, onStateChange = null, options = {}) {
     this.unregisterSlot(slotKey);
     const cameraId = options?.cameraId || slotKey;
+    const bufferController = new DualVideoBufferController({
+      primaryVideoEl: videoElement,
+      bufferVideoEl: options?.bufferVideoEl || null,
+      onActiveVideoChange: options?.onActiveVideoChange || null,
+    });
     const slot = {
       slotKey,
       cameraId,
       videoElement,
+      bufferController,
       onStateChange: typeof onStateChange === 'function' ? onStateChange : null,
       activeProvider: null,
       activeSegment: null,
+      activeResolution: null,
       status: RecordingPlaybackStatus.IDLE,
+      _isSwapping: false,
+      _refreshingLookahead: false,
     };
     this.slots.set(slotKey, slot);
     return slot;
@@ -58,9 +66,13 @@ export class CameraRecordingManager {
   unregisterSlot(slotKey) {
     const existing = this.slots.get(slotKey);
     if (!existing) return;
-    if (existing.activeProvider && existing.videoElement) {
-      existing.activeProvider.detach(existing.videoElement);
+    if (existing.activeProvider) {
+      existing.activeProvider.detach(existing.bufferController.getActiveVideo());
+      if (existing.bufferController.getStandbyVideo()) {
+        existing.activeProvider.detach(existing.bufferController.getStandbyVideo());
+      }
     }
+    existing.bufferController.detachAll();
     this.slots.delete(slotKey);
   }
 
@@ -78,11 +90,18 @@ export class CameraRecordingManager {
     }
     this._seekVersion += 1;
     for (const slot of this.slots.values()) {
-      if (slot.activeProvider && slot.videoElement) {
-        slot.activeProvider.detach(slot.videoElement);
+      if (slot.activeProvider) {
+        slot.activeProvider.detach(slot.bufferController.getActiveVideo());
+        if (slot.bufferController.getStandbyVideo()) {
+          slot.activeProvider.detach(slot.bufferController.getStandbyVideo());
+        }
       }
+      slot.bufferController.detachAll();
       slot.activeProvider = null;
       slot.activeSegment = null;
+      slot.activeResolution = null;
+      slot._isSwapping = false;
+      slot._refreshingLookahead = false;
       slot.status = RecordingPlaybackStatus.IDLE;
     }
   }
@@ -103,8 +122,7 @@ export class CameraRecordingManager {
   }
 
   /**
-   * Recupera i segmenti disponibili per tutte le telecamere registrate nell'intervallo [startUnix, endUnix]
-   * (usato per evidenziare sulla timeline dove esistono clip registrate).
+   * Recupera i segmenti disponibili per tutte le telecamere registrate nell'intervallo [startUnix, endUnix].
    */
   async queryAllSegments(startUnix, endUnix) {
     const byCamera = new Map();
@@ -127,10 +145,6 @@ export class CameraRecordingManager {
     return byCamera;
   }
 
-  /**
-   * Sincronizza tutti gli slot video al timestamp Unix richiesto.
-   * Supporta debounce per lo scrubbing fluido della timeline senza saturare la rete.
-   */
   seekAllToTimestamp(timestampUnix, { immediate = false } = {}) {
     this.currentTimestampUnix = Number(timestampUnix);
     if (this._debounceTimer) {
@@ -161,24 +175,30 @@ export class CameraRecordingManager {
   }
 
   async _syncSlotToTimestamp(slot, timestampUnix, version) {
-    if (!slot || !slot.videoElement) return;
+    if (!slot || !slot.bufferController?.getActiveVideo()) return;
+    const activeVideoEl = slot.bufferController.getActiveVideo();
 
-    // Fast path: se lo slot sta già riproducendo un segmento che contiene timestampUnix,
-    // aggiorniamo solo videoElement.currentTime localmente senza chiamate di rete.
-    if (slot.activeProvider && slot.activeSegment && slot.activeSegment.containsTimestamp(timestampUnix)) {
+    const insideEffective = slot.activeResolution
+      ? slot.activeResolution.containsEffectiveTimestamp(timestampUnix)
+      : Boolean(slot.activeSegment && slot.activeSegment.containsTimestamp(timestampUnix));
+
+    if (slot.activeProvider && slot.activeSegment && insideEffective) {
       const targetOffset = slot.activeSegment.getOffsetSeconds(timestampUnix);
-      const drift = Math.abs((slot.videoElement.currentTime || 0) - targetOffset);
-      if (drift > 0.75) {
+      const drift = Math.abs((activeVideoEl.currentTime || 0) - targetOffset);
+      if (drift > 0.45) {
         try {
-          slot.videoElement.currentTime = targetOffset;
+          activeVideoEl.currentTime = targetOffset;
         } catch {}
       }
-      slot.activeProvider.setPlaybackRate(slot.videoElement, this.playbackRate);
-      slot.activeProvider.setPaused(slot.videoElement, !this.isPlaying);
+      slot.activeProvider.setPlaybackRate(activeVideoEl, this.playbackRate);
+      slot.activeProvider.setPaused(activeVideoEl, !this.isPlaying);
       this._emitSlotState(slot, {
         status: this.isPlaying ? RecordingPlaybackStatus.PLAYING : RecordingPlaybackStatus.PAUSED,
         timestampUnix,
         segment: slot.activeSegment,
+        resolution: slot.activeResolution,
+        activeVideoEl,
+        streamTier: slot.activeSegment.streamTier || 'sub',
         reason: 'ok',
       });
       return;
@@ -188,6 +208,7 @@ export class CameraRecordingManager {
       status: RecordingPlaybackStatus.LOADING,
       timestampUnix,
       segment: null,
+      activeVideoEl,
       reason: 'loading',
     });
 
@@ -201,7 +222,8 @@ export class CameraRecordingManager {
     for (const provider of this.providers) {
       if (version !== this._seekVersion) return;
       try {
-        const res = await provider.attachHistoricalVideo(slot.cameraId, slot.videoElement, timestampUnix, {
+        const targetEl = slot.bufferController.getActiveVideo();
+        const res = await provider.attachHistoricalVideo(slot.cameraId, targetEl, timestampUnix, {
           autoplay: this.isPlaying,
           playbackRate: this.playbackRate,
         });
@@ -209,14 +231,18 @@ export class CameraRecordingManager {
 
         if (res && res.available) {
           if (slot.activeProvider && slot.activeProvider !== provider) {
-            slot.activeProvider.detach(slot.videoElement);
+            slot.activeProvider.detach(targetEl);
           }
           slot.activeProvider = provider;
           slot.activeSegment = res.segment;
+          slot.activeResolution = res;
           this._emitSlotState(slot, {
             status: this.isPlaying ? RecordingPlaybackStatus.PLAYING : RecordingPlaybackStatus.PAUSED,
             timestampUnix,
             segment: res.segment,
+            resolution: res,
+            activeVideoEl: targetEl,
+            streamTier: res.segment?.streamTier || 'sub',
             reason: 'ok',
             storageType: res.storageType,
           });
@@ -230,33 +256,132 @@ export class CameraRecordingManager {
 
     if (version !== this._seekVersion) return;
 
-    // Nessun provider ha video registrato per questo timestamp -> stato scuro/nero robusto
     if (slot.activeProvider) {
-      slot.activeProvider.detach(slot.videoElement);
+      slot.activeProvider.detach(slot.bufferController.getActiveVideo());
     }
+    slot.bufferController.detachAll();
     slot.activeProvider = null;
     slot.activeSegment = null;
+    slot.activeResolution = null;
     this._emitSlotState(slot, {
       status: RecordingPlaybackStatus.NO_RECORDING,
       timestampUnix,
       segment: null,
+      activeVideoEl: slot.bufferController.getActiveVideo(),
       reason: lastResolution.reason || 'no_recording',
       storageType: lastResolution.storageType || 'none',
     });
   }
 
+  async _refreshSlotLookahead(slot, probeTimestampUnix, expectedSegmentId, seekVersion) {
+    if (!slot.activeProvider || slot._refreshingLookahead) return;
+    if (typeof slot.activeProvider.resolvePlayback !== 'function') return;
+    slot._refreshingLookahead = true;
+    try {
+      const allowHevc = DualVideoBufferController.detectBrowserHevcSupport(slot.bufferController.getActiveVideo());
+      const freshRes = await slot.activeProvider.resolvePlayback(slot.cameraId, probeTimestampUnix, { allowHevc });
+      if (seekVersion !== this._seekVersion) return;
+      if (freshRes?.available && freshRes.segment?.id === expectedSegmentId) {
+        slot.activeResolution = freshRes;
+      }
+    } catch {
+      // Mantiene la risoluzione provvisoria fino al prossimo cambio
+    } finally {
+      slot._refreshingLookahead = false;
+    }
+  }
+
   /**
-   * Avanzamento sincrono chiamato dal render loop quando il replay storico è in riproduzione:
-   * verifica se siamo usciti dal segmento corrente (passaggio automatico a segmento successivo o schermo nero).
+   * Avanzamento sincrono dal render loop durante il replay storico:
+   * - Precarica il segmento successivo sul buffer standby negli ultimi N secondi
+   * - Esegue lo swap istantaneo zero-gap al confine Sub <-> Main o tra segmenti contigui
+   * - Mantiene allineato currentTime entro 0.55s rispetto alla timeline 3D
    */
   syncPlaybackTick(timestampUnix) {
     this.currentTimestampUnix = Number(timestampUnix);
     if (!this.isPlaying) return;
 
+    const lookaheadWindow = this.preloadLookaheadSec * Math.max(1.0, this.playbackRate);
+
     for (const slot of this.slots.values()) {
-      if (slot.activeSegment && !slot.activeSegment.containsTimestamp(timestampUnix, 0.5)) {
-        // Usciti dal segmento corrente: risolve il segmento successivo o passa a NO_RECORDING
-        this._syncSlotToTimestamp(slot, timestampUnix, this._seekVersion);
+      if (!slot.activeSegment || slot._isSwapping) continue;
+      const activeVideoEl = slot.bufferController.getActiveVideo();
+      const res = slot.activeResolution;
+      const nextSeg = res?.nextSegment || null;
+      const switchAt = res?.switchAtUnix ?? res?.effectiveEndUnix ?? slot.activeSegment.endUnix;
+
+      // 1. Pre-caricamento anticipato nello standby <video>
+      if (
+        nextSeg &&
+        nextSeg.streamUrl &&
+        slot.bufferController.hasDualBuffer() &&
+        Number.isFinite(switchAt)
+      ) {
+        const timeToSwitch = switchAt - timestampUnix;
+        if (timeToSwitch > 0 && timeToSwitch <= lookaheadWindow) {
+          slot.bufferController.preloadStandby(
+            nextSeg.streamUrl,
+            res?.nextSeekOffsetSec ?? 0,
+            nextSeg.id,
+            { playbackRate: this.playbackRate }
+          );
+        }
+      }
+
+      // 2. Verifica confine temporale di fine effettiva (switch a Main o ritorno a Sub)
+      const effectiveEnd = res?.effectiveEndUnix ?? slot.activeSegment.endUnix;
+      if (timestampUnix >= effectiveEnd - 0.08) {
+        if (nextSeg && nextSeg.streamUrl && slot.bufferController.isStandbyReadyFor(nextSeg.id, nextSeg.streamUrl)) {
+          const nextOffset = Math.max(0, timestampUnix - nextSeg.startUnix);
+          const swappedEl = slot.bufferController.commitStandbySwap(nextOffset, {
+            autoplay: this.isPlaying,
+            playbackRate: this.playbackRate,
+          });
+          if (swappedEl) {
+            slot.activeSegment = nextSeg;
+            slot.activeResolution = new PlaybackResolution({
+              available: true,
+              cameraId: slot.cameraId,
+              requestedUnix: timestampUnix,
+              segment: nextSeg,
+              seekOffsetSec: nextOffset,
+              streamUrl: nextSeg.streamUrl,
+              reason: 'ok',
+              storageType: nextSeg.storageType,
+              effectiveEndUnix: nextSeg.endUnix,
+            });
+            this._emitSlotState(slot, {
+              status: this.isPlaying ? RecordingPlaybackStatus.PLAYING : RecordingPlaybackStatus.PAUSED,
+              timestampUnix,
+              segment: nextSeg,
+              resolution: slot.activeResolution,
+              activeVideoEl: swappedEl,
+              streamTier: nextSeg.streamTier || 'sub',
+              reason: 'ok',
+              storageType: nextSeg.storageType,
+            });
+            void this._refreshSlotLookahead(slot, timestampUnix + 0.15, nextSeg.id, this._seekVersion);
+            continue;
+          }
+        }
+
+        // Fallback se il buffer standby non era ancora pronto o se il provider è a buffer singolo
+        slot._isSwapping = true;
+        void this._syncSlotToTimestamp(slot, timestampUnix, this._seekVersion).finally(() => {
+          slot._isSwapping = false;
+        });
+        continue;
+      }
+
+      // 3. Correzione drift leggera durante riproduzione continua
+      if (activeVideoEl && slot.activeSegment.containsTimestamp(timestampUnix, 0.5)) {
+        const expectedOffset = slot.activeSegment.getOffsetSeconds(timestampUnix);
+        const drift = Math.abs((activeVideoEl.currentTime || 0) - expectedOffset);
+        if (drift > 0.55) {
+          try {
+            activeVideoEl.currentTime = expectedOffset;
+          } catch {}
+        }
       }
     }
   }
@@ -264,12 +389,16 @@ export class CameraRecordingManager {
   setPlaying(playing) {
     this.isPlaying = Boolean(playing);
     for (const slot of this.slots.values()) {
-      if (slot.activeProvider && slot.videoElement && slot.activeSegment) {
-        slot.activeProvider.setPaused(slot.videoElement, !this.isPlaying);
+      const activeVideoEl = slot.bufferController.getActiveVideo();
+      if (slot.activeProvider && activeVideoEl && slot.activeSegment) {
+        slot.activeProvider.setPaused(activeVideoEl, !this.isPlaying);
         this._emitSlotState(slot, {
           status: this.isPlaying ? RecordingPlaybackStatus.PLAYING : RecordingPlaybackStatus.PAUSED,
           timestampUnix: this.currentTimestampUnix,
           segment: slot.activeSegment,
+          resolution: slot.activeResolution,
+          activeVideoEl,
+          streamTier: slot.activeSegment.streamTier || 'sub',
           reason: 'ok',
         });
       }
@@ -279,8 +408,9 @@ export class CameraRecordingManager {
   setPlaybackRate(rate) {
     this.playbackRate = Math.max(0.25, Math.min(8.0, Number(rate) || 1.0));
     for (const slot of this.slots.values()) {
-      if (slot.activeProvider && slot.videoElement) {
-        slot.activeProvider.setPlaybackRate(slot.videoElement, this.playbackRate);
+      const activeVideoEl = slot.bufferController.getActiveVideo();
+      if (slot.activeProvider && activeVideoEl) {
+        slot.activeProvider.setPlaybackRate(activeVideoEl, this.playbackRate);
       }
     }
   }

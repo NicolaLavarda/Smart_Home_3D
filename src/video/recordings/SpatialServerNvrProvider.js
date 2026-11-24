@@ -1,3 +1,4 @@
+import { DualVideoBufferController } from './DualVideoBufferController.js';
 import { IRecordingProvider } from './IRecordingProvider.js';
 import { PlaybackResolution, RecordingSegment } from './RecordingModels.js';
 
@@ -6,8 +7,8 @@ import { PlaybackResolution, RecordingSegment } from './RecordingModels.js';
  *
  * Provider concreto per la modalità "Hard Disk Videosorveglianza su PC / NVR locale".
  * Comunica con gli endpoint REST del microservizio Python `spatial_server`
- * (`/api/v1/recordings/*`), compatibile con segmenti MP4/fMP4 salvati sul disco del PC
- * da ffmpeg/go2rtc/Frigate con supporto HTTP Range Seeking istantaneo.
+ * (`/api/v1/recordings/*`), compatibile con architettura Dual-Tier (Sub H24 + Main Event)
+ * e supporto HTTP Range Seeking istantaneo + lookahead per doppio buffer.
  */
 export class SpatialServerNvrProvider extends IRecordingProvider {
   constructor(options = {}) {
@@ -53,6 +54,26 @@ export class SpatialServerNvrProvider extends IRecordingProvider {
     return `${base}${path}`;
   }
 
+  _hydrateSegment(rawSeg, fallbackCameraId = '') {
+    if (!rawSeg) return null;
+    return new RecordingSegment({
+      id: rawSeg.id,
+      cameraId: rawSeg.camera_id || fallbackCameraId,
+      startUnix: rawSeg.start_unix,
+      endUnix: rawSeg.end_unix,
+      streamUrl: this._normalizeUrl(rawSeg.stream_url),
+      format: rawSeg.format || 'mp4',
+      storageType: rawSeg.storage_type || this.storageType,
+      hasMotion: Boolean(rawSeg.has_motion),
+      sizeBytes: rawSeg.size_bytes || 0,
+      metadata: rawSeg.metadata || {},
+      streamTier: rawSeg.stream_tier || (rawSeg.has_motion ? 'main' : 'sub'),
+      codec: rawSeg.codec || 'h264',
+      width: rawSeg.width || 0,
+      height: rawSeg.height || 0,
+    });
+  }
+
   async getHealthStatus() {
     const res = await this._requestJson('/api/v1/recordings/status');
     if (!res) {
@@ -63,44 +84,58 @@ export class SpatialServerNvrProvider extends IRecordingProvider {
         detail: 'Servizio NVR non raggiungibile',
       };
     }
+
+    const recorder = res.recorder || null;
+    const storageStats = res.storage_stats || null;
+    let detail = 'Archivio NVR predisposto (nessun disco configurato in SPATIAL_NVR_STORAGE_DIR)';
+    if (res.configured) {
+      const freeGb = recorder?.last_prune?.disk_free_gb;
+      const freeLabel = Number.isFinite(freeGb) ? ` • ${freeGb} GB liberi` : '';
+      if (recorder?.state === 'running') {
+        detail = `NVR Dual-Tier attivo (RAM pre-buffer ${recorder.ram_buffer_total_mb ?? 0} MB${freeLabel})`;
+      } else if (recorder?.state === 'missing_pyav') {
+        detail = `Archivio NVR attivo (${res.storage_dir || 'HDD locale'}) • Recorder in attesa di PyAV`;
+      } else {
+        detail = `Archivio NVR attivo (${res.storage_dir || 'HDD locale'}${freeLabel})`;
+      }
+    }
+
     return {
       configured: Boolean(res.configured),
       online: true,
       storageType: res.storage_type || this.storageType,
       cameras: res.cameras || [],
-      detail: res.configured
-        ? `Archivio NVR attivo (${res.storage_dir || 'HDD locale'})`
-        : 'Archivio NVR predisposto (nessun disco configurato in SPATIAL_NVR_STORAGE_DIR)',
+      recorder,
+      storageStats,
+      detail,
     };
   }
 
-  async querySegments(cameraId, startUnix, endUnix) {
+  async querySegments(cameraId, startUnix, endUnix, opts = {}) {
     const params = new URLSearchParams({
       t_start: String(startUnix),
       t_end: String(endUnix),
     });
+    if (opts.tier === 'sub' || opts.tier === 'main') {
+      params.set('tier', opts.tier);
+    }
     const res = await this._requestJson(
       `/api/v1/recordings/${encodeURIComponent(cameraId)}/segments?${params.toString()}`
     );
     if (!res || !Array.isArray(res.segments)) {
       return [];
     }
-    return res.segments.map((seg) => new RecordingSegment({
-      id: seg.id,
-      cameraId: seg.camera_id || cameraId,
-      startUnix: seg.start_unix,
-      endUnix: seg.end_unix,
-      streamUrl: this._normalizeUrl(seg.stream_url),
-      format: seg.format || 'mp4',
-      storageType: seg.storage_type || this.storageType,
-      hasMotion: Boolean(seg.has_motion),
-      sizeBytes: seg.size_bytes || 0,
-      metadata: seg.metadata || {},
-    }));
+    return res.segments.map((seg) => this._hydrateSegment(seg, cameraId)).filter(Boolean);
   }
 
-  async resolvePlayback(cameraId, timestampUnix) {
+  async resolvePlayback(cameraId, timestampUnix, opts = {}) {
     const params = new URLSearchParams({ t: String(timestampUnix) });
+    if (opts.allowHevc === false) {
+      params.set('allow_hevc', '0');
+    }
+    if (opts.preferTier === 'sub' || opts.preferTier === 'main') {
+      params.set('prefer_tier', opts.preferTier);
+    }
     const res = await this._requestJson(
       `/api/v1/recordings/${encodeURIComponent(cameraId)}/resolve?${params.toString()}`
     );
@@ -114,28 +149,23 @@ export class SpatialServerNvrProvider extends IRecordingProvider {
       });
     }
 
-    const segment = new RecordingSegment({
-      id: res.segment.id,
-      cameraId: res.segment.camera_id || cameraId,
-      startUnix: res.segment.start_unix,
-      endUnix: res.segment.end_unix,
-      streamUrl: this._normalizeUrl(res.segment.stream_url),
-      format: res.segment.format || 'mp4',
-      storageType: res.segment.storage_type || this.storageType,
-      hasMotion: Boolean(res.segment.has_motion),
-      sizeBytes: res.segment.size_bytes || 0,
-      metadata: res.segment.metadata || {},
-    });
+    const segment = this._hydrateSegment(res.segment, cameraId);
+    const nextSegment = this._hydrateSegment(res.next_segment, cameraId);
 
     return new PlaybackResolution({
-      available: Boolean(segment.streamUrl),
+      available: Boolean(segment?.streamUrl),
       cameraId,
       requestedUnix: timestampUnix,
       segment,
       seekOffsetSec: Number(res.seek_offset_sec ?? segment.getOffsetSeconds(timestampUnix)),
-      streamUrl: segment.streamUrl,
-      reason: segment.streamUrl ? 'ok' : 'missing_stream_url',
-      storageType: segment.storageType,
+      streamUrl: segment?.streamUrl || null,
+      reason: segment?.streamUrl ? 'ok' : 'missing_stream_url',
+      storageType: segment?.storageType || this.storageType,
+      effectiveEndUnix: res.effective_end_unix ?? segment?.endUnix ?? null,
+      switchAtUnix: res.switch_at_unix ?? null,
+      nextSegment,
+      nextSeekOffsetSec: Number(res.next_seek_offset_sec ?? 0),
+      fallbackReason: res.fallback_reason || null,
     });
   }
 
@@ -144,7 +174,14 @@ export class SpatialServerNvrProvider extends IRecordingProvider {
       return new PlaybackResolution({ available: false, cameraId, requestedUnix: timestampUnix, reason: 'missing_element' });
     }
 
-    const resolution = await this.resolvePlayback(cameraId, timestampUnix);
+    const allowHevc = opts.allowHevc !== undefined
+      ? Boolean(opts.allowHevc)
+      : DualVideoBufferController.detectBrowserHevcSupport(videoElement);
+
+    const resolution = await this.resolvePlayback(cameraId, timestampUnix, {
+      allowHevc,
+      preferTier: opts.preferTier,
+    });
     if (!resolution.available || !resolution.streamUrl) {
       this.detach(videoElement);
       return resolution;
@@ -169,24 +206,31 @@ export class SpatialServerNvrProvider extends IRecordingProvider {
 
       await new Promise((resolve) => {
         let settled = false;
+        let timer = null;
+        const cleanup = () => {
+          videoElement.removeEventListener?.('loadedmetadata', onLoaded);
+          videoElement.removeEventListener?.('error', onLoaded);
+        };
         const done = () => {
           if (settled) return;
           settled = true;
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          cleanup();
           resolve();
         };
-        const timer = setTimeout(done, 1500);
-        const onLoaded = () => {
-          clearTimeout(timer);
-          done();
-        };
-        videoElement.addEventListener('loadedmetadata', onLoaded, { once: true });
-        videoElement.addEventListener('error', onLoaded, { once: true });
+        const onLoaded = () => done();
+        timer = setTimeout(done, 1500);
+        videoElement.addEventListener('loadedmetadata', onLoaded);
+        videoElement.addEventListener('error', onLoaded);
       });
     }
 
     try {
       const targetTime = Math.max(0, resolution.seekOffsetSec);
-      if (Math.abs((videoElement.currentTime || 0) - targetTime) > 0.65 || !sameSegment) {
+      if (Math.abs((videoElement.currentTime || 0) - targetTime) > 0.35 || !sameSegment) {
         videoElement.currentTime = targetTime;
       }
     } catch {}
