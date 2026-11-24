@@ -181,6 +181,13 @@ class OnnxAlprRecognizer(IPlateRecognizer):
             key=lambda d: float(d.confidence) * max(1.0, float(d.bounding_box.x2 - d.bounding_box.x1)),
         )
         bb = best_det.bounding_box
+        vh, vw = vehicle_crop_bgr.shape[:2]
+        px1 = max(0, min(vw - 1, int(round(float(bb.x1)))))
+        py1 = max(0, min(vh - 1, int(round(float(bb.y1)))))
+        px2 = max(px1 + 1, min(vw, int(round(float(bb.x2)))))
+        py2 = max(py1 + 1, min(vh, int(round(float(bb.y2)))))
+        plate_box_px = (px1, py1, px2, py2)
+
         metrics, tight_crop, thumb = self._assess_plate_quality(
             vehicle_crop_bgr,
             (bb.x1, bb.y1, bb.x2, bb.y2),
@@ -203,6 +210,7 @@ class OnnxAlprRecognizer(IPlateRecognizer):
                 confidence=0.0,
                 quality_score=round(base_quality * 0.25, 4),
                 metrics=metrics,
+                box_crop_px=plate_box_px,
                 crop_bgr=thumb,
             )
 
@@ -236,5 +244,6 @@ class OnnxAlprRecognizer(IPlateRecognizer):
             region=getattr(pred, "region", None),
             quality_score=round(base_quality, 4),
             metrics=metrics,
+            box_crop_px=plate_box_px,
             crop_bgr=thumb,
         )

@@ -24,8 +24,20 @@ from pydantic import BaseModel
 from spatial_server.automations import (
     AutomationEngineService,
     AutomationRuleDefinition,
+    SpatialGeometryEngine,
     SpatialZoneDefinition,
     VirtualEntityDefinition,
+)
+from spatial_server.events import (
+    EventSnapshotStore,
+    SceneEventManager,
+    SceneEventRecord,
+    SignedMediaTokenService,
+    is_valid_event_id,
+)
+from spatial_server.integrations import (
+    HomeAssistantBridgeService,
+    HomeAssistantMqttBridge,
 )
 from spatial_server.biometrics import (
     BiometricCropStore,
@@ -212,13 +224,102 @@ class SpatialPipelineService:
         self._lazy_crop_store: Optional[BiometricCropStore] = None
         self._lazy_face_gallery: Optional[FaceGalleryIndex] = None
         self._lazy_whitelist_matcher: Optional[PlateWhitelistMatcher] = None
+        self._hmac_secret_fallback: bytes = (
+            config.session_secret_key.encode("utf-8")
+            if config.session_secret_key
+            else os.urandom(32)
+        )
+        self._hmac_secret_provider = lambda: self._hmac_secret_fallback
+        self.signed_media_service = SignedMediaTokenService(
+            lambda: self._hmac_secret_provider(),
+            default_ttl_s=config.signed_media_ttl_s,
+        )
+        self.event_snapshot_store = EventSnapshotStore(
+            config.data_dir / "events",
+            max_width_px=config.events_snapshot_max_width,
+        )
+        stream_candidates_by_cam: dict[str, list[str]] = {}
+        panoramic_cams: set[str] = set()
+        for cam_id in optical_models:
+            meta = self.camera_manifest_meta.get(cam_id) or {}
+            slug = re.sub(r"^cam_", "", cam_id, flags=re.IGNORECASE).lower()
+            snap_s = str(meta.get("snap_stream_id") or "").strip() or f"{slug}_snap"
+            main_s = str(meta.get("stream_id") or "").strip() or f"{slug}_main"
+            sub_s = str(meta.get("sub_stream_id") or "").strip() or f"{slug}_sub"
+            cands = []
+            for s_name in (snap_s, main_s, sub_s):
+                if s_name and s_name not in cands:
+                    cands.append(s_name)
+            stream_candidates_by_cam[cam_id] = cands
+            if self._is_camera_panoramic_180(cam_id):
+                panoramic_cams.add(cam_id)
+
+        self.scene_event_manager = SceneEventManager(
+            repository=self.repository,
+            snapshot_store=self.event_snapshot_store,
+            inertia_s=config.events_inertia_s,
+            pre_roll_s=config.events_pre_roll_s,
+            go2rtc_http_base_url=config.go2rtc_http_base_url,
+            stream_candidates_by_cam=stream_candidates_by_cam,
+            panoramic_cameras=panoramic_cams,
+            substream_frame_getter=self.get_latest_substream_frame,
+            broadcast_callback=self._broadcast_json,
+            on_snapshot_saved=self._on_scene_snapshot_saved,
+        )
+        self.ha_bridge = HomeAssistantBridgeService(
+            config=self.config,
+            on_states_batch=self._on_ha_bridge_states_batch,
+            on_notification_action=self._on_ha_bridge_notification_action,
+        )
+        alarm_ve = None
+        for ve_dict in self.repository.list_virtual_entities():
+            if ve_dict.get("entity_id") == "sh3d.allarme":
+                alarm_ve = ve_dict
+                break
+        self.mqtt_bridge = HomeAssistantMqttBridge(
+            config=self.config,
+            on_alarm_command=self._on_mqtt_alarm_command,
+            initial_alarm_options=list(alarm_ve.get("options") or []) if alarm_ve else None,
+            initial_alarm_state=str(alarm_ve.get("state") or "Spento") if alarm_ve else "Spento",
+        )
         self.automation_engine = AutomationEngineService(
             config=self.config,
             repository=self.repository,
             broadcast_callback=self._broadcast_json,
             known_identities_provider=lambda: {str(x["name"]) for x in self.get_biometric_gallery_summary()},
             whitelisted_plates_provider=lambda: {str(x["plate"]) for x in self.repository.list_plate_whitelist()},
+            ha_bridge=self.ha_bridge,
+            mqtt_bridge=self.mqtt_bridge,
+            scene_event_manager=self.scene_event_manager,
+            signed_media_service=self.signed_media_service,
         )
+
+    async def _on_ha_bridge_states_batch(self, states: dict[str, dict[str, Any]], trigger_on_diff: bool) -> None:
+        await self.automation_engine.sync_ha_states_batch(states, trigger_on_diff=trigger_on_diff)
+
+    async def _on_ha_bridge_notification_action(self, action_name: str, event_data: dict[str, Any]) -> None:
+        await self.automation_engine.on_ha_notification_action(action_name, event_data)
+
+    async def _on_mqtt_alarm_command(self, state_cmd: str) -> None:
+        await self.automation_engine.set_virtual_entity_state(
+            "sh3d.allarme",
+            state_cmd,
+            operation="set",
+            trigger_automations=True,
+        )
+
+    async def _on_scene_snapshot_saved(self, ev: SceneEventRecord) -> None:
+        if self.mqtt_bridge.is_connected() and ev.cover_ann_relpath:
+            snap_path = self.event_snapshot_store.resolve_snapshot_path(
+                ev.event_id,
+                "annotated",
+                known_relpath=ev.cover_ann_relpath,
+            )
+            if snap_path is not None and snap_path.is_file():
+                try:
+                    await self.mqtt_bridge.publish_event_image(snap_path.read_bytes())
+                except Exception:
+                    pass
 
     def get_optical_model(self, camera_id: str) -> Optional[ICameraOpticalModel]:
         return self.optical_models.get(camera_id)
@@ -309,6 +410,8 @@ class SpatialPipelineService:
             await self.biometric_coordinator.start()
         if self.recorder_coordinator is not None:
             await self.recorder_coordinator.start()
+        await self.ha_bridge.start()
+        await self.mqtt_bridge.start()
         await self.automation_engine.start()
         self._flush_task = asyncio.create_task(self._db_flush_loop())
         await self.set_ingestion_mode(self.ingestion_mode)
@@ -316,6 +419,9 @@ class SpatialPipelineService:
     async def stop(self) -> None:
         await self._stop_sources()
         await self.automation_engine.stop()
+        await self.ha_bridge.stop()
+        await self.mqtt_bridge.stop()
+        await self.scene_event_manager.close()
         if self.recorder_coordinator is not None:
             try:
                 await self.recorder_coordinator.stop()
@@ -790,6 +896,32 @@ class SpatialPipelineService:
 
         await self.broadcast_frame(active_tracks, now_ts)
         try:
+            zones_by_track: dict[int, list[tuple[str, str]]] = {}
+            poly_zones = [
+                z for z in self.automation_engine.zones.values()
+                if z.enabled and z.geometry_type == "polygon"
+            ]
+            if poly_zones and active_tracks:
+                for tr in active_tracks:
+                    matched_z: list[tuple[str, str]] = []
+                    for z in poly_zones:
+                        if SpatialGeometryEngine.is_point_in_zone_25d(tr.state.x, tr.state.y, tr.state.z, z):
+                            matched_z.append((z.zone_id, z.name))
+                    if matched_z:
+                        zones_by_track[tr.track_id] = matched_z
+            alarm_ve = self.automation_engine.virtual_entities.get("sh3d.allarme")
+            alarm_state = str(alarm_ve.state) if alarm_ve is not None else None
+            await self.scene_event_manager.on_detection_batch(
+                events,
+                active_tracks,
+                obs_assignments,
+                now_ts,
+                zones_by_track=zones_by_track,
+                alarm_state=alarm_state,
+            )
+        except Exception as exc:
+            logger.warning("SceneEvent aggregation warning on detection batch: %s", exc)
+        try:
             await self.automation_engine.on_tracks_updated(active_tracks, now_ts)
         except Exception as exc:
             logger.warning("Automation evaluation warning on tracks update: %s", exc)
@@ -998,6 +1130,17 @@ class SpatialPipelineService:
             await self.broadcast_frame(active_tracks, review_ts)
             await self.broadcast_biometric_event(manual_update, event_id=event_id)
             try:
+                await self.scene_event_manager.on_hitl_review_updated(
+                    track_id=track_id,
+                    identity=identity,
+                    plate=plate,
+                    plate_whitelisted=plate_whitelisted,
+                    plate_owner=plate_owner,
+                    biometric_event_id=event_id,
+                )
+            except Exception as exc:
+                logger.warning("SceneEvent HITL update warning: %s", exc)
+            try:
                 await self.automation_engine.on_biometric_update(
                     {
                         "track_id": track_id,
@@ -1136,6 +1279,27 @@ class SpatialPipelineService:
                 self._pending_persist.extend(persistable)
 
         await self.broadcast_frame(active_tracks, update.timestamp)
+        if update.biometric_status in ("locked", "unknown") or update.full_frame_bgr is not None:
+            try:
+                await self.scene_event_manager.on_biometric_frame(
+                    track_id=update.track_id,
+                    camera_id=update.camera_id,
+                    timestamp=update.timestamp,
+                    full_frame_bgr=update.full_frame_bgr,
+                    subject_bbox_norm=update.subject_bbox_norm,
+                    sub_bbox_norm=update.sub_bbox_norm,
+                    quality_score=update.quality_score,
+                    identity=updated_track.identity,
+                    identity_confidence=updated_track.identity_confidence,
+                    plate=updated_track.plate,
+                    plate_whitelisted=updated_track.plate_whitelisted,
+                    plate_owner=updated_track.plate_owner,
+                    biometric_status=update.biometric_status,
+                    biometric_locked=update.biometric_locked,
+                    biometric_event_id=event_id,
+                )
+            except Exception as exc:
+                logger.warning("SceneEvent biometric update warning: %s", exc)
         if update.biometric_status in ("locked", "unknown"):
             await self.broadcast_biometric_event(update, event_id=event_id)
             try:
@@ -1206,11 +1370,16 @@ class SpatialPipelineService:
 
     async def _db_flush_loop(self) -> None:
         last_prune = time.monotonic()
+        last_event_tick = 0.0
         while True:
             await asyncio.sleep(0.5)
             try:
                 await self.flush_pending_to_db()
-                if time.monotonic() - last_prune > 3600:
+                now_mono = time.monotonic()
+                if now_mono - last_event_tick >= 1.0:
+                    last_event_tick = now_mono
+                    await self.scene_event_manager.tick(time.time())
+                if now_mono - last_prune > 3600:
                     loop = asyncio.get_running_loop()
                     cutoff_tracks = time.time() - self.config.db_retention_days * 86400
                     await loop.run_in_executor(None, self.repository.prune_older_than, cutoff_tracks)
@@ -1229,7 +1398,20 @@ class SpatialPipelineService:
                                 extra_relpaths=relpaths,
                             ),
                         )
-                    last_prune = time.monotonic()
+
+                    cutoff_scene = time.time() - self.config.events_retention_days * 86400
+                    _del_scene, scene_rels = await loop.run_in_executor(
+                        None, self.repository.prune_scene_events_older_than, cutoff_scene
+                    )
+                    await loop.run_in_executor(
+                        None,
+                        lambda: self.event_snapshot_store.prune(
+                            retention_days=self.config.events_retention_days,
+                            max_disk_mb=self.config.events_snapshot_max_mb,
+                            extra_relpaths=scene_rels,
+                        ),
+                    )
+                    last_prune = now_mono
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -1494,6 +1676,7 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
     app.state.pipeline = service
     app.state.config = service.config
     app.state.auth_verifier = HomeAssistantAuthVerifier.from_config(service.config)
+    service._hmac_secret_provider = lambda: app.state.auth_verifier._session_secret
     app.state.recording_archive: IVideoArchiveRepository = service.recording_archive or FilesystemNvrArchiveRepository(
         storage_dir=service.config.nvr_storage_dir,
         default_segment_duration_s=service.config.nvr_sub_segment_sec,
@@ -1601,6 +1784,17 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "last_detection": service.last_detection_info,
             "biometrics": bio_diag,
             "nvr": nvr_summary,
+            "ha_bridge": {
+                "connected": service.ha_bridge.is_connected(),
+                "has_backend_token": service.ha_bridge.has_backend_token(),
+                "mqtt_connected": service.mqtt_bridge.is_connected(),
+            },
+            "events": {
+                "active_event_id": service.scene_event_manager.get_active_event().event_id
+                if service.scene_event_manager.get_active_event() is not None
+                else None,
+                "snapshots": service.event_snapshot_store.get_usage_stats(),
+            },
         }
 
     @app.get("/api/v1/tracks")
@@ -1991,6 +2185,165 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
         bins = service.repository.query_timeline_density(t_start, t_end, buckets=buckets)
         return {"status": "ok", "bins": bins}
 
+    # ========================================================================
+    # UNIFIED SCENE EVENTS (EPISODES), COVER SNAPSHOTS & HMAC SIGNED MEDIA
+    # ========================================================================
+
+    @app.get("/api/v1/events")
+    async def list_scene_events(
+        request: Request,
+        response: Response,
+        t_start: Optional[float] = Query(default=None),
+        t_end: Optional[float] = Query(default=None),
+        importance: Optional[str] = Query(default=None),
+        camera_id: Optional[str] = Query(default=None),
+        zone_id: Optional[str] = Query(default=None),
+        identity: Optional[str] = Query(default=None),
+        plate: Optional[str] = Query(default=None),
+        unknown_only: bool = Query(default=False),
+        subject_class: Optional[str] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        rows = service.repository.query_scene_events(
+            t_start,
+            t_end,
+            importance=importance,
+            camera_id=camera_id,
+            zone_id=zone_id,
+            identity=identity,
+            plate=plate,
+            unknown_only=unknown_only,
+            subject_class=subject_class,
+            limit=limit,
+        )
+        events_out: list[dict[str, Any]] = []
+        for raw in rows:
+            try:
+                events_out.append(SceneEventRecord.model_validate(raw).to_api_dict())
+            except Exception:
+                continue
+        archive: IVideoArchiveRepository = request.app.state.recording_archive
+        service.scene_event_manager.enrich_with_nvr(events_out, archive)
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "count": len(events_out), "events": events_out}
+
+    @app.get("/api/v1/events/{event_id}")
+    async def get_scene_event_detail(
+        request: Request,
+        event_id: str,
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        if not is_valid_event_id(event_id):
+            raise HTTPException(status_code=400, detail="event_id non valido")
+        row = service.repository.get_scene_event(event_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Evento non trovato")
+        ev_dict = SceneEventRecord.model_validate(row).to_api_dict()
+        archive: IVideoArchiveRepository = request.app.state.recording_archive
+        service.scene_event_manager.enrich_with_nvr([ev_dict], archive)
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "event": ev_dict}
+
+    @app.delete("/api/v1/events/{event_id}")
+    async def delete_scene_event_endpoint(
+        event_id: str,
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        if not is_valid_event_id(event_id):
+            raise HTTPException(status_code=400, detail="event_id non valido")
+        prev = service.repository.delete_scene_event(event_id)
+        if prev is None:
+            raise HTTPException(status_code=404, detail="Evento non trovato")
+        service.event_snapshot_store.delete_event_files(
+            prev.get("cover_raw_relpath"),
+            prev.get("cover_ann_relpath"),
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", "deleted": event_id}
+
+    @app.post("/api/v1/events/maintenance/prune")
+    async def prune_scene_events_endpoint(
+        response: Response,
+        _admin: HAUserPrincipal = Depends(require_admin_user),
+    ) -> dict[str, Any]:
+        cutoff_ts = time.time() - service.config.events_retention_days * 86400
+        deleted_rows, relpaths = service.repository.prune_scene_events_older_than(cutoff_ts)
+        deleted_files = service.event_snapshot_store.prune(
+            retention_days=service.config.events_retention_days,
+            max_disk_mb=service.config.events_snapshot_max_mb,
+            extra_relpaths=relpaths,
+        )
+        stats = service.event_snapshot_store.get_usage_stats()
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "deleted_events": deleted_rows,
+            "deleted_files": deleted_files,
+            "snapshot_storage": stats,
+        }
+
+    def _serve_event_snapshot_file(event_id: str, variant: str) -> FileResponse:
+        row = service.repository.get_scene_event(event_id)
+        known_rel = None
+        if row is not None:
+            known_rel = row.get("cover_raw_relpath") if variant == "raw" else row.get("cover_ann_relpath")
+        snap_path = service.event_snapshot_store.resolve_snapshot_path(
+            event_id,
+            variant,
+            known_relpath=known_rel,
+        )
+        if snap_path is None and variant == "annotated" and row is not None:
+            snap_path = service.event_snapshot_store.resolve_snapshot_path(
+                event_id,
+                "raw",
+                known_relpath=row.get("cover_raw_relpath"),
+            )
+        if snap_path is None or not snap_path.is_file():
+            raise HTTPException(status_code=404, detail="Snapshot evento non trovato")
+        return FileResponse(
+            path=snap_path,
+            media_type="image/jpeg",
+            filename=snap_path.name,
+            headers={
+                "Cache-Control": "private, max-age=120",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get("/api/v1/events/{event_id}/cover.jpg")
+    async def get_scene_event_cover(
+        event_id: str,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> FileResponse:
+        if not is_valid_event_id(event_id):
+            raise HTTPException(status_code=400, detail="event_id non valido")
+        return _serve_event_snapshot_file(event_id, "raw")
+
+    @app.get("/api/v1/events/{event_id}/annotated.jpg")
+    async def get_scene_event_annotated_cover(
+        event_id: str,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> FileResponse:
+        if not is_valid_event_id(event_id):
+            raise HTTPException(status_code=400, detail="event_id non valido")
+        return _serve_event_snapshot_file(event_id, "annotated")
+
+    @app.get("/api/v1/events/{event_id}/media/{variant}.jpg")
+    async def get_signed_scene_event_media(
+        event_id: str,
+        variant: str,
+        exp: int = Query(...),
+        sig: str = Query(...),
+    ) -> FileResponse:
+        if not is_valid_event_id(event_id) or variant not in ("raw", "annotated"):
+            raise HTTPException(status_code=400, detail="Parametri media non validi")
+        if not service.signed_media_service.verify_media_signature(event_id, variant, exp, sig):
+            raise HTTPException(status_code=403, detail="Firma media non valida o scaduta")
+        return _serve_event_snapshot_file(event_id, variant)
+
     @app.get("/api/v1/recordings/status")
     async def get_recordings_status(
         request: Request,
@@ -2231,7 +2584,16 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "identities": service.get_biometric_gallery_summary(),
             "plates": service.repository.list_plate_whitelist(),
             "cameras": list(service.optical_models.keys()),
+            "ha_discovery": service.ha_bridge.get_discovery_summary(),
         }
+
+    @app.get("/api/v1/automations/ha-discovery")
+    async def get_automations_ha_discovery(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "ok", **service.ha_bridge.get_discovery_summary()}
 
     @app.get("/api/v1/automations/zones")
     async def get_automation_zones(

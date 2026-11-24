@@ -41,6 +41,7 @@ class CropPayload:
     source_variant: str
     fetch_ms: float
     decode_ms: float
+    preview_frame_bgr: Optional[np.ndarray] = None
 
 
 class FaceQualityMetrics(BaseModel):
@@ -65,6 +66,7 @@ class FaceEvaluation(BaseModel):
     margin: float = 0.0
     quality_score: float = 0.0
     metrics: FaceQualityMetrics
+    box_crop_px: Optional[tuple[int, int, int, int]] = None
     crop_bgr: Optional[np.ndarray] = Field(default=None, exclude=True)
 
 
@@ -103,6 +105,7 @@ class PlateEvaluation(BaseModel):
     region: Optional[str] = None
     quality_score: float = 0.0
     metrics: PlateQualityMetrics
+    box_crop_px: Optional[tuple[int, int, int, int]] = None
     crop_bgr: Optional[np.ndarray] = Field(default=None, exclude=True)
 
 
@@ -118,6 +121,8 @@ class PlateWhitelistEntry(BaseModel):
 
 class TrackBiometricUpdate(BaseModel):
     """Consensus biometric update propagated to Kalman3DMultiTracker, SQLite & WS."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     track_id: int
     modality: Literal["face", "alpr"]
@@ -137,3 +142,6 @@ class TrackBiometricUpdate(BaseModel):
     quality_score: float = 0.0
     camera_id: str
     timestamp: float
+    subject_bbox_norm: Optional[tuple[float, float, float, float]] = None
+    sub_bbox_norm: Optional[tuple[float, float, float, float]] = None
+    full_frame_bgr: Optional[np.ndarray] = Field(default=None, exclude=True)

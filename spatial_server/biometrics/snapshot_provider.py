@@ -104,6 +104,15 @@ def decode_and_crop_jpeg(
         return None
 
     crop = full_img[py1:py2, px1:px2].copy()
+    if fw > 1280:
+        prev_scale = 1280.0 / float(fw)
+        preview = cv2.resize(
+            full_img,
+            (1280, max(1, int(round(fh * prev_scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        preview = full_img.copy()
     del full_img
     decode_ms = (time.perf_counter() - t_dec0) * 1000.0
     return CropPayload(
@@ -116,6 +125,7 @@ def decode_and_crop_jpeg(
         source_variant=source_variant,
         fetch_ms=round(fetch_ms, 2),
         decode_ms=round(decode_ms, 2),
+        preview_frame_bgr=preview,
     )
 
 
@@ -206,6 +216,11 @@ class Go2RtcSnapshotProvider(IFrameSnapshotProvider):
         px2, py2 = min(fw, int(round(nx2 * fw))), min(fh, int(round(ny2 * fh)))
         if px2 - px1 < 16 or py2 - py1 < 16:
             return None
+        if fw > 1280:
+            prev_scale = 1280.0 / float(fw)
+            preview = cv2.resize(frame, (1280, max(1, int(round(fh * prev_scale)))), interpolation=cv2.INTER_AREA)
+        else:
+            preview = frame.copy()
         return CropPayload(
             camera_id=camera_id,
             timestamp=ts,
@@ -216,6 +231,7 @@ class Go2RtcSnapshotProvider(IFrameSnapshotProvider):
             source_variant="substream_fallback",
             fetch_ms=0.0,
             decode_ms=0.0,
+            preview_frame_bgr=preview,
         )
 
     async def fetch_crop(

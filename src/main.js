@@ -370,6 +370,44 @@ async function bootstrap() {
   let authReadyForSpatial = false;
   let lastSpatialWsConnected = false;
   let calibrationSyncPromise = null;
+  let handledInitialDeepLink = false;
+
+  const processDeepLinkQueryIfNeeded = async () => {
+    if (handledInitialDeepLink || typeof window === 'undefined') return;
+    let params;
+    try {
+      params = new URLSearchParams(window.location.search || '');
+    } catch {
+      return;
+    }
+    const eventId = (params.get('event') || '').trim();
+    const panelParam = (params.get('panel') || '').trim().toLowerCase();
+    const modeParam = (params.get('mode') || '').trim().toLowerCase();
+    if (!eventId && panelParam !== 'security') return;
+
+    handledInitialDeepLink = true;
+    try {
+      if (eventId) {
+        await securityFabHub.openEventById(eventId);
+      } else if (panelParam === 'security') {
+        securityFabHub.openExpanded();
+        if (['live', 'events', 'replay', 'settings'].includes(modeParam)) {
+          await securityFabHub.setMode(modeParam);
+        }
+      }
+    } catch (err) {
+      console.warn('[Main] Errore apertura deep-link:', err);
+    }
+
+    try {
+      params.delete('event');
+      params.delete('panel');
+      params.delete('mode');
+      const nextSearch = params.toString();
+      const cleanUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash || ''}`;
+      window.history.replaceState({}, '', cleanUrl);
+    } catch {}
+  };
 
   const refreshActivePovIfNeeded = (updatedCameras = []) => {
     if (!Array.isArray(updatedCameras) || updatedCameras.length === 0) return;
@@ -438,6 +476,7 @@ async function bootstrap() {
         spatialStreamClient.connectWebSocket();
         authReadyForSpatial = true;
         syncCalibrationsFromBackend();
+        void processDeepLinkQueryIfNeeded();
       }
       return;
     }
@@ -448,6 +487,7 @@ async function bootstrap() {
         spatialStreamClient.connectWebSocket();
         authReadyForSpatial = true;
         syncCalibrationsFromBackend();
+        void processDeepLinkQueryIfNeeded();
       }
       return;
     }

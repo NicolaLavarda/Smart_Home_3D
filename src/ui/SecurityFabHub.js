@@ -93,7 +93,7 @@ export class SecurityFabHub {
 
     // Stato UI: 'closed' | 'expanded' | 'strip'
     this.panelState = 'closed';
-    // Modalità: 'live' | 'replay' | 'settings'
+    // Modalità: 'live' | 'events' | 'replay' | 'settings'
     this.mode = 'live';
     // Layout griglia: 'proportional' (default: 2 normali affiancate + 180° a tutta larghezza una sotto l'altra) | 'compact' (2×2)
     this.gridLayoutMode = this._loadSavedGridLayoutMode();
@@ -137,8 +137,16 @@ export class SecurityFabHub {
     this._activeHitlEvent = null;
     this._bioPlateTimer = null;
     this._unsubBioEvents = null;
+    this._unsubSceneEvents = null;
     this._unsubAutoEvents = null;
     this._unsubHaAuth = null;
+
+    this.sceneEvents = [];
+    this.sceneEventsFilters = {
+      date: formatDateInput(new Date()),
+      category: '',
+    };
+    this.sceneEventsLoading = false;
 
     this._alarmEntityId = 'sh3d.allarme';
     this._alarmEntity = null;
@@ -201,7 +209,7 @@ export class SecurityFabHub {
           return saved;
         }
       }
-    } catch {}
+    } catch { }
     return 'proportional';
   }
 
@@ -229,18 +237,18 @@ export class SecurityFabHub {
         if (typeof localStorage !== 'undefined') {
           localStorage.setItem('sh3d_sec_grid_layout', mode);
         }
-      } catch {}
+      } catch { }
     }
   }
 
   onModeChange(listener) {
-    if (typeof listener !== 'function') return () => {};
+    if (typeof listener !== 'function') return () => { };
     this._modeListeners.add(listener);
     return () => this._modeListeners.delete(listener);
   }
 
   onReplaySlotStateChange(listener) {
-    if (typeof listener !== 'function') return () => {};
+    if (typeof listener !== 'function') return () => { };
     this._replaySlotListeners.add(listener);
     return () => this._replaySlotListeners.delete(listener);
   }
@@ -270,10 +278,14 @@ export class SecurityFabHub {
             </div>
           </div>
 
-          <div class="m3-segmented" role="tablist" aria-label="Modalità telecamere, cronologia e impostazioni">
+          <div class="m3-segmented" role="tablist" aria-label="Modalità telecamere, eventi, cronologia e impostazioni">
             <button type="button" class="m3-seg-btn active" id="btn-sec-mode-live" role="tab" aria-selected="true" aria-controls="sec-cameras-viewport">
               <span class="m3-live-dot" aria-hidden="true"></span>
               <span>Live</span>
+            </button>
+            <button type="button" class="m3-seg-btn" id="btn-sec-mode-events" role="tab" aria-selected="false" aria-controls="sec-events-section">
+              ${icon('film', { size: 14 })}
+              <span>Eventi</span>
             </button>
             <button type="button" class="m3-seg-btn" id="btn-sec-mode-replay" role="tab" aria-selected="false" aria-controls="sec-history-section">
               ${icon('history', { size: 14 })}
@@ -340,6 +352,36 @@ export class SecurityFabHub {
 
           <!-- Striscia Live Riconoscimenti Biometrici (nascosta se vuota o fuori da Live) -->
           <div class="m3-sec-bio-live-strip" id="sec-bio-live-strip" hidden aria-label="Ultimi riconoscimenti biometrici"></div>
+
+          <!-- Sezione Episodi Rilevanti (SceneEvent unificati con copertina HD e salto rapido a Cronologia) -->
+          <div class="m3-sec-events-section" id="sec-events-section" role="tabpanel" hidden>
+            <div class="m3-events-toolbar">
+              <div class="m3-events-day-group">
+                <div class="m3-day-chips" role="group" aria-label="Giorno eventi">
+                  <button type="button" class="m3-chip active" data-events-day-offset="0">Oggi</button>
+                  <button type="button" class="m3-chip" data-events-day-offset="1">Ieri</button>
+                  <button type="button" class="m3-chip" data-events-day-offset="2">2 gg fa</button>
+                </div>
+                <label class="m3-input-pill" title="Seleziona giorno eventi">
+                  ${icon('calendar', { size: 14 })}
+                  <input type="date" id="sec-events-date" aria-label="Giorno eventi" />
+                </label>
+              </div>
+              <div class="m3-events-filter-group">
+                <div class="m3-day-chips" role="group" aria-label="Filtra categoria episodio">
+                  <button type="button" class="m3-mini-chip active" data-events-cat="">Tutti</button>
+                  <button type="button" class="m3-mini-chip" data-events-cat="person">Persone</button>
+                  <button type="button" class="m3-mini-chip" data-events-cat="vehicle">Veicoli</button>
+                  <button type="button" class="m3-mini-chip" data-events-cat="alert">Allarmi</button>
+                </div>
+                <button type="button" class="m3-icon-btn" id="btn-sec-events-refresh" title="Aggiorna lista episodi" aria-label="Aggiorna lista episodi">
+                  ${icon('refresh-cw', { size: 14 })}
+                </button>
+              </div>
+            </div>
+            <div class="m3-scene-events-empty" id="sec-scene-events-empty" hidden></div>
+            <div class="m3-scene-events-grid" id="sec-scene-events-grid"></div>
+          </div>
 
           <!-- Sezione Cronologia & Ricostruzione 3D (visibile solo in modalità Cronologia) -->
           <div class="m3-sec-history-section" id="sec-history-section" role="tabpanel" hidden>
@@ -605,9 +647,19 @@ export class SecurityFabHub {
     this.statusSummaryEl = this.container.querySelector('#sec-status-summary');
 
     this.liveBtn = this.container.querySelector('#btn-sec-mode-live');
+    this.eventsBtn = this.container.querySelector('#btn-sec-mode-events');
     this.replayBtn = this.container.querySelector('#btn-sec-mode-replay');
     this.settingsBtn = this.container.querySelector('#btn-sec-mode-settings');
     this.panelBodyEl = this.container.querySelector('#sec-panel-body');
+
+    this.eventsSectionEl = this.container.querySelector('#sec-events-section');
+    this.eventsDateInput = this.container.querySelector('#sec-events-date');
+    this.eventsRefreshBtn = this.container.querySelector('#btn-sec-events-refresh');
+    this.sceneEventsEmptyEl = this.container.querySelector('#sec-scene-events-empty');
+    this.sceneEventsGridEl = this.container.querySelector('#sec-scene-events-grid');
+    if (this.eventsDateInput) {
+      this.eventsDateInput.value = this.sceneEventsFilters.date;
+    }
     this.alarmControlBtn = this.container.querySelector('#btn-sec-alarm-control');
     this.alarmBtnLabelEl = this.container.querySelector('#sec-alarm-btn-label');
     this.alarmModalOverlayEl = this.container.querySelector('#sec-alarm-modal-overlay');
@@ -719,10 +771,70 @@ export class SecurityFabHub {
     this.stripExpandBtn?.addEventListener('click', () => this.openExpanded());
 
     this.liveBtn?.addEventListener('click', () => this.setMode('live'));
+    this.eventsBtn?.addEventListener('click', () => this.setMode('events'));
     this.replayBtn?.addEventListener('click', () => this.setMode('replay'));
     this.settingsBtn?.addEventListener('click', () => this.setMode('settings'));
     this.stripModeBtn?.addEventListener('click', () => {
       this.setMode(this.mode === 'live' ? 'replay' : 'live');
+    });
+
+    this.container.querySelectorAll('[data-events-day-offset]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const offsetDays = parseInt(chip.dataset.eventsDayOffset, 10) || 0;
+        const dt = new Date();
+        dt.setDate(dt.getDate() - offsetDays);
+        const isoDate = formatDateInput(dt);
+        this.sceneEventsFilters.date = isoDate;
+        if (this.eventsDateInput) this.eventsDateInput.value = isoDate;
+        this._highlightEventsDayChip(offsetDays);
+        void this.refreshSceneEvents();
+      });
+    });
+
+    this.eventsDateInput?.addEventListener('change', () => {
+      const val = String(this.eventsDateInput?.value || '').trim();
+      if (!val) return;
+      this.sceneEventsFilters.date = val;
+      this._highlightEventsDayChip(null);
+      void this.refreshSceneEvents();
+    });
+
+    this.container.querySelectorAll('[data-events-cat]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const cat = String(chip.dataset.eventsCat || '');
+        this.sceneEventsFilters.category = cat;
+        this._highlightEventsCategoryChip(cat);
+        void this.refreshSceneEvents();
+      });
+    });
+
+    this.eventsRefreshBtn?.addEventListener('click', () => {
+      void this.refreshSceneEvents();
+    });
+
+    this.sceneEventsGridEl?.addEventListener('click', async (e) => {
+      const delBtn = e.target?.closest?.('[data-scene-delete]');
+      if (delBtn) {
+        e.stopPropagation();
+        if (!this._isAdmin() || typeof this.spatialStreamClient?.deleteSceneEvent !== 'function') return;
+        const evId = String(delBtn.getAttribute?.('data-scene-delete') ?? delBtn.dataset?.sceneDelete ?? '').trim();
+        if (!evId) return;
+        const res = await this.spatialStreamClient.deleteSceneEvent(evId).catch(() => null);
+        if (res?.status === 'ok') {
+          this.sceneEvents = this.sceneEvents.filter((item) => item.event_id !== evId);
+          this._renderSceneEvents();
+          this._updateStatusSummary();
+        }
+        return;
+      }
+
+      const replayTarget = e.target?.closest?.('[data-scene-replay]');
+      if (!replayTarget) return;
+      const evId = String(replayTarget.getAttribute?.('data-scene-replay') ?? replayTarget.dataset?.sceneReplay ?? '').trim();
+      const ev = this.sceneEvents.find((item) => item.event_id === evId);
+      if (ev) {
+        await this.openSceneEventReplay(ev);
+      }
     });
 
     this.settingsLayoutPropBtn?.addEventListener('click', () => {
@@ -1048,6 +1160,14 @@ export class SecurityFabHub {
       });
     }
 
+    if (typeof this.spatialStreamClient.onSceneEvent === 'function') {
+      this._unsubSceneEvents = this.spatialStreamClient.onSceneEvent((msg) => {
+        if (msg?.event) {
+          this._upsertSceneEventFromWs(msg.event);
+        }
+      });
+    }
+
     if (typeof this.spatialStreamClient.onAutomationEvent === 'function') {
       this._unsubAutoEvents = this.spatialStreamClient.onAutomationEvent((msg) => {
         if (msg?.type === 'virtual_entity_updated' && msg.entity?.entity_id === this._alarmEntityId) {
@@ -1249,7 +1369,7 @@ export class SecurityFabHub {
       this.fabIconEl.innerHTML = icon('shield-check', { size: 22 });
     }
 
-    if (this.mode === 'settings') {
+    if (this.mode === 'settings' || this.mode === 'events') {
       void this.setMode('live');
     } else if (wasClosed) {
       this._onPanelOpened();
@@ -1287,6 +1407,8 @@ export class SecurityFabHub {
 
     if (this.mode === 'live') {
       await this.connectAllLiveStreams();
+    } else if (this.mode === 'events') {
+      await this.refreshSceneEvents();
     } else if (this.mode === 'replay') {
       if (!Number.isFinite(this._loadedTracksStartUnix)) {
         await this.loadHistoricalWindowAround(this.currentUnix);
@@ -1318,25 +1440,40 @@ export class SecurityFabHub {
   // --- Modalità Live vs Cronologia vs Impostazioni ---
 
   async setMode(nextMode, { skipInitialLoad = false } = {}) {
-    const mode = nextMode === 'replay' ? 'replay' : nextMode === 'settings' ? 'settings' : 'live';
+    const mode =
+      nextMode === 'replay'
+        ? 'replay'
+        : nextMode === 'events'
+          ? 'events'
+          : nextMode === 'settings'
+            ? 'settings'
+            : 'live';
     const prevMode = this.mode;
     this.mode = mode;
 
     const isLive = mode === 'live';
+    const isEvents = mode === 'events';
     const isReplay = mode === 'replay';
     const isSettings = mode === 'settings';
 
     this.liveBtn?.classList.toggle('active', isLive);
     this.liveBtn?.setAttribute('aria-selected', String(isLive));
+    this.eventsBtn?.classList.toggle('active', isEvents);
+    this.eventsBtn?.setAttribute('aria-selected', String(isEvents));
     this.replayBtn?.classList.toggle('active', isReplay);
     this.replayBtn?.setAttribute('aria-selected', String(isReplay));
     this.settingsBtn?.classList.toggle('active', isSettings);
     this.settingsBtn?.setAttribute('aria-selected', String(isSettings));
 
+    this.panelEl?.classList.toggle('mode-events', isEvents);
     this.panelEl?.classList.toggle('mode-replay', isReplay);
     this.panelEl?.classList.toggle('mode-settings', isSettings);
+    this.container?.classList.toggle('mode-events', isEvents);
     this.container?.classList.toggle('mode-settings', isSettings);
 
+    if (this.eventsSectionEl) {
+      this.eventsSectionEl.hidden = !isEvents;
+    }
     if (this.historySectionEl) {
       this.historySectionEl.hidden = !isReplay;
     }
@@ -1402,6 +1539,14 @@ export class SecurityFabHub {
       this._updateReplayClockUI();
       this._updateStatusSummary();
       requestAnimationFrame(() => this.drawDensityCanvas());
+    } else if (isEvents) {
+      this.setPlaying(false);
+      this.recordingManager?.detachAll?.();
+      this._renderLiveBioStrip();
+      this._updateStatusSummary();
+      if (!skipInitialLoad) {
+        await this.refreshSceneEvents();
+      }
     } else {
       // Passaggio a Impostazioni (mantiene vivi eventuali stream Live a costo 0ms su ritorno a Live)
       this.setPlaying(false);
@@ -1453,7 +1598,7 @@ export class SecurityFabHub {
     if (isAlreadyLive) {
       this._setTileDarkState(tile, false);
       this._applyLiveProviderBadge(tile, existingProvider.getStatus());
-      tile.videoEl.play?.().catch(() => {});
+      tile.videoEl.play?.().catch(() => { });
       return;
     }
 
@@ -1968,6 +2113,9 @@ export class SecurityFabHub {
     const spatialOnline = Boolean(this.spatialStreamClient?.connected || this._historyBackendOnline);
     if (this.mode === 'live') {
       this.statusSummaryEl.textContent = `${camWord} • ${spatialOnline ? 'Spatial 3D attivo' : 'Live video'}`;
+    } else if (this.mode === 'events') {
+      const evWord = this.sceneEvents.length === 1 ? '1 episodio rilevante' : `${this.sceneEvents.length} episodi rilevanti`;
+      this.statusSummaryEl.textContent = `${evWord} • ${this.sceneEventsFilters.date}`;
     } else if (this.mode === 'settings') {
       this.statusSummaryEl.textContent = this._isAdmin()
         ? 'Preferenze & Amministrazione'
@@ -2545,6 +2693,239 @@ export class SecurityFabHub {
     this.bioEventsWrapEl.hidden = false;
   }
 
+  // --- Episodi Rilevanti (`SceneEvent` con copertina annotata & salto rapido a Cronologia) ---
+
+  _highlightEventsDayChip(offsetDays) {
+    this.container.querySelectorAll('[data-events-day-offset]').forEach((chip) => {
+      const val = parseInt(chip.dataset.eventsDayOffset, 10);
+      chip.classList.toggle('active', offsetDays !== null && val === offsetDays);
+    });
+  }
+
+  _highlightEventsCategoryChip(cat) {
+    this.container.querySelectorAll('[data-events-cat]').forEach((chip) => {
+      const val = String(chip.dataset.eventsCat || '');
+      chip.classList.toggle('active', val === String(cat || ''));
+    });
+  }
+
+  _getSelectedEventsDayRange() {
+    const raw = String(this.sceneEventsFilters?.date || formatDateInput(new Date()));
+    const parts = raw.split('-').map((n) => parseInt(n, 10));
+    if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime() / 1000;
+      return { tStart: start, tEnd: start + 86399 };
+    }
+    const start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0).getTime() / 1000;
+    return { tStart: start, tEnd: start + 86399 };
+  }
+
+  _eventMatchesCurrentFilter(ev) {
+    if (!ev || !ev.event_id) return false;
+    const { tStart, tEnd } = this._getSelectedEventsDayRange();
+    const started = Number(ev.started_at || 0);
+    const ended = Number(ev.ended_at || started);
+    if (ended < tStart || started > tEnd) return false;
+
+    const cat = String(this.sceneEventsFilters?.category || '');
+    if (!cat) return true;
+    if (cat === 'alert') return ev.importance === 'alert';
+    const subjects = Array.isArray(ev.subjects) ? ev.subjects : [];
+    if (cat === 'person') return subjects.some((s) => s?.class_label === 'person');
+    if (cat === 'vehicle') {
+      return subjects.some((s) => ['car', 'truck', 'motorbike'].includes(String(s?.class_label || '')));
+    }
+    return true;
+  }
+
+  _upsertSceneEventFromWs(ev) {
+    if (!ev?.event_id) return;
+    const idx = this.sceneEvents.findIndex((item) => item.event_id === ev.event_id);
+    if (!this._eventMatchesCurrentFilter(ev)) {
+      if (idx >= 0) {
+        this.sceneEvents.splice(idx, 1);
+        if (this.mode === 'events') {
+          this._renderSceneEvents();
+          this._updateStatusSummary();
+        }
+      }
+      return;
+    }
+    if (idx >= 0) {
+      this.sceneEvents[idx] = ev;
+    } else {
+      this.sceneEvents.unshift(ev);
+    }
+    this.sceneEvents.sort((a, b) => Number(b.started_at || 0) - Number(a.started_at || 0));
+    if (this.sceneEvents.length > 80) this.sceneEvents.length = 80;
+    if (this.mode === 'events') {
+      this._renderSceneEvents();
+      this._updateStatusSummary();
+    }
+  }
+
+  async refreshSceneEvents() {
+    if (typeof this.spatialStreamClient?.fetchSceneEvents !== 'function') {
+      this.sceneEvents = [];
+      this._renderSceneEvents();
+      return;
+    }
+    this.sceneEventsLoading = true;
+    this._renderSceneEvents();
+
+    const { tStart, tEnd } = this._getSelectedEventsDayRange();
+    const cat = String(this.sceneEventsFilters?.category || '');
+    const queryOpts = {
+      tStart,
+      tEnd,
+      importance: cat === 'alert' ? 'alert' : null,
+      subjectClass: cat === 'person' ? 'person' : cat === 'vehicle' ? 'vehicle' : null,
+      limit: 60,
+    };
+
+    try {
+      const res = await this.spatialStreamClient.fetchSceneEvents(queryOpts);
+      this.sceneEvents = Array.isArray(res?.events) ? res.events : [];
+    } catch {
+      this.sceneEvents = [];
+    } finally {
+      this.sceneEventsLoading = false;
+      this._renderSceneEvents();
+      if (this.mode === 'events') {
+        this._updateStatusSummary();
+      }
+    }
+  }
+
+  _renderSceneEvents() {
+    if (!this.sceneEventsGridEl || !this.sceneEventsEmptyEl) return;
+
+    if (this.sceneEventsLoading && this.sceneEvents.length === 0) {
+      this.sceneEventsGridEl.innerHTML = '';
+      this.sceneEventsEmptyEl.innerHTML = '<span>Caricamento episodi rilevanti...</span>';
+      this.sceneEventsEmptyEl.hidden = false;
+      return;
+    }
+
+    if (!this.sceneEvents || this.sceneEvents.length === 0) {
+      this.sceneEventsGridEl.innerHTML = '';
+      this.sceneEventsEmptyEl.innerHTML = `
+        ${icon('film', { size: 22 })}
+        <span>Nessun episodio rilevante registrato per i filtri selezionati</span>
+      `;
+      this.sceneEventsEmptyEl.hidden = false;
+      return;
+    }
+
+    this.sceneEventsEmptyEl.hidden = true;
+    const isAdmin = this._isAdmin();
+
+    this.sceneEventsGridEl.innerHTML = this.sceneEvents
+      .map((ev) => {
+        const rawCover = ev.annotated_url || ev.cover_url || '';
+        let coverSrc = '';
+        if (rawCover) {
+          const ver = Math.floor(Number(ev.ended_at || ev.started_at || 0) * 10);
+          const sep = rawCover.includes('?') ? '&' : '?';
+          const withVer = ver > 0 ? `${rawCover}${sep}v=${ver}` : rawCover;
+          coverSrc = typeof this.spatialStreamClient?.resolveUrl === 'function'
+            ? this.spatialStreamClient.resolveUrl(withVer)
+            : withVer;
+        }
+
+        const timeLabel = formatShortDateTime(ev.started_at);
+        const durSec = Math.max(0, Math.round(Number(ev.duration_s || 0)));
+        const durBadge = durSec > 0 ? `${durSec}s` : 'Istantaneo';
+        const camShort = String(ev.best_camera_id || (ev.cameras?.[0] || '')).replace(/^Cam_/i, '');
+        const zoneText = Array.isArray(ev.zones) && ev.zones.length > 0 ? ev.zones[0] : '';
+        const metaLine = [camShort, zoneText].filter(Boolean).join(' · ') || 'Casa';
+        const impClass = ev.importance === 'alert' ? 'is-alert' : ev.importance === 'routine' ? 'is-routine' : 'is-notable';
+        const impLabel = ev.importance === 'alert' ? 'ALLARME' : ev.importance === 'routine' ? 'FAMIGLIA' : 'RILEVATO';
+
+        const subjectsHtml = (Array.isArray(ev.subjects) ? ev.subjects : [])
+          .slice(0, 3)
+          .map((s) => {
+            if (s.plate) {
+              const wlCls = s.plate_whitelisted === true ? 'is-authorized' : s.plate_whitelisted === false ? 'is-guest' : '';
+              return `<span class="spatial-plate-pill ${wlCls}"><span class="spatial-plate-eu">I</span><span>${escapeHtml(s.plate)}</span></span>`;
+            }
+            if (s.class_label === 'person') {
+              const isKnown = Boolean(s.identity && !['sconosciuto', 'unknown', 'none', 'pending'].includes(String(s.identity).toLowerCase()));
+              return `<span class="m3-scene-subj-pill ${isKnown ? 'is-known' : 'is-unknown'}">${escapeHtml(isKnown ? s.identity : 'Sconosciuto')}</span>`;
+            }
+            return `<span class="m3-scene-subj-pill">${escapeHtml(s.class_label || 'Oggetto')}</span>`;
+          })
+          .join('');
+
+        const hdBadge = ev.has_hd_clip
+          ? '<span class="m3-scene-badge is-hd">CLIP HD</span>'
+          : ev.has_video_clip
+            ? '<span class="m3-scene-badge">CLIP 3D</span>'
+            : '<span class="m3-scene-badge">3D + FOTO</span>';
+
+        const delBtn = isAdmin
+          ? `<button type="button" class="m3-scene-del-btn" data-scene-delete="${escapeHtml(ev.event_id)}" title="Elimina episodio" aria-label="Elimina episodio">${icon('x', { size: 13 })}</button>`
+          : '';
+
+        return `
+          <article class="m3-scene-card ${impClass}" data-scene-replay="${escapeHtml(ev.event_id)}" role="button" tabindex="0" aria-label="Rivedi episodio: ${escapeHtml(ev.summary_it || ev.title || 'Evento')}">
+            <div class="m3-scene-cover-wrap">
+              ${coverSrc
+            ? `<img class="m3-scene-cover-img" src="${escapeHtml(coverSrc)}" crossorigin="use-credentials" alt="${escapeHtml(ev.title || 'Snapshot episodio')}" loading="lazy" />`
+            : `<div class="m3-scene-cover-fallback">${icon('cctv', { size: 24 })}<span>Snapshot 3D</span></div>`
+          }
+              <span class="m3-scene-time-pill">${escapeHtml(timeLabel)}</span>
+              <span class="m3-scene-dur-pill">${escapeHtml(durBadge)}</span>
+              <span class="m3-scene-imp-pill ${impClass}">${impLabel}</span>
+              ${delBtn}
+            </div>
+            <div class="m3-scene-card-body">
+              <div class="m3-scene-card-summary">${escapeHtml(ev.summary_it || ev.title || 'Movimento rilevato')}</div>
+              <div class="m3-scene-card-meta">
+                <span>${escapeHtml(metaLine)}</span>
+                ${hdBadge}
+              </div>
+              <div class="m3-scene-card-footer">
+                <div class="m3-scene-card-subjects">${subjectsHtml}</div>
+                <span class="m3-scene-replay-cta">${icon('play', { size: 12 })} <span>Rivedi</span></span>
+              </div>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+  }
+
+  async openSceneEventReplay(ev) {
+    if (!ev) return;
+    if (this.panelState === 'closed') {
+      this.openExpanded();
+    }
+    const targetUnix = Number(ev.replay_start_at || ev.started_at || Math.floor(Date.now() / 1000) - 30);
+    await this.jumpToUnixTimestamp(targetUnix, { switchToReplay: true, reloadWindow: true });
+    this.setEntitiesVisible(true);
+    this.setPlaying(true);
+  }
+
+  async openEventById(eventId) {
+    const cleanId = String(eventId || '').trim();
+    if (!cleanId) return;
+    if (this.panelState === 'closed') {
+      this.openExpanded();
+    }
+    let found = this.sceneEvents.find((item) => item.event_id === cleanId) || null;
+    if (!found && typeof this.spatialStreamClient?.fetchSceneEvent === 'function') {
+      const res = await this.spatialStreamClient.fetchSceneEvent(cleanId).catch(() => null);
+      if (res?.event) found = res.event;
+    }
+    if (found) {
+      await this.openSceneEventReplay(found);
+    } else {
+      await this.setMode('events');
+    }
+  }
+
   dispose() {
     window.removeEventListener('keydown', this._onKeyDown);
     if (this._bioPlateTimer) {
@@ -2554,6 +2935,10 @@ export class SecurityFabHub {
     if (typeof this._unsubBioEvents === 'function') {
       this._unsubBioEvents();
       this._unsubBioEvents = null;
+    }
+    if (typeof this._unsubSceneEvents === 'function') {
+      this._unsubSceneEvents();
+      this._unsubSceneEvents = null;
     }
     if (typeof this._unsubAutoEvents === 'function') {
       this._unsubAutoEvents();
@@ -2580,22 +2965,36 @@ export class SecurityFabHub {
 
   // --- Controllo Rapido Allarme Famiglia (`sh3d.allarme`) ---
 
-  _isAlarmEntityActiveState(entity) {
-    if (!entity) return false;
+  _getAlarmVisualLevel(entity) {
+    if (!entity) return 'off';
     const st = String(entity.state ?? '').trim().toLowerCase();
-    return Boolean(st && !['off', 'false', '0', 'disarmed', 'disarmato', 'spento', 'idle', 'none'].includes(st));
+    if (!st || ['off', 'false', '0', 'disarmed', 'disarmato', 'spento', 'idle', 'none'].includes(st)) {
+      return 'off';
+    }
+    if (['silenzioso', 'silent', 'quiet', 'notifiche'].includes(st)) {
+      return 'silent';
+    }
+    return 'armed';
+  }
+
+  _isAlarmEntityActiveState(entity) {
+    return this._getAlarmVisualLevel(entity) !== 'off';
   }
 
   _setAlarmEntityState(entity) {
     this._alarmEntity = entity || null;
-    const isActive = this._isAlarmEntityActiveState(this._alarmEntity);
+    const level = this._getAlarmVisualLevel(this._alarmEntity);
+    const isArmed = level === 'armed';
+    const isSilent = level === 'silent';
     if (this.alarmControlBtn) {
-      this.alarmControlBtn.classList.toggle('is-armed', isActive);
+      this.alarmControlBtn.classList.toggle('is-armed', isArmed);
+      this.alarmControlBtn.classList.toggle('is-silent', isSilent);
+      this.alarmControlBtn.dataset.alarmLevel = level;
       const stText = this._alarmEntity?.state ? ` (${this._alarmEntity.state})` : '';
       this.alarmControlBtn.title = `Gestisci stato allarme sh3d.allarme${stText}`;
     }
     if (this.alarmBtnLabelEl) {
-      this.alarmBtnLabelEl.textContent = isActive ? String(this._alarmEntity.state).toUpperCase() : 'Allarme';
+      this.alarmBtnLabelEl.textContent = level === 'off' ? 'Allarme' : String(this._alarmEntity.state).toUpperCase();
     }
     if (this._alarmModalOpen) {
       this._renderAlarmModalBody();
@@ -2686,7 +3085,8 @@ export class SecurityFabHub {
 
     const domain = String(entity.domain || 'switch').toLowerCase();
     const currState = String(entity.state ?? '');
-    const isActive = this._isAlarmEntityActiveState(entity);
+    const level = this._getAlarmVisualLevel(entity);
+    const dotClass = level === 'armed' ? 'on' : level === 'silent' ? 'silent' : 'off';
     const disabledAttr = this._alarmBusy ? 'disabled' : '';
 
     let controlBlockHtml = '';
@@ -2736,10 +3136,11 @@ export class SecurityFabHub {
       const optionsHtml = entity.options
         .map((opt) => {
           const isSelected = currState === opt;
+          const optLevel = this._getAlarmVisualLevel({ state: opt });
           return `
             <button
               type="button"
-              class="m3-alarm-option-item ${isSelected ? 'selected' : ''}"
+              class="m3-alarm-option-item level-${optLevel} ${isSelected ? 'selected' : ''}"
               data-alarm-option="${escapeHtml(opt)}"
               role="radio"
               aria-checked="${isSelected}"
@@ -2754,9 +3155,9 @@ export class SecurityFabHub {
         .join('');
 
       controlBlockHtml = `
-        <div class="m3-alarm-select-panel">
+        <div class="m3-alarm-select-panel level-${level}">
           <div class="m3-alarm-state-hero">
-            <span class="m3-alarm-state-dot ${isActive ? 'on' : 'off'}"></span>
+            <span class="m3-alarm-state-dot ${dotClass}"></span>
             <span class="m3-alarm-state-text">Stato attuale: <strong>${escapeHtml(currState)}</strong></span>
           </div>
           <div class="m3-alarm-options-list" role="radiogroup" aria-label="Seleziona modalità allarme">
@@ -2768,7 +3169,7 @@ export class SecurityFabHub {
       controlBlockHtml = `
         <div class="m3-alarm-input-panel">
           <div class="m3-alarm-state-hero">
-            <span class="m3-alarm-state-dot ${isActive ? 'on' : 'off'}"></span>
+            <span class="m3-alarm-state-dot ${dotClass}"></span>
             <span class="m3-alarm-state-text">Valore attuale: <strong>${escapeHtml(currState)}</strong></span>
           </div>
           <div class="m3-alarm-input-row">
@@ -2781,7 +3182,7 @@ export class SecurityFabHub {
       controlBlockHtml = `
         <div class="m3-alarm-input-panel">
           <div class="m3-alarm-state-hero">
-            <span class="m3-alarm-state-dot ${isActive ? 'on' : 'off'}"></span>
+            <span class="m3-alarm-state-dot ${dotClass}"></span>
             <span class="m3-alarm-state-text">Stato attuale: <strong>${escapeHtml(currState)}</strong></span>
           </div>
           <div class="m3-alarm-input-row">

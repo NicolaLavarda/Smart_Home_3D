@@ -27,6 +27,7 @@ const TRIGGER_TYPE_LABELS = {
 const ACTION_TYPE_LABELS = {
   set_virtual_entity: 'Stato entità interna (sh3d.*)',
   call_ha_service: 'Servizio Home Assistant',
+  send_notification: 'Notifica dispositivo (Push / TTS / TV)',
   ui_alert: 'Avviso e sirena 3D',
   if_then_else: 'Condizione Se / Altrimenti',
   delay: 'Attesa (secondi)',
@@ -70,6 +71,7 @@ export class AutomationStudioUI {
     this.plates = [];
     this.cameras = [];
     this.sunInfo = null;
+    this.haDiscovery = null;
 
     this.editingRule = null;
     this.editingZone = null;
@@ -78,7 +80,7 @@ export class AutomationStudioUI {
       name: '',
       domain: 'switch',
       state: 'off',
-      optionsText: 'disarmed, armed_home, armed_away',
+      optionsText: 'Spento, Silenzioso, Acceso',
     };
     this.statusMessage = null;
 
@@ -147,6 +149,7 @@ export class AutomationStudioUI {
     this.plates = Array.isArray(data.plates) ? data.plates : [];
     this.cameras = Array.isArray(data.cameras) ? data.cameras : [];
     this.sunInfo = data.sun || null;
+    this.haDiscovery = data.ha_discovery || null;
 
     this.zoneRenderer?.setZones(this.zones);
     this.zoneRenderer?.setZonesVisible(this.isOpen);
@@ -1311,6 +1314,10 @@ export class AutomationStudioUI {
         </div>
       `;
     } else if (aType === 'call_ha_service') {
+      const svcDataStr =
+        p.service_data && typeof p.service_data === 'object' && Object.keys(p.service_data).length > 0
+          ? JSON.stringify(p.service_data)
+          : '';
       bodyHtml = `
         <div class="auto-grid-2">
           <label class="auto-field">
@@ -1321,6 +1328,186 @@ export class AutomationStudioUI {
             <span>Entity ID</span>
             <input type="text" list="auto-all-entities-datalist" data-act-param="${escapeHtml(pathStr)}:entity_id" value="${escapeHtml(p.entity_id || 'light.luci_esterne')}" placeholder="light.luci_esterne" />
           </label>
+          <label class="auto-field span-2">
+            <span>Dati JSON opzionali (<code>service_data</code>)</span>
+            <input type="text" data-act-json="${escapeHtml(pathStr)}:service_data" value="${escapeHtml(svcDataStr)}" placeholder='es. {"brightness_pct": 80}' />
+          </label>
+        </div>
+      `;
+    } else if (aType === 'send_notification') {
+      const mobileTargets = Array.isArray(p.mobile_targets)
+        ? p.mobile_targets
+        : String(p.mobile_targets || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+      const tvTargets = Array.isArray(p.tv_targets)
+        ? p.tv_targets
+        : String(p.tv_targets || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+      const ttsTargets = Array.isArray(p.tts_targets)
+        ? p.tts_targets
+        : String(p.tts_targets || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+      const disc = this.haDiscovery || {};
+      const allNotify = Array.isArray(disc.notify_services) ? disc.notify_services : [];
+      const mobileDisc = allNotify.filter((n) => n.kind === 'mobile_app');
+      const tvDisc = allNotify.filter((n) => n.kind === 'tv');
+      const mediaPlayersDisc = Array.isArray(disc.media_players) ? disc.media_players : [];
+      const ttsEntitiesDisc = Array.isArray(disc.tts_entities) ? disc.tts_entities : [];
+
+      const renderChips = (items, selectedList, listKey, idField = 'service') => {
+        if (!items.length) return '';
+        return `
+          <div class="auto-notif-chips">
+            ${items
+              .map((it) => {
+                const val = String(it[idField] || '');
+                const label = String(it.name || val);
+                const isSel = selectedList.includes(val);
+                return `<button type="button" class="auto-notif-chip ${isSel ? 'active' : ''}" data-act-toggle-target="${escapeHtml(pathStr)}:${listKey}:${escapeHtml(val)}">${escapeHtml(label)}</button>`;
+              })
+              .join('')}
+          </div>
+        `;
+      };
+
+      const msgMode = String(p.message_mode || 'auto_scene');
+      const imgMode = String(p.image_mode || 'annotated');
+      const prio = String(p.priority || 'normal');
+      const btnList = Array.isArray(p.actions) ? p.actions : [];
+      const ttsListId = `auto-tts-entities-${pathStr.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+      bodyHtml = `
+        <div class="auto-notif-builder">
+          <div class="auto-grid-2">
+            <label class="auto-field">
+              <span>Priorità notifica</span>
+              <select data-act-param="${escapeHtml(pathStr)}:priority">
+                <option value="silent" ${prio === 'silent' ? 'selected' : ''}>Silenziosa (senza suono)</option>
+                <option value="normal" ${prio === 'normal' ? 'selected' : ''}>Normale</option>
+                <option value="critical" ${prio === 'critical' ? 'selected' : ''}>Critica (bypassa DND)</option>
+              </select>
+            </label>
+            <label class="auto-field">
+              <span>Immagine allegata</span>
+              <select data-act-param="${escapeHtml(pathStr)}:image_mode">
+                <option value="annotated" ${imgMode === 'annotated' ? 'selected' : ''}>Frame migliore + box nomi</option>
+                <option value="raw" ${imgMode === 'raw' ? 'selected' : ''}>Frame originale pulito</option>
+                <option value="crop" ${imgMode === 'crop' ? 'selected' : ''}>Solo ritaglio volto/targa</option>
+                <option value="none" ${imgMode === 'none' ? 'selected' : ''}>Nessuna immagine</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="auto-notif-group">
+            <span class="auto-notif-label">Telefoni / Tablet (HA Companion)</span>
+            ${renderChips(mobileDisc, mobileTargets, 'mobile_targets', 'service')}
+            <input type="text" data-act-list="${escapeHtml(pathStr)}:mobile_targets" value="${escapeHtml(mobileTargets.join(', '))}" placeholder="notify.mobile_app_pixel_8a, notify.mobile_app_..." />
+          </div>
+
+          <div class="auto-grid-2">
+            <label class="auto-field">
+              <span>Testo notifica</span>
+              <select data-act-param="${escapeHtml(pathStr)}:message_mode">
+                <option value="auto_scene" ${msgMode === 'auto_scene' ? 'selected' : ''}>Frase automatica (persone + targhe)</option>
+                <option value="custom" ${msgMode === 'custom' ? 'selected' : ''}>Testo personalizzato</option>
+              </select>
+            </label>
+            <label class="auto-field">
+              <span>Luogo (es. al cancelletto)</span>
+              <input type="text" data-act-param="${escapeHtml(pathStr)}:location_label" value="${escapeHtml(p.location_label || '')}" placeholder="al cancelletto / in cortile" />
+            </label>
+            <label class="auto-field">
+              <span>Titolo notifica</span>
+              <input type="text" data-act-param="${escapeHtml(pathStr)}:title" value="${escapeHtml(p.title || '')}" placeholder="Smart Home 3D" />
+            </label>
+            <label class="auto-field">
+              <span>Tag aggiornamento (vuoto = episodio)</span>
+              <input type="text" data-act-param="${escapeHtml(pathStr)}:tag" value="${escapeHtml(p.tag || '')}" placeholder="es. notifica_cancelletto" />
+            </label>
+            ${
+              msgMode === 'custom'
+                ? `<label class="auto-field span-2">
+                     <span>Messaggio personalizzato (supporta <code>{{ scene.summary }}</code>, <code>{{ track.identity }}</code>)</span>
+                     <input type="text" data-act-param="${escapeHtml(pathStr)}:message" value="${escapeHtml(p.message || '')}" placeholder="{{ scene.summary }}" />
+                   </label>`
+                : ''
+            }
+          </div>
+
+          <label class="auto-check-row">
+            <input type="checkbox" data-act-bool="${escapeHtml(pathStr)}:update_on_biometrics" ${p.update_on_biometrics !== false ? 'checked' : ''} />
+            <span>Aggiorna silenziosamente la notifica sul telefono se il volto o la targa vengono riconosciuti dopo</span>
+          </label>
+
+          <div class="auto-notif-group">
+            <div class="auto-block-header">
+              <span class="auto-notif-label">Pulsanti interattivi notifica</span>
+              <div class="auto-notif-preset-bar">
+                <button type="button" class="auto-btn ghost xs" data-act-notif-btn-preset="${escapeHtml(pathStr)}:gate">+ Apri cancelletto</button>
+                <button type="button" class="auto-btn ghost xs" data-act-notif-btn-preset="${escapeHtml(pathStr)}:alarm_off">+ Spento</button>
+                <button type="button" class="auto-btn ghost xs" data-act-notif-btn-preset="${escapeHtml(pathStr)}:alarm_silent">+ Silenzioso</button>
+                <button type="button" class="auto-btn tonal xs" data-act-notif-btn-add="${escapeHtml(pathStr)}">${icon('plus', { size: 11 })} <span>Pulsante</span></button>
+              </div>
+            </div>
+            <div class="auto-notif-buttons-list">
+              ${btnList
+                .map(
+                  (b, bIdx) => `
+                <div class="auto-notif-btn-row">
+                  <input type="text" data-act-notif-btn-field="${escapeHtml(pathStr)}:${bIdx}:title" value="${escapeHtml(b.title || '')}" placeholder="Etichetta (es. Apri cancelletto)" />
+                  <input type="text" data-act-notif-btn-field="${escapeHtml(pathStr)}:${bIdx}:action" value="${escapeHtml(b.action || '')}" placeholder="Azione (es. SH3D_ALARM_SPENTO o SH3D_CALL_SERVICE:...)" />
+                  <button type="button" class="auto-btn icon-only danger xs" data-act-notif-btn-del="${escapeHtml(pathStr)}:${bIdx}" title="Rimuovi pulsante">${icon('x', { size: 12 })}</button>
+                </div>
+              `
+                )
+                .join('')}
+            </div>
+          </div>
+
+          <div class="auto-notif-group">
+            <span class="auto-notif-label">Nest Hub / Speaker TTS & Foto</span>
+            ${renderChips(mediaPlayersDisc, ttsTargets, 'tts_targets', 'entity_id')}
+            <div class="auto-grid-2">
+              <label class="auto-field">
+                <span>Media Player (separati da virgola)</span>
+                <input type="text" data-act-list="${escapeHtml(pathStr)}:tts_targets" value="${escapeHtml(ttsTargets.join(', '))}" placeholder="media_player.nest_hub_cucina" />
+              </label>
+              <label class="auto-field">
+                <span>Motore TTS HA</span>
+                <input type="text" list="${ttsListId}" data-act-param="${escapeHtml(pathStr)}:tts_entity" value="${escapeHtml(p.tts_entity || 'tts.google_translate_en_com')}" placeholder="tts.google_translate_en_com" />
+                <datalist id="${ttsListId}">
+                  ${ttsEntitiesDisc.map((t) => `<option value="${escapeHtml(t.entity_id)}">${escapeHtml(t.name)}</option>`).join('')}
+                </datalist>
+              </label>
+            </div>
+            <div class="auto-grid-2">
+              <label class="auto-check-row">
+                <input type="checkbox" data-act-bool="${escapeHtml(pathStr)}:display_show_image" ${p.display_show_image !== false ? 'checked' : ''} />
+                <span>Mostra foto sul display dopo il TTS</span>
+              </label>
+              <label class="auto-field">
+                <span>Durata foto display (sec)</span>
+                <input type="number" min="5" max="120" step="1" data-act-param="${escapeHtml(pathStr)}:display_duration_s" value="${Number(p.display_duration_s ?? 25)}" />
+              </label>
+            </div>
+          </div>
+
+          <div class="auto-notif-group">
+            <span class="auto-notif-label">TV (LG webOS / Toast)</span>
+            ${renderChips(tvDisc, tvTargets, 'tv_targets', 'service')}
+            <input type="text" data-act-list="${escapeHtml(pathStr)}:tv_targets" value="${escapeHtml(tvTargets.join(', '))}" placeholder="notify.lg_tv_cucina" />
+            <label class="auto-check-row">
+              <input type="checkbox" data-act-bool="${escapeHtml(pathStr)}:tv_only_when_on" ${p.tv_only_when_on !== false ? 'checked' : ''} />
+              <span>Invia alla TV solo quando è accesa</span>
+            </label>
+          </div>
         </div>
       `;
     } else if (aType === 'ui_alert') {
@@ -1740,6 +1927,24 @@ export class AutomationStudioUI {
           node.params = { entity_id: this.virtualEntities[0]?.entity_id || 'sh3d.sirena_allarme', operation: 'turn_on', state: 'on' };
         } else if (node.type === 'call_ha_service') {
           node.params = { service: 'light.turn_on', entity_id: 'light.luci_esterne' };
+        } else if (node.type === 'send_notification') {
+          node.params = {
+            mobile_targets: [],
+            tv_targets: [],
+            tts_targets: [],
+            tts_entity: this.haDiscovery?.tts_entities?.[0]?.entity_id || 'tts.google_translate_en_com',
+            priority: 'normal',
+            image_mode: 'annotated',
+            message_mode: 'auto_scene',
+            title: 'Smart Home 3D',
+            location_label: '',
+            tag: '',
+            update_on_biometrics: true,
+            display_show_image: true,
+            display_duration_s: 25,
+            tv_only_when_on: true,
+            actions: [],
+          };
         } else if (node.type === 'ui_alert') {
           node.params = { title: 'Avviso 3D', message: '{{ trigger.summary }}', severity: 'warning', sound: true };
         } else if (node.type === 'delay') {
@@ -1794,6 +1999,147 @@ export class AutomationStudioUI {
         if (!node) return;
         node.params = node.params || {};
         node.params[key] = inp.type === 'number' ? parseFloat(inp.value) || 0 : inp.value;
+      };
+      inp.addEventListener('input', handler);
+      inp.addEventListener('change', handler);
+    });
+
+    this.panelEl.querySelectorAll('[data-act-bool]').forEach((chk) => {
+      chk.addEventListener('change', () => {
+        const lastColon = chk.dataset.actBool.lastIndexOf(':');
+        const pathStr = chk.dataset.actBool.slice(0, lastColon);
+        const key = chk.dataset.actBool.slice(lastColon + 1);
+        const node = this._resolveActionNode(pathStr);
+        if (!node) return;
+        node.params = node.params || {};
+        node.params[key] = Boolean(chk.checked);
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-act-list]').forEach((inp) => {
+      const handler = () => {
+        const lastColon = inp.dataset.actList.lastIndexOf(':');
+        const pathStr = inp.dataset.actList.slice(0, lastColon);
+        const key = inp.dataset.actList.slice(lastColon + 1);
+        const node = this._resolveActionNode(pathStr);
+        if (!node) return;
+        node.params = node.params || {};
+        node.params[key] = String(inp.value || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      };
+      inp.addEventListener('input', handler);
+      inp.addEventListener('change', handler);
+    });
+
+    this.panelEl.querySelectorAll('[data-act-json]').forEach((inp) => {
+      const handler = () => {
+        const lastColon = inp.dataset.actJson.lastIndexOf(':');
+        const pathStr = inp.dataset.actJson.slice(0, lastColon);
+        const key = inp.dataset.actJson.slice(lastColon + 1);
+        const node = this._resolveActionNode(pathStr);
+        if (!node) return;
+        node.params = node.params || {};
+        const raw = String(inp.value || '').trim();
+        if (!raw) {
+          delete node.params[key];
+          inp.setCustomValidity?.('');
+          return;
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            node.params[key] = parsed;
+            inp.setCustomValidity?.('');
+          } else {
+            inp.setCustomValidity?.('Inserire un oggetto JSON valido');
+          }
+        } catch {
+          inp.setCustomValidity?.('JSON non valido');
+        }
+      };
+      inp.addEventListener('input', handler);
+      inp.addEventListener('change', handler);
+    });
+
+    this.panelEl.querySelectorAll('[data-act-toggle-target]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const parts = btn.dataset.actToggleTarget.split(':');
+        if (parts.length < 3) return;
+        const pathStr = parts[0];
+        const listKey = parts[1];
+        const targetVal = parts.slice(2).join(':');
+        const node = this._resolveActionNode(pathStr);
+        if (!node) return;
+        node.params = node.params || {};
+        const arr = Array.isArray(node.params[listKey]) ? [...node.params[listKey]] : [];
+        const existingIdx = arr.indexOf(targetVal);
+        if (existingIdx >= 0) {
+          arr.splice(existingIdx, 1);
+        } else {
+          arr.push(targetVal);
+        }
+        node.params[listKey] = arr;
+        this.render();
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-act-notif-btn-add]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const node = this._resolveActionNode(btn.dataset.actNotifBtnAdd);
+        if (!node) return;
+        node.params = node.params || {};
+        node.params.actions = Array.isArray(node.params.actions) ? node.params.actions : [];
+        node.params.actions.push({ title: 'Azione', action: 'SH3D_ALARM_SPENTO' });
+        this.render();
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-act-notif-btn-preset]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const [pathStr, preset] = btn.dataset.actNotifBtnPreset.split(':');
+        const node = this._resolveActionNode(pathStr);
+        if (!node) return;
+        node.params = node.params || {};
+        node.params.actions = Array.isArray(node.params.actions) ? node.params.actions : [];
+        const gateCand = this.haDiscovery?.action_entities?.find((e) =>
+          String(e.entity_id).includes('cancelletto') || String(e.entity_id).includes('gate')
+        )?.entity_id;
+        const presetMap = {
+          gate: { title: 'Apri cancelletto', action: `SH3D_CALL_SERVICE:switch.turn_on:${gateCand || 'switch.cancelletto'}` },
+          alarm_off: { title: 'Allarme Spento', action: 'SH3D_ALARM_SPENTO' },
+          alarm_silent: { title: 'Modalità Silenziosa', action: 'SH3D_ALARM_SILENZIOSO' },
+        };
+        if (presetMap[preset]) {
+          node.params.actions.push(presetMap[preset]);
+          this.render();
+        }
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-act-notif-btn-del]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const lastColon = btn.dataset.actNotifBtnDel.lastIndexOf(':');
+        const pathStr = btn.dataset.actNotifBtnDel.slice(0, lastColon);
+        const idx = parseInt(btn.dataset.actNotifBtnDel.slice(lastColon + 1), 10);
+        const node = this._resolveActionNode(pathStr);
+        if (!node || !Array.isArray(node.params?.actions) || !Number.isFinite(idx)) return;
+        node.params.actions.splice(idx, 1);
+        this.render();
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-act-notif-btn-field]').forEach((inp) => {
+      const handler = () => {
+        const parts = inp.dataset.actNotifBtnField.split(':');
+        if (parts.length < 3) return;
+        const pathStr = parts[0];
+        const idx = parseInt(parts[1], 10);
+        const field = parts[2];
+        const node = this._resolveActionNode(pathStr);
+        if (!node || !Array.isArray(node.params?.actions) || !node.params.actions[idx]) return;
+        node.params.actions[idx][field] = inp.value;
       };
       inp.addEventListener('input', handler);
       inp.addEventListener('change', handler);
@@ -2112,7 +2458,7 @@ export class AutomationStudioUI {
       name: '',
       domain: 'switch',
       state: 'off',
-      optionsText: 'disarmed, armed_home, armed_away',
+      optionsText: 'Spento, Silenzioso, Acceso',
     };
     const draftDomain = draft.domain || 'switch';
     const parsedOptions = this._parseOptionsText(draft.optionsText);
@@ -2228,7 +2574,7 @@ export class AutomationStudioUI {
             draftDomain === 'select'
               ? `<label class="auto-field span-2">
                    <span>Stati possibili (separati da virgola)</span>
-                   <input type="text" id="ve-new-options" value="${escapeHtml(draft.optionsText)}" placeholder="es. disarmed, armed_home, armed_night, armed_away" />
+                   <input type="text" id="ve-new-options" value="${escapeHtml(draft.optionsText)}" placeholder="es. Spento, Silenzioso, Acceso" />
                  </label>`
               : ''
           }
@@ -2273,8 +2619,8 @@ export class AutomationStudioUI {
       } else if (nextDomain === 'select') {
         const opts = this._parseOptionsText(draft.optionsText);
         if (opts.length === 0) {
-          draft.optionsText = 'disarmed, armed_home, armed_away';
-          draft.state = 'disarmed';
+          draft.optionsText = 'Spento, Silenzioso, Acceso';
+          draft.state = 'Spento';
         } else if (!opts.includes(draft.state)) {
           draft.state = opts[0];
         }

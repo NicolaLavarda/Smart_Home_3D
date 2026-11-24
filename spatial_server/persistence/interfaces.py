@@ -199,4 +199,43 @@ class ITrackRepository(ABC):
         """Delete all automation execution logs and return deleted row count."""
         return 0
 
+    # --- Unified SceneEvent Persistence ---
+
+    def upsert_scene_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Insert or update a SceneEvent episode record."""
+        raise NotImplementedError("SceneEvent persistence not implemented")
+
+    def get_scene_event(self, event_id: str) -> Optional[dict[str, Any]]:
+        """Fetch a single SceneEvent by event_id."""
+        return None
+
+    def query_scene_events(
+        self,
+        t_start: Optional[float] = None,
+        t_end: Optional[float] = None,
+        *,
+        importance: Optional[str] = None,
+        camera_id: Optional[str] = None,
+        zone_id: Optional[str] = None,
+        identity: Optional[str] = None,
+        plate: Optional[str] = None,
+        unknown_only: bool = False,
+        subject_class: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Query persisted SceneEvents matching optional temporal, spatial, and biometric filters."""
+        return []
+
+    def find_scene_event_by_track_id(self, track_id: int) -> Optional[dict[str, Any]]:
+        """Find the most recent SceneEvent containing `track_id`."""
+        return None
+
+    def delete_scene_event(self, event_id: str) -> Optional[dict[str, Any]]:
+        """Delete a SceneEvent by event_id and return its previous record if found."""
+        return None
+
+    def prune_scene_events_older_than(self, cutoff_timestamp: float) -> tuple[int, list[str]]:
+        """Delete expired scene_events rows and return (deleted_count, snapshot_relpaths)."""
+        return (0, [])
+
 

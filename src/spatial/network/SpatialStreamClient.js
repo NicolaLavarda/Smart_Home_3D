@@ -57,6 +57,7 @@ export class SpatialStreamClient {
     this.calibrationListeners = new Set();
     this.biometricEventListeners = new Set();
     this.automationEventListeners = new Set();
+    this.sceneEventListeners = new Set();
     this.lastStatusPayload = null;
   }
 
@@ -102,6 +103,11 @@ export class SpatialStreamClient {
   onAutomationEvent(callback) {
     this.automationEventListeners.add(callback);
     return () => this.automationEventListeners.delete(callback);
+  }
+
+  onSceneEvent(callback) {
+    this.sceneEventListeners.add(callback);
+    return () => this.sceneEventListeners.delete(callback);
   }
 
   emitStatus(connected, meta = null) {
@@ -160,6 +166,14 @@ export class SpatialStreamClient {
               cb(msg);
             } catch (e) {
               console.warn('[SpatialStreamClient] Errore listener biometric_event:', e);
+            }
+          });
+        } else if (msg.type === 'scene_event_updated') {
+          this.sceneEventListeners.forEach((cb) => {
+            try {
+              cb(msg);
+            } catch (e) {
+              console.warn('[SpatialStreamClient] Errore listener scene_event_updated:', e);
             }
           });
         } else if (
@@ -657,6 +671,70 @@ export class SpatialStreamClient {
       method: 'DELETE',
       cache: 'no-store',
     });
+  }
+
+  async fetchHaDiscovery() {
+    return await this.requestJson('/api/v1/automations/ha-discovery', {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async fetchSceneEvents({
+    tStart = null,
+    tEnd = null,
+    importance = null,
+    subjectClass = null,
+    cameraId = null,
+    zoneId = null,
+    identity = null,
+    plate = null,
+    unknownOnly = false,
+    limit = 60,
+  } = {}) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (Number.isFinite(tStart)) params.set('t_start', String(tStart));
+    if (Number.isFinite(tEnd)) params.set('t_end', String(tEnd));
+    if (importance) params.set('importance', String(importance));
+    if (subjectClass) params.set('subject_class', String(subjectClass));
+    if (cameraId) params.set('camera_id', String(cameraId));
+    if (zoneId) params.set('zone_id', String(zoneId));
+    if (identity) params.set('identity', String(identity));
+    if (plate) params.set('plate', String(plate));
+    if (unknownOnly) params.set('unknown_only', 'true');
+    return await this.requestJson(`/api/v1/events?${params.toString()}`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async fetchSceneEvent(eventId) {
+    if (!eventId) return null;
+    return await this.requestJson(`/api/v1/events/${encodeURIComponent(eventId)}`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async deleteSceneEvent(eventId) {
+    return await this.requestJson(`/api/v1/events/${encodeURIComponent(eventId)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+    });
+  }
+
+  resolveUrl(pathOrUrl) {
+    const raw = String(pathOrUrl || '').trim();
+    if (!raw) return '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return `${this.baseUrl}${raw.startsWith('/') ? raw : `/${raw}`}`;
+  }
+
+  getSceneEventCoverUrl(eventId, variant = 'annotated', versionTs = null) {
+    if (!eventId) return null;
+    const filePart = variant === 'raw' ? 'cover.jpg' : 'annotated.jpg';
+    const qs = Number.isFinite(Number(versionTs)) ? `?v=${Math.floor(Number(versionTs) * 10)}` : '';
+    return this.resolveUrl(`/api/v1/events/${encodeURIComponent(eventId)}/${filePart}${qs}`);
   }
 
   syncHaStates(entitiesMap, { triggerOnDiff = true } = {}) {

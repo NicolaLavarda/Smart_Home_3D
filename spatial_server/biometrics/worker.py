@@ -264,6 +264,7 @@ class BiometricWorkerService(IBiometricCoordinator):
         loop = asyncio.get_running_loop()
         t_inf0 = time.perf_counter()
         update: Optional[TrackBiometricUpdate] = None
+        box_crop_px: Optional[tuple[int, int, int, int]] = None
 
         if modality == "face" and self.face_recognizer is not None:
             face_eval = await loop.run_in_executor(
@@ -274,6 +275,8 @@ class BiometricWorkerService(IBiometricCoordinator):
             elapsed_ms = (time.perf_counter() - t_inf0) * 1000.0
             self._face_latencies_ms.append(elapsed_ms)
             self.evaluated_jobs_count += 1
+            if face_eval is not None:
+                box_crop_px = face_eval.box_crop_px
             update = self.consensus.record_face_evaluation(
                 job.track_id,
                 face_eval,
@@ -290,6 +293,8 @@ class BiometricWorkerService(IBiometricCoordinator):
             elapsed_ms = (time.perf_counter() - t_inf0) * 1000.0
             self._alpr_latencies_ms.append(elapsed_ms)
             self.evaluated_jobs_count += 1
+            if plate_eval is not None:
+                box_crop_px = plate_eval.box_crop_px
             update = self.consensus.record_plate_evaluation(
                 job.track_id,
                 plate_eval,
@@ -299,6 +304,30 @@ class BiometricWorkerService(IBiometricCoordinator):
             )
 
         if update is not None:
+            sub_bbox_norm: Optional[tuple[float, float, float, float]] = None
+            if box_crop_px is not None and crop_payload.full_width > 0 and crop_payload.full_height > 0:
+                cx1, cy1, _cx2, _cy2 = crop_payload.crop_bbox_px
+                bx1, by1, bx2, by2 = box_crop_px
+                fw = float(crop_payload.full_width)
+                fh = float(crop_payload.full_height)
+                sub_bbox_norm = (
+                    max(0.0, min(1.0, (cx1 + bx1) / fw)),
+                    max(0.0, min(1.0, (cy1 + by1) / fh)),
+                    max(0.0, min(1.0, (cx1 + bx2) / fw)),
+                    max(0.0, min(1.0, (cy1 + by2) / fh)),
+                )
+            update = update.model_copy(
+                update={
+                    "subject_bbox_norm": (
+                        float(job.bbox.x_min),
+                        float(job.bbox.y_min),
+                        float(job.bbox.x_max),
+                        float(job.bbox.y_max),
+                    ),
+                    "sub_bbox_norm": sub_bbox_norm,
+                    "full_frame_bgr": crop_payload.preview_frame_bgr,
+                }
+            )
             if update.biometric_locked:
                 self.locked_tracks_count += 1
             if self.on_result is not None:

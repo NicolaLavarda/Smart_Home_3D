@@ -148,6 +148,7 @@ class ConditionSpec(BaseModel):
 ActionTypeLiteral = Literal[
     "set_virtual_entity",
     "call_ha_service",
+    "send_notification",
     "ui_alert",
     "delay",
     "if_then_else",

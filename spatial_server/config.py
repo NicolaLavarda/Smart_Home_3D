@@ -282,6 +282,15 @@ class SpatialServerConfig:
     nvr_index_db_name: str = "nvr_index.db"
     nvr_camera_clock_offsets: tuple[tuple[str, str, float], ...] = ()
     nvr_camera_streams: tuple[tuple[str, str, str], ...] = ()
+    public_app_url: str = ""
+    ha_bridge_enabled: bool = True
+    ha_mqtt_bridge_enabled: bool = False
+    events_inertia_s: float = 18.0
+    events_pre_roll_s: float = 3.0
+    events_retention_days: int = 30
+    events_snapshot_max_mb: float = 400.0
+    events_snapshot_max_width: int = 1280
+    signed_media_ttl_s: int = 86400
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -314,6 +323,19 @@ class SpatialServerConfig:
                 if dev_origin not in merged_origins:
                     merged_origins.append(dev_origin)
             allowed_origins = tuple(merged_origins)
+        public_app_url = _normalize_ha_url(os.getenv("SPATIAL_PUBLIC_URL", ""))
+        if not public_app_url:
+            for orig in allowed_origins:
+                parsed_orig = urlsplit(orig)
+                orig_host = (parsed_orig.hostname or "").lower()
+                if parsed_orig.scheme == "https" and orig_host not in ("localhost", "127.0.0.1"):
+                    public_app_url = orig.rstrip("/")
+                    break
+        if not public_app_url and ha_public_url:
+            parsed_ha = urlsplit(ha_public_url)
+            ha_host = (parsed_ha.hostname or "").lower()
+            if ha_host.endswith(".ts.net"):
+                public_app_url = f"{parsed_ha.scheme}://{ha_host}"
         raw_nvr_dir = (os.getenv("SPATIAL_NVR_STORAGE_DIR") or "").strip()
         nvr_storage_dir = Path(raw_nvr_dir) if raw_nvr_dir else None
         go2rtc_rtsp_url = os.getenv("GO2RTC_RTSP_CARRAIO_SUB", "rtsp://127.0.0.1:8554/carraio_sub")
@@ -366,7 +388,7 @@ class SpatialServerConfig:
             face_webhook_url=os.getenv("FACE_RECOGNITION_WEBHOOK_URL", ""),
             ha_tailscale_url=_normalize_ha_url(os.getenv("VITE_HA_TAILSCALE_URL") or os.getenv("VITE_HA_REMOTE_URL", "")),
             ha_local_url=_normalize_ha_url(os.getenv("VITE_HA_LOCAL_URL") or os.getenv("VITE_HA_URL", "")),
-            ha_token=(os.getenv("VITE_HA_TOKEN") or os.getenv("HA_TOKEN", "")).strip(),
+            ha_token=(os.getenv("HA_TOKEN") or os.getenv("VITE_HA_TOKEN", "")).strip(),
             openvino_target_fps=float(os.getenv("OPENVINO_FPS_LIMIT", "7.0")),
             openvino_conf_threshold=float(os.getenv("OPENVINO_CONF_THRESHOLD", "0.35")),
             persist_min_displacement_m=float(os.getenv("SPATIAL_PERSIST_MIN_DISPLACEMENT_M", "0.15")),
@@ -431,5 +453,14 @@ class SpatialServerConfig:
             nvr_index_db_name=_sanitize_db_filename(os.getenv("SPATIAL_NVR_INDEX_DB_NAME", "nvr_index.db")),
             nvr_camera_clock_offsets=_parse_nvr_clock_offsets(os.getenv("SPATIAL_NVR_CAMERA_CLOCK_OFFSETS", "")),
             nvr_camera_streams=_parse_nvr_camera_streams(os.getenv("SPATIAL_NVR_CAMERA_STREAMS", "")),
+            public_app_url=public_app_url,
+            ha_bridge_enabled=_parse_bool_env("HA_BRIDGE_ENABLED", True),
+            ha_mqtt_bridge_enabled=_parse_bool_env("HA_MQTT_BRIDGE_ENABLED", False),
+            events_inertia_s=max(2.0, min(120.0, float(os.getenv("SPATIAL_EVENTS_INERTIA_S", "18.0")))),
+            events_pre_roll_s=max(0.0, min(30.0, float(os.getenv("SPATIAL_EVENTS_PRE_ROLL_S", "3.0")))),
+            events_retention_days=max(1, int(os.getenv("SPATIAL_EVENTS_RETENTION_DAYS", "30"))),
+            events_snapshot_max_mb=max(10.0, float(os.getenv("SPATIAL_EVENTS_SNAPSHOT_MAX_MB", "400.0"))),
+            events_snapshot_max_width=max(480, min(3840, int(os.getenv("SPATIAL_EVENTS_SNAPSHOT_MAX_WIDTH", "1280")))),
+            signed_media_ttl_s=max(60, int(os.getenv("SPATIAL_SIGNED_MEDIA_TTL_S", "86400"))),
         )
 

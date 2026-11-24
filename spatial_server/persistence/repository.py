@@ -207,6 +207,34 @@ class SQLiteWALTrackRepository(ITrackRepository):
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_logs_ts ON automation_logs(timestamp DESC);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_logs_rule ON automation_logs(rule_id, timestamp DESC);")
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scene_events (
+                    event_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    ended_at REAL NOT NULL,
+                    importance TEXT NOT NULL,
+                    best_camera_id TEXT,
+                    cameras_json TEXT NOT NULL DEFAULT '[]',
+                    zones_json TEXT NOT NULL DEFAULT '[]',
+                    zone_ids_json TEXT NOT NULL DEFAULT '[]',
+                    track_ids_json TEXT NOT NULL DEFAULT '[]',
+                    identities_text TEXT NOT NULL DEFAULT '',
+                    plates_text TEXT NOT NULL DEFAULT '',
+                    classes_text TEXT NOT NULL DEFAULT '',
+                    has_unknown_person INTEGER NOT NULL DEFAULT 0,
+                    cover_raw_relpath TEXT,
+                    cover_ann_relpath TEXT,
+                    payload_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scene_events_started ON scene_events(started_at DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scene_events_importance ON scene_events(importance, started_at DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scene_events_status ON scene_events(status, ended_at DESC);")
+
             try:
                 cur.execute(
                     """
@@ -1118,6 +1146,230 @@ class SQLiteWALTrackRepository(ITrackRepository):
             cur.execute("DELETE FROM automation_logs;")
             self._conn.commit()
             return int(cur.rowcount or 0)
+
+    # --- Unified SceneEvent Persistence ---
+
+    def upsert_scene_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        event_id = str(event.get("event_id") or "").strip()
+        if not event_id:
+            raise ValueError("event_id obbligatorio")
+        status = str(event.get("status") or "active")
+        started_at = float(event.get("started_at") or time.time())
+        ended_at = float(event.get("ended_at") or started_at)
+        importance = str(event.get("importance") or "notable")
+        best_cam = event.get("best_camera_id")
+        cameras = [str(c) for c in (event.get("cameras") or []) if c]
+        zones = [str(z) for z in (event.get("zones") or []) if z]
+        zone_ids = [str(z) for z in (event.get("zone_ids") or []) if z]
+        track_ids = [int(t) for t in (event.get("track_ids") or [])]
+        subjects = event.get("subjects") or []
+
+        identities: list[str] = []
+        plates: list[str] = []
+        classes: list[str] = []
+        has_unknown = 0
+        for s in subjects:
+            if not isinstance(s, dict):
+                continue
+            cls = str(s.get("class_label") or "").strip().lower()
+            if cls and cls not in classes:
+                classes.append(cls)
+            ident = str(s.get("identity") or "").strip()
+            if ident and ident.lower() not in ("sconosciuto", "unknown", "none", "pending"):
+                identities.append(ident.lower())
+            elif cls == "person":
+                has_unknown = 1
+            pl = re.sub(r"[^A-Z0-9]", "", str(s.get("plate") or "").upper())
+            if pl:
+                plates.append(pl)
+
+        raw_rel = event.get("cover_raw_relpath")
+        ann_rel = event.get("cover_ann_relpath")
+        payload = json.dumps(event, ensure_ascii=False)
+        now_ts = time.time()
+
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO scene_events (
+                    event_id, status, started_at, ended_at, importance, best_camera_id,
+                    cameras_json, zones_json, zone_ids_json, track_ids_json,
+                    identities_text, plates_text, classes_text, has_unknown_person,
+                    cover_raw_relpath, cover_ann_relpath, payload_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    status = excluded.status,
+                    started_at = excluded.started_at,
+                    ended_at = excluded.ended_at,
+                    importance = excluded.importance,
+                    best_camera_id = excluded.best_camera_id,
+                    cameras_json = excluded.cameras_json,
+                    zones_json = excluded.zones_json,
+                    zone_ids_json = excluded.zone_ids_json,
+                    track_ids_json = excluded.track_ids_json,
+                    identities_text = excluded.identities_text,
+                    plates_text = excluded.plates_text,
+                    classes_text = excluded.classes_text,
+                    has_unknown_person = excluded.has_unknown_person,
+                    cover_raw_relpath = excluded.cover_raw_relpath,
+                    cover_ann_relpath = excluded.cover_ann_relpath,
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    event_id,
+                    status,
+                    started_at,
+                    ended_at,
+                    importance,
+                    best_cam,
+                    json.dumps(cameras),
+                    json.dumps(zones),
+                    json.dumps(zone_ids),
+                    json.dumps(track_ids),
+                    "|" + "|".join(identities) + "|" if identities else "",
+                    "|" + "|".join(plates) + "|" if plates else "",
+                    "|" + "|".join(classes) + "|" if classes else "",
+                    has_unknown,
+                    raw_rel,
+                    ann_rel,
+                    payload,
+                    now_ts,
+                ),
+            )
+            self._conn.commit()
+        return event
+
+    def get_scene_event(self, event_id: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload_json FROM scene_events WHERE event_id = ?;",
+                (event_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["payload_json"])
+        except Exception:
+            return None
+
+    def query_scene_events(
+        self,
+        t_start: Optional[float] = None,
+        t_end: Optional[float] = None,
+        *,
+        importance: Optional[str] = None,
+        camera_id: Optional[str] = None,
+        zone_id: Optional[str] = None,
+        identity: Optional[str] = None,
+        plate: Optional[str] = None,
+        unknown_only: bool = False,
+        subject_class: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT payload_json FROM scene_events WHERE 1=1"
+        params: list[Any] = []
+        if t_start is not None:
+            sql += " AND ended_at >= ?"
+            params.append(float(t_start))
+        if t_end is not None:
+            sql += " AND started_at <= ?"
+            params.append(float(t_end))
+        if importance and importance.strip():
+            sql += " AND importance = ?"
+            params.append(importance.strip().lower())
+        if camera_id and camera_id.strip():
+            sql += " AND cameras_json LIKE ?"
+            params.append(f'%"{camera_id.strip()}"%')
+        if zone_id and zone_id.strip():
+            sql += " AND zone_ids_json LIKE ?"
+            params.append(f'%"{zone_id.strip()}"%')
+        if identity and identity.strip():
+            sql += " AND identities_text LIKE ?"
+            params.append(f"%|{identity.strip().lower()}|%")
+        if plate and plate.strip():
+            clean_plate = re.sub(r"[^A-Z0-9]", "", plate.upper())
+            if clean_plate:
+                sql += " AND plates_text LIKE ?"
+                params.append(f"%{clean_plate}%")
+        if unknown_only:
+            sql += " AND has_unknown_person = 1"
+        if subject_class and subject_class.strip():
+            norm_cls = subject_class.strip().lower()
+            if norm_cls == "vehicle":
+                sql += " AND (classes_text LIKE '%|car|%' OR classes_text LIKE '%|truck|%' OR classes_text LIKE '%|motorbike|%')"
+            else:
+                sql += " AND classes_text LIKE ?"
+                params.append(f"%|{norm_cls}|%")
+
+        eff_limit = max(1, min(int(limit), 500))
+        sql += " ORDER BY started_at DESC LIMIT ?;"
+        params.append(eff_limit)
+
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                out.append(json.loads(r["payload_json"]))
+            except Exception:
+                continue
+        return out
+
+    def find_scene_event_by_track_id(self, track_id: int) -> Optional[dict[str, Any]]:
+        tid = int(track_id)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT track_ids_json, payload_json FROM scene_events ORDER BY started_at DESC LIMIT 120;"
+            ).fetchall()
+        for r in rows:
+            try:
+                tids = json.loads(r["track_ids_json"] or "[]")
+                if tid in tids:
+                    return json.loads(r["payload_json"])
+            except Exception:
+                continue
+        return None
+
+    def delete_scene_event(self, event_id: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload_json FROM scene_events WHERE event_id = ?;",
+                (event_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM scene_events WHERE event_id = ?;", (event_id,))
+            self._conn.commit()
+        try:
+            return json.loads(row["payload_json"])
+        except Exception:
+            return {"event_id": event_id}
+
+    def prune_scene_events_older_than(self, cutoff_timestamp: float) -> tuple[int, list[str]]:
+        cutoff_f = float(cutoff_timestamp)
+        with self._lock:
+            cur = self._conn.cursor()
+            rel_rows = cur.execute(
+                """
+                SELECT cover_raw_relpath, cover_ann_relpath
+                FROM scene_events
+                WHERE ended_at < ?;
+                """,
+                (cutoff_f,),
+            ).fetchall()
+            relpaths: list[str] = []
+            for r in rel_rows:
+                if r["cover_raw_relpath"]:
+                    relpaths.append(str(r["cover_raw_relpath"]))
+                if r["cover_ann_relpath"]:
+                    relpaths.append(str(r["cover_ann_relpath"]))
+            cur.execute("DELETE FROM scene_events WHERE ended_at < ?;", (cutoff_f,))
+            deleted = int(cur.rowcount or 0)
+            self._conn.commit()
+            if deleted > 0:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            return deleted, relpaths
 
     def close(self) -> None:
         with self._lock:

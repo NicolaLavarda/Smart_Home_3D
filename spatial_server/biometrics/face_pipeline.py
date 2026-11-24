@@ -358,6 +358,13 @@ class OnnxInsightFaceRecognizer(IFaceRecognizer):
         box = boxes[pick_idx]
         kp = kps[pick_idx]
 
+        ch, cw = person_crop_bgr.shape[:2]
+        fx1 = max(0, min(cw - 1, int(round(float(box[0])))))
+        fy1 = max(0, min(ch - 1, int(round(float(box[1])))))
+        fx2 = max(fx1 + 1, min(cw, int(round(float(box[2])))))
+        fy2 = max(fy1 + 1, min(ch, int(round(float(box[3])))))
+        face_box_px = (fx1, fy1, fx2, fy2)
+
         metrics, thumb = self._assess_quality(person_crop_bgr, box, kp)
         quality_score = float(
             metrics.det_score
@@ -371,6 +378,7 @@ class OnnxInsightFaceRecognizer(IFaceRecognizer):
                 similarity=0.0,
                 quality_score=round(quality_score * 0.25, 4),
                 metrics=metrics,
+                box_crop_px=face_box_px,
                 crop_bgr=thumb,
             )
 
@@ -390,5 +398,6 @@ class OnnxInsightFaceRecognizer(IFaceRecognizer):
             margin=match.margin,
             quality_score=round(quality_score, 4),
             metrics=metrics,
+            box_crop_px=face_box_px,
             crop_bgr=thumb,
         )
