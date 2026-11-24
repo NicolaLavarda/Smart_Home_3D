@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUNBOOK_PATH = REPO_ROOT / "docs" / "RUNBOOK_PRODUZIONE_FAMIGLIA_TAILSCALE.md"
+RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "production-tailscale.md"
 
 
 def _read_runbook() -> str:

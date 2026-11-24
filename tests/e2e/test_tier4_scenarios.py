@@ -379,7 +379,7 @@ def test_t4_04_tailscale_serve_443_8443_same_origin_topology_consistency(fake_ha
         assert "secure" in _extract_sh3d_cookie(sess).lower()
         assert sess.headers.get("access-control-allow-origin") == "https://pc-fisso.tail123.ts.net"
 
-    runbook = (REPO_ROOT / "docs" / "RUNBOOK_PRODUZIONE_FAMIGLIA_TAILSCALE.md").read_text(encoding="utf-8")
+    runbook = (REPO_ROOT / "docs" / "runbooks" / "production-tailscale.md").read_text(encoding="utf-8")
     assert "8080" in runbook and "8443" in runbook and "trusted_proxies" in runbook
 
 

@@ -1,4 +1,4 @@
-Voglio aggiungere una nuova telecamera al progetto **Smart_Home_3D** seguendo rigorosamente la pipeline descritta in `docs/PIPELINE_AGGIUNTA_TELECAMERA.md`.
+Voglio aggiungere una nuova telecamera al progetto **Smart_Home_3D** seguendo rigorosamente la pipeline descritta in `docs/runbooks/add-camera.md`.
 
 Assicurati di ricercare online le specifiche ufficiali del modello (FOV orizzontale/verticale, lunghezza focale, aspect ratio, risoluzione, codec, URL RTSP/ONVIF, dimensioni fisiche) e di integrare tutto senza rompere `Cam_Carraio`, la sicurezza o i test esistenti.
 

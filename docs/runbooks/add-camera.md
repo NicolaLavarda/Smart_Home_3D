@@ -17,7 +17,7 @@ Prima di modificare qualsiasi file, rispetta sempre questi invarianti verificati
    - In `.env.example` documenta i nuovi nomi variabili lasciando i segreti vuoti e mantenendo i default sicuri (`VITE_HA_TOKEN=` vuoto, `SPATIAL_SERVER_HOST=127.0.0.1`, `SPATIAL_AUTH_REQUIRED=true`).
    - In `npm run build` di produzione non devono essere attive `VITE_HA_TOKEN`, `VITE_GO2RTC_URL`, `VITE_SPATIAL_SERVER_URL` (`test_tier4_scenarios.py`).
 4. **Invarianti di rete & `go2rtc.yaml`:** non alterare `api.listen: "127.0.0.1:1984"`, `api.origin: ""`, `rtsp.listen: "127.0.0.1:8554"`, `webrtc.listen: ":8555"`.
-5. **Budget hardware reale (`docs/FUTURE_PHASES_PROMPT.md`, `docs/master_prompt_architetturale_per_antigravity_ide.md`):** l'host di produzione è un PC Windows 10 con CPU **Intel i5-6400 (4C/4T)**, **8 GB RAM** totali (condivisi con la VM VirtualBox di Home Assistant su `192.168.86.24`), GPU **Intel HD 530**, senza Docker/WSL2. Evita transcoding software FFmpeg in `go2rtc` e dimensiona l'eventuale ingestion OpenVINO di `spatial_server/` con estrema parsimonia.
+5. **Budget hardware reale (`docs/prompts/future-phases.md`, `docs/prompts/master-architecture-prompt.md`):** l'host di produzione è un PC Windows 10 con CPU **Intel i5-6400 (4C/4T)**, **8 GB RAM** totali (condivisi con la VM VirtualBox di Home Assistant su `192.168.86.24`), GPU **Intel HD 530**, senza Docker/WSL2. Evita transcoding software FFmpeg in `go2rtc` e dimensiona l'eventuale ingestion OpenVINO di `spatial_server/` con estrema parsimonia.
 6. **UI in italiano & RBAC (`PRODUCT.md`, `tests/e2e/test_f11_rbac_ui.py`, `test_f17_m3_ui_and_recordings.py`):** etichette UI sempre in italiano, niente `entity_id` grezzi (stringhe con `.`) nei sottotitoli dei modali, e non rompere la visibilità RBAC di `#btn-open-cam-calib`, `#btn-camera-calibrate`, `#btn-toggle-simulator`, `#btn-camera-pov`.
 
 ---
@@ -310,7 +310,7 @@ Esegui questi controlli **in ordine** dopo ogni modifica (non saltare i test esi
    - Confronta l'immagine reale della telecamera con la scena 3D (modalità calibrazione / SOVRAPPOSIZIONE): affina eventuale `rotation_euler` in `Smart_Home_3D.blend` (e riesporta con `npm.cmd run build:model`) per far combaciare perfettamente pilastri, muretti e terreno, evitando derive tra SSoT Blender e override solo in `localStorage`.
 
 5. **Documentazione di chiusura:**
-   - Aggiorna `HA_DEVICES_MAPPING.md` marcando la nuova entità camera come mappata (`Cam_<PascalNome>`).
+   - Aggiorna `docs/reference/ha-devices-mapping.md` marcando la nuova entità camera come mappata (`Cam_<PascalNome>`).
 
 ---
 

@@ -43,7 +43,7 @@ Nella cartella del progetto `Smart_Home_3D`, esegui:
 *(Il pacchetto `av` include le librerie FFmpeg precompilate per Windows x64: non serve installare `ffmpeg.exe` separatamente.)*
 
 ### Passo 4 — Configurazione `.env`
-Apri il file `.env` (riferimento in [`.env.example`](../.env.example)) e imposta almeno:
+Apri il file `.env` (riferimento in [`.env.example`](../../.env.example)) e imposta almeno:
 ```env
 SPATIAL_NVR_STORAGE_DIR=D:\Surveillance
 SPATIAL_NVR_RECORDER_ENABLED=true

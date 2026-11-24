@@ -13,11 +13,11 @@ Il tuo obiettivo è:
 Prima di formulare qualsiasi proposta, ispeziona e incrocia i seguenti file reali del progetto per rispettare al 100% convenzioni, interfacce, sicurezza e architettura esistenti:
 
 - **Documentazione architetturale e operativa:**
-  - `docs/master_prompt_architetturale_per_antigravity_ide.md`
-  - `docs/PIPELINE_AGGIUNTA_TELECAMERA.md` e `docs/PROMPT_AGGIUNTA_TELECAMERA.md`
-  - `docs/RUNBOOK_PRODUZIONE_FAMIGLIA_TAILSCALE.md`
-  - `docs/PWA_PRODUCTION_SECURITY_PROMPT.md`
-  - `docs/FUTURE_PHASES_PROMPT.md`
+  - `docs/prompts/master-architecture-prompt.md`
+  - `docs/runbooks/add-camera.md` e `docs/prompts/add-camera-prompt.md`
+  - `docs/runbooks/production-tailscale.md`
+  - `docs/prompts/pwa-security-prompt.md`
+  - `docs/prompts/future-phases.md`
 - **Backend Spaziale (`spatial_server/`):**
   - `spatial_server/main.py`, `spatial_server/config.py`, `spatial_server/requirements.txt`
   - `spatial_server/domain/models.py`
@@ -117,7 +117,7 @@ Il piano deve coprire nel dettaglio tutti i seguenti pilastri:
 
 ### G. Sicurezza, Privacy e Manutenibilità
 - **Zero segreti nel codice:** eventuali credenziali telecamere, configurazioni sensibili e whitelist targhe devono risiedere esclusivamente in variabili d'ambiente / `.env` locale o file di configurazione gitignored.
-- Tutti i nuovi endpoint HTTP/WS (es. recupero thumbnail crop, stato diagnostico biometrico, gestione enrollment/whitelist) devono essere protetti tramite `spatial_server/security/ha_auth.py` in coerenza con `docs/PWA_PRODUCTION_SECURITY_PROMPT.md` e coperti da test in `spatial_server/tests/test_security_auth.py`.
+- Tutti i nuovi endpoint HTTP/WS (es. recupero thumbnail crop, stato diagnostico biometrico, gestione enrollment/whitelist) devono essere protetti tramite `spatial_server/security/ha_auth.py` in coerenza con `docs/prompts/pwa-security-prompt.md` e coperti da test in `spatial_server/tests/test_security_auth.py`.
 
 ### H. Fase 0 di Benchmark sull'i5-6400 e Validazione Pre-Produzione
 - Includere nel piano una **Fase 0 di Benchmark** con uno script standalone eseguibile sul PC fisso su snapshot reali + le mie cartelle volti per misurare prima dell'integrazione:

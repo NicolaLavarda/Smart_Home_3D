@@ -1,6 +1,6 @@
 import fs from 'fs';
 
-const content = fs.readFileSync('HA_DEVICES_MAPPING.md', 'utf8');
+const content = fs.readFileSync('docs/reference/ha-devices-mapping.md', 'utf8');
 const blocks = content.split('### `');
 
 console.log('=== ENTITÀ COMPILATE DALL\'UTENTE ===\n');

@@ -42,8 +42,8 @@ Unlike generic 2D smart home dashboards or hardcoded 3D floorplans, Smart Home 3
 ## Evidence on Hand
 
 - **3D Source & Exported Assets:** `Smart_Home_3D.blend`, `public/models/house_optimized.glb`, `public/models/scene_manifest.json`.
-- **Documented HA Entity & Device Mapping:** `HA_DEVICES_MAPPING.md`, `README.md`, and `docs/SMART_DEVICES_ARCHITECTURE.md` (including `light.forno`, `light.bancone`, `light.portico`, `switch.switch_casa_interruttore_1`, `media_player.smart_tv_lg_oled_2`, `camera.carraio_scorrevole`, `vacuum.deebot`, plus dishwasher and 3-zone irrigation modules).
-- **Camera & Service Configuration Guides:** `docs/GUIDA_CONFIGURAZIONE_REOLINK_E_SERVIZI.md`.
+- **Documented HA Entity & Device Mapping:** `docs/reference/ha-devices-mapping.md`, `README.md`, and `docs/architecture/smart-devices.md` (including `light.forno`, `light.bancone`, `light.portico`, `switch.switch_casa_interruttore_1`, `media_player.smart_tv_lg_oled_2`, `camera.carraio_scorrevole`, `vacuum.deebot`, plus dishwasher and 3-zone irrigation modules).
+- **Camera & Service Configuration Guides:** `docs/runbooks/reolink-and-services.md`.
 - **Absences:** No external customer testimonials, commercial pricing, licensing claims, or public benchmarks exist; future work must not fabricate them.
 
 ## Product Principles

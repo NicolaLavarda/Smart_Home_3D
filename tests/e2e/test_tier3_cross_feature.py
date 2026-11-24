@@ -732,7 +732,7 @@ def test_t3_19_f13_f11_f14_pwa_prompt_oauth_overlay_and_mobile_css_wiring():
 
 def test_t3_20_f15_f16_runbook_cross_references_scripts_services_ports_env():
     """T3-20 (F15+F16): Runbook script names, service names, ports, CIDRs, and env vars match repo configs."""
-    runbook = (REPO_ROOT / "docs" / "RUNBOOK_PRODUZIONE_FAMIGLIA_TAILSCALE.md").read_text(encoding="utf-8")
+    runbook = (REPO_ROOT / "docs" / "runbooks" / "production-tailscale.md").read_text(encoding="utf-8")
     install_ps1 = (REPO_ROOT / "scripts" / "install_windows_services.ps1").read_text(encoding="utf-8")
     env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
 

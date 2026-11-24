@@ -2,7 +2,7 @@
 
 Guida operativa completa per mettere in produzione **Smart Home 3D Digital Twin** sul PC Fisso Windows 10 (`Intel i5-6400 / 8 GB RAM / Intel HD 530`, **Zero Docker / Zero WSL2**), esponendolo in modo sicuro alla famiglia tramite **Tailscale Serve**, **Caddy same-origin**, **OAuth2 + RBAC Home Assistant** e **PWA installabile** su iOS e Android.
 
-> **Prerequisito telecamera:** per la configurazione iniziale RTSP/H.264 della Reolink RLC-540A (`192.168.86.47`), fare riferimento alla Sezione 1 di [`docs/GUIDA_CONFIGURAZIONE_REOLINK_E_SERVIZI.md`](./GUIDA_CONFIGURAZIONE_REOLINK_E_SERVIZI.md).
+> **Prerequisito telecamera:** per la configurazione iniziale RTSP/H.264 della Reolink RLC-540A (`192.168.86.47`), fare riferimento alla Sezione 1 di [`docs/runbooks/reolink-and-services.md`](./reolink-and-services.md).
 
 ---
 

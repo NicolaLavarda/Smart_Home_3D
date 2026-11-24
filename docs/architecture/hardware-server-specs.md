@@ -44,4 +44,4 @@ I componenti applicativi di `Smart_Home_3D` girano nativamente su Windows 10 com
 
 ---
 
-*Riferimenti nel repository:* [master_prompt_architetturale_per_antigravity_ide.md](master_prompt_architetturale_per_antigravity_ide.md), [PIPELINE_AGGIUNTA_TELECAMERA.md](PIPELINE_AGGIUNTA_TELECAMERA.md), [RUNBOOK_PRODUZIONE_FAMIGLIA_TAILSCALE.md](RUNBOOK_PRODUZIONE_FAMIGLIA_TAILSCALE.md).
+*Riferimenti nel repository:* [docs/prompts/master-architecture-prompt.md](../prompts/master-architecture-prompt.md), [docs/runbooks/add-camera.md](../runbooks/add-camera.md), [docs/runbooks/production-tailscale.md](../runbooks/production-tailscale.md).
