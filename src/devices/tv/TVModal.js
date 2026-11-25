@@ -75,50 +75,50 @@ export class TVModal {
 
         ${isPoweredOn ? `
           <div class="tv-media-actions">
-            <button class="btn-action-primary" id="tv-modal-play-btn" style="flex: 1;">
+            <button type="button" class="btn-action-primary tv-play-action-btn" id="tv-modal-play-btn">
               ${isPlaying ? `${icon('pause', { size: 14 })} <span>Sospendi</span>` : `${icon('play', { size: 14 })} <span>Riproduci</span>`}
             </button>
-            <button class="btn-icon-text" id="tv-modal-stop-btn" style="padding: 10px 14px;" title="Stop">
+            <button type="button" class="btn-icon-text tv-stop-action-btn" id="tv-modal-stop-btn" title="Stop" aria-label="Ferma riproduzione">
               ${icon('square', { size: 14, fill: 'currentColor' })}
             </button>
           </div>
         ` : ''}
       </div>
 
-      <!-- Accensione Wake-on-LAN / Spegnimento -->
+      <!-- Accensione / Spegnimento -->
       <div class="control-row tv-power-row">
-        <div>
-          <div style="font-weight: 600; font-size: 13px;">Alimentazione TV</div>
-          <div style="font-size: 11px; color: var(--text-muted);">
-            ${isPoweredOn ? 'Accesa • Connessa alla rete' : 'Spenta / Standby • Avvio tramite Wake-on-LAN'}
+        <div class="tv-power-copy">
+          <div class="tv-power-title">Alimentazione TV</div>
+          <div class="tv-power-sub">
+            ${isPoweredOn ? 'Accesa • Connessa alla rete' : 'Spenta / Standby • Pronta per accensione'}
           </div>
         </div>
-        <button class="${isPoweredOn ? 'btn-power-off' : 'btn-power-on'}" id="tv-modal-power-btn">
+        <button type="button" class="${isPoweredOn ? 'btn-power-off' : 'btn-power-on'}" id="tv-modal-power-btn">
           ${icon('power', { size: 14 })} <span>${isPoweredOn ? 'Spegni TV' : 'Accendi'}</span>
         </button>
       </div>
 
       <!-- Controllo Volume & Mute -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <label style="margin: 0;">Volume</label>
-            <button class="btn-mute-toggle ${isMuted ? 'muted' : ''}" id="tv-modal-mute-btn" title="Muto">
+      <section class="modal-section">
+        <div class="tv-volume-head">
+          <div class="tv-volume-label-wrap">
+            <label for="tv-modal-volume-slider" class="modal-section-title">Volume</label>
+            <button type="button" class="btn-mute-toggle ${isMuted ? 'muted' : ''}" id="tv-modal-mute-btn" title="Muto">
               ${isMuted ? `${icon('volume-x', { size: 13 })} <span>Muto</span>` : `${icon('volume-2', { size: 13 })} <span>Attivo</span>`}
             </button>
           </div>
-          <span id="tv-modal-vol-label" style="font-size: 12px; font-family: var(--font-mono);">${volume}%</span>
+          <span id="tv-modal-vol-label" class="control-row-value">${volume}%</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <button class="btn-vol-step" id="tv-modal-vol-down">-</button>
-          <input type="range" min="0" max="100" value="${volume}" id="tv-modal-volume-slider" class="timeline-slider" style="flex: 1;" />
-          <button class="btn-vol-step" id="tv-modal-vol-up">+</button>
+        <div class="tv-volume-slider-row">
+          <button type="button" class="btn-vol-step" id="tv-modal-vol-down" aria-label="Abbassa volume">-</button>
+          <input type="range" min="0" max="100" value="${volume}" id="tv-modal-volume-slider" name="tv-modal-volume-slider" class="timeline-slider tv-volume-slider" />
+          <button type="button" class="btn-vol-step" id="tv-modal-vol-up" aria-label="Alza volume">+</button>
         </div>
-      </div>
+      </section>
 
       <!-- Selezione Rapida Sorgenti con Loghi Ufficiali -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <label>Seleziona Sorgente / App</label>
+      <section class="modal-section">
+        <h4 class="modal-section-title">Seleziona Sorgente / App</h4>
         <div class="tv-sources-grid">
           <button class="source-chip ${source === 'Live TV' ? 'active' : ''}" data-source="Live TV">
             <img src="/logos/livetv.svg" class="chip-service-logo" alt="Live TV" />
@@ -157,7 +157,7 @@ export class TVModal {
             <span>HDMI 1</span>
           </button>
         </div>
-      </div>
+      </section>
 
       <!-- Telecomando Virtuale sempre visibile -->
       <div class="remote-collapsible-wrapper open" id="remote-slot">
@@ -184,7 +184,7 @@ export class TVModal {
           powerBtn.disabled = true;
           this.controller.turnOff();
         } else {
-          powerBtn.innerHTML = `${icon('zap', { size: 14 })} <span>Invio pacchetto WoL...</span>`;
+          powerBtn.innerHTML = `${icon('zap', { size: 14 })} <span>Accensione TV in corso...</span>`;
           powerBtn.disabled = true;
           this.controller.turnOn();
         }

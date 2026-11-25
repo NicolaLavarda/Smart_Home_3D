@@ -51,6 +51,32 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+const AVATAR_PALETTE = [
+  { bg: 'rgba(56, 189, 248, 0.18)', fg: '#7dd3fc', border: 'rgba(56, 189, 248, 0.34)' },
+  { bg: 'rgba(52, 211, 153, 0.18)', fg: '#6ee7b7', border: 'rgba(52, 211, 153, 0.34)' },
+  { bg: 'rgba(245, 158, 11, 0.18)', fg: '#fcd34d', border: 'rgba(245, 158, 11, 0.34)' },
+  { bg: 'rgba(167, 139, 250, 0.18)', fg: '#c4b5fd', border: 'rgba(167, 139, 250, 0.34)' },
+  { bg: 'rgba(251, 113, 133, 0.18)', fg: '#fda4af', border: 'rgba(251, 113, 133, 0.34)' },
+  { bg: 'rgba(45, 212, 191, 0.18)', fg: '#5eead4', border: 'rgba(45, 212, 191, 0.34)' },
+];
+
+function getPersonInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function getAvatarColorStyle(name) {
+  const str = String(name || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  const entry = AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+  return `background:${entry.bg};color:${entry.fg};border-color:${entry.border};`;
+}
+
 /**
  * SecurityFabHub
  *
@@ -140,6 +166,9 @@ export class SecurityFabHub {
     this._unsubSceneEvents = null;
     this._unsubAutoEvents = null;
     this._unsubHaAuth = null;
+    this._unsubSpatialStatus = null;
+    this._unsubSpatialFrame = null;
+    this._sceneDeleteTimers = new Map();
 
     this.sceneEvents = [];
     this.sceneEventsFilters = {
@@ -270,11 +299,33 @@ export class SecurityFabHub {
     this.container.innerHTML = `
       <section class="m3-security-panel" id="m3-security-panel" role="dialog" aria-label="Centrale Sicurezza e Cronologia" aria-hidden="true">
         <header class="m3-sec-header">
-          <div class="m3-sec-title-group">
-            <span class="m3-sec-header-icon">${icon('shield-check', { size: 18 })}</span>
-            <div class="m3-sec-title-copy">
-              <h2 class="m3-sec-title">Sicurezza</h2>
-              <span class="m3-sec-status-line" id="sec-status-summary">Live multi-camera</span>
+          <div class="m3-sec-header-top">
+            <div class="m3-sec-title-group">
+              <span class="m3-sec-header-icon">${icon('shield-check', { size: 18 })}</span>
+              <div class="m3-sec-title-copy">
+                <h2 class="m3-sec-title">Sicurezza</h2>
+                <span class="m3-sec-status-line" id="sec-panel-subtitle">Live multi-camera</span>
+              </div>
+            </div>
+
+            <div class="m3-sec-header-actions">
+              <button
+                type="button"
+                class="m3-icon-btn m3-alarm-header-btn"
+                id="btn-sec-alarm-control"
+                data-alarm-level="off"
+                title="Gestisci stato allarme"
+                aria-label="Gestisci stato allarme"
+              >
+                ${icon('shield-alert', { size: 15 })}
+                <span class="m3-alarm-btn-label" id="sec-alarm-btn-label">Allarme · Spento</span>
+              </button>
+              <button type="button" class="m3-icon-btn m3-strip-toggle-btn" id="btn-sec-strip-toggle" title="Riduci a striscia in basso per vedere tutto il 3D" aria-label="Riduci a striscia in basso">
+                ${icon('panel-bottom-close', { size: 17 })}
+              </button>
+              <button type="button" class="m3-icon-btn" id="btn-sec-close" title="Chiudi pannello Sicurezza" aria-label="Chiudi Sicurezza">
+                ${icon('x', { size: 17 })}
+              </button>
             </div>
           </div>
 
@@ -294,25 +345,6 @@ export class SecurityFabHub {
             <button type="button" class="m3-seg-btn" id="btn-sec-mode-settings" role="tab" aria-selected="false" aria-controls="sec-settings-section">
               ${icon('settings', { size: 14 })}
               <span>Impostazioni</span>
-            </button>
-          </div>
-
-          <div class="m3-sec-header-actions">
-            <button
-              type="button"
-              class="m3-icon-btn m3-alarm-header-btn"
-              id="btn-sec-alarm-control"
-              title="Gestisci stato allarme (sh3d.allarme)"
-              aria-label="Gestisci stato allarme sh3d.allarme"
-            >
-              ${icon('shield-alert', { size: 15 })}
-              <span class="m3-alarm-btn-label" id="sec-alarm-btn-label">Allarme</span>
-            </button>
-            <button type="button" class="m3-icon-btn m3-strip-toggle-btn" id="btn-sec-strip-toggle" title="Riduci a striscia in basso per vedere tutto il 3D" aria-label="Riduci a striscia in basso">
-              ${icon('panel-bottom-close', { size: 17 })}
-            </button>
-            <button type="button" class="m3-icon-btn" id="btn-sec-close" title="Chiudi pannello Sicurezza" aria-label="Chiudi Sicurezza">
-              ${icon('x', { size: 17 })}
             </button>
           </div>
         </header>
@@ -362,9 +394,9 @@ export class SecurityFabHub {
                   <button type="button" class="m3-chip" data-events-day-offset="1">Ieri</button>
                   <button type="button" class="m3-chip" data-events-day-offset="2">2 gg fa</button>
                 </div>
-                <label class="m3-input-pill" title="Seleziona giorno eventi">
+                <label class="m3-input-pill" for="sec-events-date" title="Seleziona giorno eventi">
                   ${icon('calendar', { size: 14 })}
-                  <input type="date" id="sec-events-date" aria-label="Giorno eventi" />
+                  <input type="date" id="sec-events-date" name="sec-events-date" aria-label="Giorno eventi" />
                 </label>
               </div>
               <div class="m3-events-filter-group">
@@ -393,28 +425,28 @@ export class SecurityFabHub {
             </div>
 
             <div class="m3-datetime-inputs">
-              <label class="m3-input-pill" title="Seleziona giorno">
+              <label class="m3-input-pill" for="sec-date-input" title="Seleziona giorno">
                 ${icon('calendar', { size: 14 })}
-                <input type="date" id="sec-date-input" aria-label="Giorno cronologia" />
+                <input type="date" id="sec-date-input" name="sec-date-input" aria-label="Giorno cronologia" />
               </label>
-              <label class="m3-input-pill" title="Seleziona orario">
+              <label class="m3-input-pill" for="sec-time-input" title="Seleziona orario">
                 ${icon('clock', { size: 14 })}
-                <input type="time" id="sec-time-input" aria-label="Orario cronologia" />
+                <input type="time" id="sec-time-input" name="sec-time-input" aria-label="Orario cronologia" />
               </label>
             </div>
           </div>
 
           <div class="m3-bio-filters-row" id="sec-bio-filters" role="search" aria-label="Filtri cronologia biometrici">
-            <label class="m3-bio-filter-pill" title="Filtra per persona riconosciuta">
+            <label class="m3-bio-filter-pill" for="sec-filter-identity" title="Filtra per persona riconosciuta">
               ${icon('user-check', { size: 13 })}
-              <select id="sec-filter-identity" class="m3-bio-select" aria-label="Filtra per persona">
+              <select id="sec-filter-identity" name="sec-filter-identity" class="m3-bio-select" aria-label="Filtra per persona">
                 <option value="">Tutte le persone</option>
                 <option value="__unknown__">Solo sconosciuti</option>
               </select>
             </label>
-            <label class="m3-bio-filter-pill m3-bio-plate-pill" title="Filtra per numero di targa">
+            <label class="m3-bio-filter-pill m3-bio-plate-pill" for="sec-filter-plate" title="Filtra per numero di targa">
               ${icon('tag', { size: 13 })}
-              <input type="text" id="sec-filter-plate" class="m3-bio-input" placeholder="Targa (es. AB123CD)" aria-label="Filtra per targa" maxlength="12" />
+              <input type="text" id="sec-filter-plate" name="sec-filter-plate" class="m3-bio-input" placeholder="Targa (es. AB123CD)" aria-label="Filtra per targa" maxlength="12" />
             </label>
             <button type="button" class="m3-bio-clear-btn" id="btn-sec-bio-filter-clear" hidden title="Azzera filtri biometrici" aria-label="Azzera filtri biometrici">
               ${icon('x', { size: 13 })}
@@ -435,7 +467,7 @@ export class SecurityFabHub {
 
             <div class="m3-scrubber-track-wrap">
               <canvas id="sec-density-canvas" class="m3-density-canvas" height="32" title="Clicca su una barra per saltare a quell'orario"></canvas>
-              <input type="range" min="0" max="3600" step="1" value="3480" class="m3-timeline-slider" id="sec-timeline-slider" aria-label="Cursore temporale cronologia" />
+              <input type="range" min="0" max="3600" step="1" value="3480" class="m3-timeline-slider" id="sec-timeline-slider" name="sec-timeline-slider" aria-label="Cursore temporale cronologia" />
             </div>
 
             <div class="m3-playback-controls-row">
@@ -491,7 +523,7 @@ export class SecurityFabHub {
 
           <div class="m3-storage-footer" id="sec-storage-footer">
             ${icon('hard-drive', { size: 13 })}
-            <span id="sec-storage-label">Archivio NVR predisposto • Pronto per HDD PC o SD camera</span>
+            <span id="sec-storage-label">Archivio video locale predisposto • Pronto per registrazione continua</span>
           </div>
         </div>
 
@@ -526,11 +558,11 @@ export class SecurityFabHub {
 
               <div class="m3-settings-status-grid">
                 <div class="m3-settings-status-item">
-                  <span class="m3-settings-status-label">${icon('hard-drive', { size: 13 })} <span>Archivio NVR</span></span>
+                  <span class="m3-settings-status-label">${icon('hard-drive', { size: 13 })} <span>Archivio registrazioni</span></span>
                   <span class="m3-settings-status-val" id="sec-settings-nvr-status">In verifica...</span>
                 </div>
                 <div class="m3-settings-status-item">
-                  <span class="m3-settings-status-label">${icon('activity', { size: 13 })} <span>Biometria 3D</span></span>
+                  <span class="m3-settings-status-label">${icon('activity', { size: 13 })} <span>Riconoscimento 3D</span></span>
                   <span class="m3-settings-status-val" id="sec-settings-bio-status">In verifica...</span>
                 </div>
               </div>
@@ -553,9 +585,9 @@ export class SecurityFabHub {
                 </div>
 
                 <div class="m3-admin-plate-form">
-                  <input type="text" id="sec-admin-plate-input" placeholder="Targa (AB123CD)" maxlength="12" aria-label="Nuova targa whitelist" />
-                  <input type="text" id="sec-admin-plate-owner" placeholder="Proprietario" maxlength="64" aria-label="Proprietario targa" />
-                  <input type="text" id="sec-admin-plate-vehicle" placeholder="Auto (opzionale)" maxlength="48" aria-label="Modello veicolo" />
+                  <input type="text" id="sec-admin-plate-input" name="sec-admin-plate-input" placeholder="Targa (AB123CD)" maxlength="12" aria-label="Nuova targa whitelist" />
+                  <input type="text" id="sec-admin-plate-owner" name="sec-admin-plate-owner" placeholder="Proprietario" maxlength="64" aria-label="Proprietario targa" />
+                  <input type="text" id="sec-admin-plate-vehicle" name="sec-admin-plate-vehicle" placeholder="Auto (opzionale)" maxlength="48" aria-label="Modello veicolo" />
                   <button type="button" class="m3-admin-btn primary" id="btn-sec-admin-plate-add" disabled title="Aggiungi o aggiorna targa in whitelist">
                     ${icon('plus', { size: 14 })}
                     <span>Salva targa</span>
@@ -584,16 +616,16 @@ export class SecurityFabHub {
                 <div class="m3-settings-group-head">
                   <span class="m3-settings-group-icon">${icon('hard-drive', { size: 15 })}</span>
                   <div class="m3-settings-group-copy">
-                    <h3 class="m3-settings-group-title" id="sec-settings-maint-title">Manutenzione archivio crop</h3>
+                    <h3 class="m3-settings-group-title" id="sec-settings-maint-title">Manutenzione ritagli</h3>
                     <p class="m3-settings-group-sub">Elimina dal disco i ritagli oltre la finestra di conservazione</p>
                   </div>
                 </div>
                 <div class="m3-settings-row">
                   <div class="m3-settings-row-copy">
-                    <span class="m3-settings-row-label">Pulizia crop biometrici scaduti</span>
+                    <span class="m3-settings-row-label">Pulizia ritagli biometrici scaduti</span>
                     <span class="m3-settings-row-hint">Operazione sicura: mantiene intatti eventi storici e profili registrati</span>
                   </div>
-                  <button type="button" class="m3-admin-btn" id="btn-sec-admin-prune-crops" disabled title="Elimina crop scaduti da disco">
+                  <button type="button" class="m3-admin-btn" id="btn-sec-admin-prune-crops" disabled title="Elimina ritagli scaduti da disco">
                     ${icon('refresh-cw', { size: 13 })}
                     <span>Pulisci ora</span>
                   </button>
@@ -627,7 +659,7 @@ export class SecurityFabHub {
               <span class="m3-alarm-modal-icon">${icon('siren', { size: 22 })}</span>
               <div class="m3-alarm-modal-copy">
                 <h3 class="m3-alarm-modal-title" id="sec-alarm-modal-title">Allarme Casa</h3>
-                <code class="m3-alarm-modal-eid">sh3d.allarme</code>
+                <span class="m3-alarm-modal-sub">Controllo rapido sistema di sicurezza</span>
               </div>
             </div>
             <button type="button" class="m3-icon-btn" id="btn-sec-alarm-modal-close" title="Chiudi finestra allarme" aria-label="Chiudi finestra allarme">
@@ -644,7 +676,7 @@ export class SecurityFabHub {
     this.fabIconEl = this.container.querySelector('#sec-fab-icon');
     this.fabCountEl = this.container.querySelector('#sec-fab-cam-count');
     this.camerasTrackEl = this.container.querySelector('#sec-cameras-track');
-    this.statusSummaryEl = this.container.querySelector('#sec-status-summary');
+    this.statusSummaryEl = this.container.querySelector('#sec-panel-subtitle');
 
     this.liveBtn = this.container.querySelector('#btn-sec-mode-live');
     this.eventsBtn = this.container.querySelector('#btn-sec-mode-events');
@@ -819,6 +851,30 @@ export class SecurityFabHub {
         if (!this._isAdmin() || typeof this.spatialStreamClient?.deleteSceneEvent !== 'function') return;
         const evId = String(delBtn.getAttribute?.('data-scene-delete') ?? delBtn.dataset?.sceneDelete ?? '').trim();
         if (!evId) return;
+        if (delBtn.dataset?.confirmDelete !== '1') {
+          if (delBtn.dataset) delBtn.dataset.confirmDelete = '1';
+          delBtn.classList?.add('is-confirming');
+          delBtn.title = 'Clicca ancora per confermare eliminazione';
+          delBtn.setAttribute?.('aria-label', 'Conferma eliminazione episodio');
+          delBtn.innerHTML = icon('check', { size: 13 });
+          const prevTimer = this._sceneDeleteTimers.get(evId);
+          if (prevTimer) clearTimeout(prevTimer);
+          const timer = setTimeout(() => {
+            this._sceneDeleteTimers.delete(evId);
+            if (delBtn.dataset) delete delBtn.dataset.confirmDelete;
+            delBtn.classList?.remove('is-confirming');
+            delBtn.title = 'Elimina episodio';
+            delBtn.setAttribute?.('aria-label', 'Elimina episodio');
+            delBtn.innerHTML = icon('trash-2', { size: 13 });
+          }, 3500);
+          this._sceneDeleteTimers.set(evId, timer);
+          return;
+        }
+        const pendingTimer = this._sceneDeleteTimers.get(evId);
+        if (pendingTimer) {
+          clearTimeout(pendingTimer);
+          this._sceneDeleteTimers.delete(evId);
+        }
         const res = await this.spatialStreamClient.deleteSceneEvent(evId).catch(() => null);
         if (res?.status === 'ok') {
           this.sceneEvents = this.sceneEvents.filter((item) => item.event_id !== evId);
@@ -834,6 +890,20 @@ export class SecurityFabHub {
       const ev = this.sceneEvents.find((item) => item.event_id === evId);
       if (ev) {
         await this.openSceneEventReplay(ev);
+      }
+    });
+
+    this.sceneEventsGridEl?.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target?.closest?.('[data-scene-delete]')) return;
+      const replayTarget = e.target?.closest?.('[data-scene-replay]');
+      if (!replayTarget) return;
+      if (replayTarget.tagName === 'BUTTON') return;
+      e.preventDefault();
+      const evId = String(replayTarget.getAttribute?.('data-scene-replay') ?? replayTarget.dataset?.sceneReplay ?? '').trim();
+      const ev = this.sceneEvents.find((item) => item.event_id === evId);
+      if (ev) {
+        void this.openSceneEventReplay(ev);
       }
     });
 
@@ -1033,10 +1103,10 @@ export class SecurityFabHub {
         const res = await this.spatialStreamClient.pruneBiometricCrops().catch(() => null);
         if (res?.status === 'ok') {
           const pruned = Number(res.pruned ?? res.deleted ?? 0);
-          this._setAdminMessage(`Pulizia completata (${pruned} crop scaduti rimossi)`, false);
+          this._setAdminMessage(`Pulizia completata (${pruned} ritagli scaduti rimossi)`, false);
           await this._refreshBiometricsStatusSummary();
         } else {
-          this._setAdminMessage('Errore durante la pulizia dei crop biometrici', true);
+          this._setAdminMessage('Errore durante la pulizia dei ritagli biometrici', true);
         }
       } finally {
         if (this.adminPruneCropsBtn) {
@@ -1113,7 +1183,7 @@ export class SecurityFabHub {
         this.bioIdentitiesList = this.bioIdentitiesList.filter((i) => i.name !== personName);
         this._renderAdminIdentities();
         await this._loadBiometricIdentitiesOptions();
-        this._setAdminMessage(`Identita ${personName} rimossa`, false);
+        this._setAdminMessage(`Identità ${personName} rimossa`, false);
       }
     });
 
@@ -1123,7 +1193,7 @@ export class SecurityFabHub {
   bindSpatialClient() {
     if (!this.spatialStreamClient) return;
 
-    this.spatialStreamClient.onStatusChange((connected, meta) => {
+    this._unsubSpatialStatus = this.spatialStreamClient.onStatusChange((connected, meta) => {
       const rawMode = (meta?.ingestion_mode || this.spatialStreamClient.lastStatusPayload?.ingestion_mode || '').toLowerCase();
       const isRealServer = Boolean(connected && rawMode && rawMode !== 'synthetic');
 
@@ -1133,10 +1203,13 @@ export class SecurityFabHub {
           this.trajectoryRenderer?.setLiveMode?.(true);
         }
       }
+      if (connected) {
+        void this.refreshAlarmEntity();
+      }
       this._updateStatusSummary();
     });
 
-    this.spatialStreamClient.onFrame((frame) => {
+    this._unsubSpatialFrame = this.spatialStreamClient.onFrame((frame) => {
       if (this.mode !== 'live') return;
       const tracks = frame.active_tracks || [];
       this._activeTrackCount = tracks.length;
@@ -1178,12 +1251,6 @@ export class SecurityFabHub {
         }
       });
     }
-
-    this.spatialStreamClient.onStatusChange((connected) => {
-      if (connected) {
-        void this.refreshAlarmEntity();
-      }
-    });
 
     if (this.spatialStreamClient.connected) {
       void this.refreshAlarmEntity();
@@ -1246,14 +1313,17 @@ export class SecurityFabHub {
         </div>
         <div class="m3-cam-overlay-top">
           <span class="m3-cam-name">${cam.shortName}${cam.isPanoramic180 ? ' 180°' : ''}</span>
-        </div>
-        <div class="m3-cam-overlay-actions">
-          <button type="button" class="m3-cam-action-btn" data-cam-action="pov" title="Inquadra visuale 3D di ${cam.shortName}" aria-label="Vista 3D ${cam.shortName}">
-            ${icon('crosshair', { size: 13 })}
-          </button>
-          <button type="button" class="m3-cam-action-btn" data-cam-action="details" title="Dettagli e calibrazione ${cam.shortName}" aria-label="Dettagli ${cam.shortName}">
-            ${icon('sliders-horizontal', { size: 13 })}
-          </button>
+          <div class="m3-cam-top-right">
+            <span class="m3-cam-badge" aria-live="polite"></span>
+            <div class="m3-cam-actions m3-cam-overlay-actions">
+              <button type="button" class="m3-cam-action-btn" data-cam-action="pov" title="Inquadra visuale 3D di ${cam.shortName}" aria-label="Vista 3D ${cam.shortName}">
+                ${icon('crosshair', { size: 13 })}
+              </button>
+              <button type="button" class="m3-cam-action-btn" data-cam-action="details" title="Dettagli e calibrazione ${cam.shortName}" aria-label="Dettagli ${cam.shortName}">
+                ${icon('sliders-horizontal', { size: 13 })}
+              </button>
+            </div>
+          </div>
         </div>
       `;
 
@@ -1379,6 +1449,14 @@ export class SecurityFabHub {
 
   close() {
     if (this.panelState === 'closed') return;
+    if (this.panelEl && typeof document !== 'undefined' && this.panelEl.contains?.(document.activeElement)) {
+      if (typeof document.activeElement?.blur === 'function') {
+        document.activeElement.blur();
+      }
+      if (this.fabBtn && typeof this.fabBtn.focus === 'function') {
+        this.fabBtn.focus();
+      }
+    }
     this.panelState = 'closed';
     this.container.classList.remove('open', 'mode-strip');
     this.panelEl?.classList.remove('open', 'mode-strip');
@@ -1425,8 +1503,8 @@ export class SecurityFabHub {
     if (!summary) return;
     const primary = summary.providers?.[0];
     const detailText = summary.configured && primary
-      ? (primary.detail || 'Archivio NVR attivo')
-      : 'Archivio NVR predisposto • Schermo scuro automatico se assente';
+      ? (primary.detail || 'Archivio registrazioni attivo')
+      : 'Archivio registrazioni predisposto • Schermo scuro automatico se assente';
     if (this.storageLabelEl) {
       this.storageLabelEl.textContent = detailText;
     }
@@ -1655,12 +1733,9 @@ export class SecurityFabHub {
 
   _applyLiveProviderBadge(tile, status) {
     if (!status) return;
-    if (status.mode === 'webrtc') {
-      this._setTileBadge(tile, 'WEBRTC LIVE', 'live');
-    } else if (status.mode === 'mse') {
-      this._setTileBadge(tile, 'MSE LIVE', 'live');
-    } else if (status.hasLiveHaFrames) {
-      this._setTileBadge(tile, status.isTailscale ? 'HA REMOTO' : 'HA LIVE', 'live');
+    if (status.mode === 'webrtc' || status.mode === 'mse' || status.hasLiveHaFrames) {
+      // Nascondi qualsiasi filigrana/chip di stato quando il flusso video è disponibile
+      this._setTileBadge(tile, '', 'hidden');
     } else {
       this._setTileBadge(tile, 'STANDBY', 'standby');
     }
@@ -1721,9 +1796,7 @@ export class SecurityFabHub {
 
     if (state.status === RecordingPlaybackStatus.PLAYING || state.status === RecordingPlaybackStatus.PAUSED) {
       this._setTileDarkState(tile, false);
-      const isMainTier = (state.streamTier || state.segment?.streamTier) === 'main';
-      const baseLabel = state.status === RecordingPlaybackStatus.PLAYING ? 'REPLAY' : 'PAUSA';
-      this._setTileBadge(tile, isMainTier ? `${baseLabel} HD` : baseLabel, isMainTier ? 'replay is-hd' : 'replay');
+      this._setTileBadge(tile, '', 'hidden');
     } else if (state.status === RecordingPlaybackStatus.LOADING) {
       this._setTileBadge(tile, 'CARICAMENTO', 'connecting');
     } else {
@@ -2462,16 +2535,16 @@ export class SecurityFabHub {
       this.bioHitlEditorEl.innerHTML = `
         <div class="m3-hitl-head">
           ${cropUrl ? `<img class="m3-hitl-thumb" src="${escapeHtml(cropUrl)}" crossorigin="use-credentials" alt="" />` : ''}
-          <span>Assegna o correggi targa (Track #${Number(ev.track_id) || 0})</span>
+          <span>Assegna o correggi targa</span>
         </div>
         <div class="m3-hitl-fields">
-          <input type="text" id="sec-hitl-plate-input" value="${escapeHtml(prefillPlate)}" placeholder="Targa (es. AB123CD)" maxlength="12" aria-label="Targa" />
-          <label class="m3-hitl-check">
-            <input type="checkbox" id="sec-hitl-whitelist-check" ${wlChecked ? 'checked' : ''} />
+          <input type="text" id="sec-hitl-plate-input" name="sec-hitl-plate-input" value="${escapeHtml(prefillPlate)}" placeholder="Targa (es. AB123CD)" maxlength="12" aria-label="Targa" />
+          <label class="m3-hitl-check" for="sec-hitl-whitelist-check">
+            <input type="checkbox" id="sec-hitl-whitelist-check" name="sec-hitl-whitelist-check" ${wlChecked ? 'checked' : ''} />
             <span>Aggiungi alla whitelist autorizzata</span>
           </label>
-          <input type="text" id="sec-hitl-owner-input" value="${escapeHtml(prefillOwner)}" placeholder="Proprietario (se in whitelist)" maxlength="64" aria-label="Proprietario" />
-          <input type="text" id="sec-hitl-vehicle-input" value="" placeholder="Modello veicolo (opzionale)" maxlength="48" aria-label="Veicolo" />
+          <input type="text" id="sec-hitl-owner-input" name="sec-hitl-owner-input" value="${escapeHtml(prefillOwner)}" placeholder="Proprietario (se in whitelist)" maxlength="64" aria-label="Proprietario" />
+          <input type="text" id="sec-hitl-vehicle-input" name="sec-hitl-vehicle-input" value="" placeholder="Modello veicolo (opzionale)" maxlength="48" aria-label="Veicolo" />
         </div>
         <div class="m3-hitl-actions">
           <button type="button" class="m3-hitl-btn-cancel" id="btn-sec-hitl-cancel">${icon('x', { size: 12 })} <span>Annulla</span></button>
@@ -2485,12 +2558,12 @@ export class SecurityFabHub {
       this.bioHitlEditorEl.innerHTML = `
         <div class="m3-hitl-head">
           ${cropUrl ? `<img class="m3-hitl-thumb" src="${escapeHtml(cropUrl)}" crossorigin="use-credentials" alt="" />` : ''}
-          <span>Assegna persona riconosciuta (Track #${Number(ev.track_id) || 0})</span>
+          <span>Assegna persona riconosciuta</span>
         </div>
         <div class="m3-hitl-fields">
-          <input type="text" id="sec-hitl-identity-input" value="${escapeHtml(prefillId)}" placeholder="Nome persona (es. Nicola)" maxlength="64" aria-label="Nome persona" />
-          <label class="m3-hitl-check">
-            <input type="checkbox" id="sec-hitl-enroll-check" checked />
+          <input type="text" id="sec-hitl-identity-input" name="sec-hitl-identity-input" value="${escapeHtml(prefillId)}" placeholder="Nome persona (es. Nicola)" maxlength="64" aria-label="Nome persona" />
+          <label class="m3-hitl-check" for="sec-hitl-enroll-check">
+            <input type="checkbox" id="sec-hitl-enroll-check" name="sec-hitl-enroll-check" checked />
             <span>Aggiungi questo volto alla galleria per futuri riconoscimenti</span>
           </label>
         </div>
@@ -2545,7 +2618,7 @@ export class SecurityFabHub {
 
     const res = await this.spatialStreamClient.assignBiometricEvent(ev.id, payload).catch(() => null);
     if (!res || res.status !== 'ok') {
-      this._setAdminMessage('Salvataggio assegnazione HITL non riuscito', true);
+      this._setAdminMessage('Salvataggio assegnazione non riuscito', true);
       return;
     }
 
@@ -2584,7 +2657,13 @@ export class SecurityFabHub {
     }
     if (!this.adminPlatesListEl) return;
     if (!this._isAdmin() || this.bioPlatesList.length === 0) {
-      this.adminPlatesListEl.innerHTML = '<div class="m3-bio-empty">Nessuna targa autorizzata in whitelist</div>';
+      this.adminPlatesListEl.innerHTML = `
+        <div class="sh3d-empty-state m3-bio-empty-state">
+          <span class="sh3d-empty-icon">${icon('car', { size: 16 })}</span>
+          <span class="sh3d-empty-title">Nessuna targa autorizzata</span>
+          <span class="sh3d-empty-hint">Salva una targa qui sopra per riconoscerla automaticamente.</span>
+        </div>
+      `;
       return;
     }
     this.adminPlatesListEl.innerHTML = this.bioPlatesList
@@ -2615,7 +2694,13 @@ export class SecurityFabHub {
     }
     if (!this.adminIdentitiesListEl) return;
     if (!this._isAdmin() || this.bioIdentitiesList.length === 0) {
-      this.adminIdentitiesListEl.innerHTML = '<div class="m3-bio-empty">Nessun volto registrato in galleria</div>';
+      this.adminIdentitiesListEl.innerHTML = `
+        <div class="sh3d-empty-state m3-bio-empty-state">
+          <span class="sh3d-empty-icon">${icon('scan-face', { size: 16 })}</span>
+          <span class="sh3d-empty-title">Nessun volto registrato</span>
+          <span class="sh3d-empty-hint">I profili assegnati dagli eventi compariranno in questa galleria.</span>
+        </div>
+      `;
       return;
     }
     this.adminIdentitiesListEl.innerHTML = this.bioIdentitiesList
@@ -2623,10 +2708,12 @@ export class SecurityFabHub {
         const name = String(item.name || '');
         const samples = Number(item.samples_count) || 0;
         const sampleWord = samples === 1 ? '1 campione' : `${samples} campioni`;
+        const initials = getPersonInitials(name);
+        const avatarStyle = getAvatarColorStyle(name);
         return `
           <div class="m3-admin-item">
             <div class="m3-admin-item-main">
-              <span class="m3-admin-avatar-badge" aria-hidden="true">${icon('user-check', { size: 13 })}</span>
+              <span class="m3-admin-avatar-badge" style="${avatarStyle}" aria-hidden="true">${escapeHtml(initials)}</span>
               <span class="m3-admin-item-copy">
                 <strong>${escapeHtml(name)}</strong>
                 <span class="m3-admin-item-sub"> · ${sampleWord}</span>
@@ -2655,7 +2742,13 @@ export class SecurityFabHub {
         this.bioEventsListEl.innerHTML = '';
         return;
       }
-      this.bioEventsListEl.innerHTML = '<div class="m3-bio-empty">Nessun evento biometrico corrispondente</div>';
+      this.bioEventsListEl.innerHTML = `
+        <div class="sh3d-empty-state m3-bio-empty-state">
+          <span class="sh3d-empty-icon">${icon('user-check', { size: 16 })}</span>
+          <span class="sh3d-empty-title">Nessun riconoscimento</span>
+          <span class="sh3d-empty-hint">Nessun evento biometrico corrisponde ai filtri nella fascia selezionata.</span>
+        </div>
+      `;
       this.bioEventsWrapEl.hidden = false;
       return;
     }
@@ -2803,7 +2896,13 @@ export class SecurityFabHub {
 
     if (this.sceneEventsLoading && this.sceneEvents.length === 0) {
       this.sceneEventsGridEl.innerHTML = '';
-      this.sceneEventsEmptyEl.innerHTML = '<span>Caricamento episodi rilevanti...</span>';
+      this.sceneEventsEmptyEl.innerHTML = `
+        <div class="sh3d-empty-state">
+          <span class="sh3d-empty-icon">${icon('refresh-cw', { size: 18 })}</span>
+          <span class="sh3d-empty-title">Caricamento episodi...</span>
+          <span class="sh3d-empty-hint">Recupero degli eventi rilevanti dalla cronologia.</span>
+        </div>
+      `;
       this.sceneEventsEmptyEl.hidden = false;
       return;
     }
@@ -2811,8 +2910,11 @@ export class SecurityFabHub {
     if (!this.sceneEvents || this.sceneEvents.length === 0) {
       this.sceneEventsGridEl.innerHTML = '';
       this.sceneEventsEmptyEl.innerHTML = `
-        ${icon('film', { size: 22 })}
-        <span>Nessun episodio rilevante registrato per i filtri selezionati</span>
+        <div class="sh3d-empty-state">
+          <span class="sh3d-empty-icon">${icon('film', { size: 18 })}</span>
+          <span class="sh3d-empty-title">Nessun episodio rilevante</span>
+          <span class="sh3d-empty-hint">Nessun evento registrato per la data e i filtri selezionati.</span>
+        </div>
       `;
       this.sceneEventsEmptyEl.hidden = false;
       return;
@@ -2836,12 +2938,12 @@ export class SecurityFabHub {
 
         const timeLabel = formatShortDateTime(ev.started_at);
         const durSec = Math.max(0, Math.round(Number(ev.duration_s || 0)));
-        const durBadge = durSec > 0 ? `${durSec}s` : 'Istantaneo';
+        const timePillText = durSec > 0 ? `${timeLabel} · ${durSec}s` : timeLabel;
         const camShort = String(ev.best_camera_id || (ev.cameras?.[0] || '')).replace(/^Cam_/i, '');
         const zoneText = Array.isArray(ev.zones) && ev.zones.length > 0 ? ev.zones[0] : '';
         const metaLine = [camShort, zoneText].filter(Boolean).join(' · ') || 'Casa';
         const impClass = ev.importance === 'alert' ? 'is-alert' : ev.importance === 'routine' ? 'is-routine' : 'is-notable';
-        const impLabel = ev.importance === 'alert' ? 'ALLARME' : ev.importance === 'routine' ? 'FAMIGLIA' : 'RILEVATO';
+        const impLabel = ev.importance === 'alert' ? 'Allarme' : ev.importance === 'routine' ? 'Famiglia' : 'Rilevato';
 
         const subjectsHtml = (Array.isArray(ev.subjects) ? ev.subjects : [])
           .slice(0, 3)
@@ -2859,38 +2961,39 @@ export class SecurityFabHub {
           .join('');
 
         const hdBadge = ev.has_hd_clip
-          ? '<span class="m3-scene-badge is-hd">CLIP HD</span>'
+          ? '<span class="m3-scene-badge is-hd">Clip HD</span>'
           : ev.has_video_clip
-            ? '<span class="m3-scene-badge">CLIP 3D</span>'
-            : '<span class="m3-scene-badge">3D + FOTO</span>';
+            ? '<span class="m3-scene-badge">Clip 3D</span>'
+            : '<span class="m3-scene-badge">Foto 3D</span>';
 
         const delBtn = isAdmin
-          ? `<button type="button" class="m3-scene-del-btn" data-scene-delete="${escapeHtml(ev.event_id)}" title="Elimina episodio" aria-label="Elimina episodio">${icon('x', { size: 13 })}</button>`
+          ? `<button type="button" class="m3-scene-del-btn" data-scene-delete="${escapeHtml(ev.event_id)}" title="Elimina episodio" aria-label="Elimina episodio">${icon('trash-2', { size: 13 })}</button>`
           : '';
 
         return `
-          <article class="m3-scene-card ${impClass}" data-scene-replay="${escapeHtml(ev.event_id)}" role="button" tabindex="0" aria-label="Rivedi episodio: ${escapeHtml(ev.summary_it || ev.title || 'Evento')}">
-            <div class="m3-scene-cover-wrap">
-              ${coverSrc
-            ? `<img class="m3-scene-cover-img" src="${escapeHtml(coverSrc)}" crossorigin="use-credentials" alt="${escapeHtml(ev.title || 'Snapshot episodio')}" loading="lazy" />`
-            : `<div class="m3-scene-cover-fallback">${icon('cctv', { size: 24 })}<span>Snapshot 3D</span></div>`
-          }
-              <span class="m3-scene-time-pill">${escapeHtml(timeLabel)}</span>
-              <span class="m3-scene-dur-pill">${escapeHtml(durBadge)}</span>
-              <span class="m3-scene-imp-pill ${impClass}">${impLabel}</span>
-              ${delBtn}
-            </div>
-            <div class="m3-scene-card-body">
-              <div class="m3-scene-card-summary">${escapeHtml(ev.summary_it || ev.title || 'Movimento rilevato')}</div>
-              <div class="m3-scene-card-meta">
-                <span>${escapeHtml(metaLine)}</span>
-                ${hdBadge}
+          <article class="m3-scene-card ${impClass}" data-scene-replay="${escapeHtml(ev.event_id)}">
+            ${delBtn}
+            <button type="button" class="m3-scene-card-btn" data-scene-replay="${escapeHtml(ev.event_id)}" aria-label="Rivedi episodio: ${escapeHtml(ev.summary_it || ev.title || 'Evento')}">
+              <div class="m3-scene-cover-wrap">
+                ${coverSrc
+              ? `<img class="m3-scene-cover-img" src="${escapeHtml(coverSrc)}" crossorigin="use-credentials" alt="${escapeHtml(ev.title || 'Snapshot episodio')}" loading="lazy" />`
+              : `<div class="m3-scene-cover-fallback">${icon('cctv', { size: 24 })}<span>Snapshot 3D</span></div>`
+            }
+                <span class="m3-scene-time-pill tabular-nums">${escapeHtml(timePillText)}</span>
+                <span class="m3-scene-imp-pill ${impClass}">${impLabel}</span>
               </div>
-              <div class="m3-scene-card-footer">
-                <div class="m3-scene-card-subjects">${subjectsHtml}</div>
-                <span class="m3-scene-replay-cta">${icon('play', { size: 12 })} <span>Rivedi</span></span>
+              <div class="m3-scene-card-body">
+                <div class="m3-scene-card-summary">${escapeHtml(ev.summary_it || ev.title || 'Movimento rilevato')}</div>
+                <div class="m3-scene-card-meta">
+                  <span>${escapeHtml(metaLine)}</span>
+                  ${hdBadge}
+                </div>
+                <div class="m3-scene-card-footer">
+                  <div class="m3-scene-card-subjects">${subjectsHtml}</div>
+                  <span class="m3-scene-replay-cta">${icon('play', { size: 12 })} <span>Rivedi</span></span>
+                </div>
               </div>
-            </div>
+            </button>
           </article>
         `;
       })
@@ -2932,6 +3035,18 @@ export class SecurityFabHub {
       clearTimeout(this._bioPlateTimer);
       this._bioPlateTimer = null;
     }
+    for (const timer of this._sceneDeleteTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._sceneDeleteTimers.clear();
+    if (typeof this._unsubSpatialStatus === 'function') {
+      this._unsubSpatialStatus();
+      this._unsubSpatialStatus = null;
+    }
+    if (typeof this._unsubSpatialFrame === 'function') {
+      this._unsubSpatialFrame();
+      this._unsubSpatialFrame = null;
+    }
     if (typeof this._unsubBioEvents === 'function') {
       this._unsubBioEvents();
       this._unsubBioEvents = null;
@@ -2963,7 +3078,7 @@ export class SecurityFabHub {
     this.recordingManager?.detachAll?.();
   }
 
-  // --- Controllo Rapido Allarme Famiglia (`sh3d.allarme`) ---
+  // --- Controllo Rapido Allarme Famiglia ---
 
   _getAlarmVisualLevel(entity) {
     if (!entity) return 'off';
@@ -2986,15 +3101,21 @@ export class SecurityFabHub {
     const level = this._getAlarmVisualLevel(this._alarmEntity);
     const isArmed = level === 'armed';
     const isSilent = level === 'silent';
+    const labelText = level === 'armed'
+      ? 'Allarme · Attivo'
+      : level === 'silent'
+        ? 'Allarme · Silenzioso'
+        : 'Allarme · Spento';
     if (this.alarmControlBtn) {
       this.alarmControlBtn.classList.toggle('is-armed', isArmed);
       this.alarmControlBtn.classList.toggle('is-silent', isSilent);
       this.alarmControlBtn.dataset.alarmLevel = level;
       const stText = this._alarmEntity?.state ? ` (${this._alarmEntity.state})` : '';
-      this.alarmControlBtn.title = `Gestisci stato allarme sh3d.allarme${stText}`;
+      this.alarmControlBtn.title = `Gestisci stato allarme${stText}`;
+      this.alarmControlBtn.setAttribute('aria-label', labelText);
     }
     if (this.alarmBtnLabelEl) {
-      this.alarmBtnLabelEl.textContent = level === 'off' ? 'Allarme' : String(this._alarmEntity.state).toUpperCase();
+      this.alarmBtnLabelEl.textContent = labelText;
     }
     if (this._alarmModalOpen) {
       this._renderAlarmModalBody();
@@ -3028,6 +3149,14 @@ export class SecurityFabHub {
 
   closeAlarmModal() {
     if (!this.alarmModalOverlayEl) return;
+    if (typeof document !== 'undefined' && this.alarmModalOverlayEl.contains?.(document.activeElement)) {
+      if (typeof document.activeElement?.blur === 'function') {
+        document.activeElement.blur();
+      }
+      if (this.alarmControlBtn && typeof this.alarmControlBtn.focus === 'function') {
+        this.alarmControlBtn.focus();
+      }
+    }
     this._alarmModalOpen = false;
     this.container?.classList.remove('alarm-modal-open');
     this.alarmModalOverlayEl.hidden = true;
@@ -3063,8 +3192,8 @@ export class SecurityFabHub {
 
     if (this._alarmLoading && !entity) {
       this.alarmModalBodyEl.innerHTML = `
-        <div class="m3-alarm-empty">
-          <div class="m3-alarm-empty-title">Caricamento stato allarme...</div>
+        <div class="m3-alarm-empty sh3d-empty-state">
+          <div class="sh3d-empty-title m3-alarm-empty-title">Caricamento stato allarme...</div>
         </div>
       `;
       return;
@@ -3072,11 +3201,11 @@ export class SecurityFabHub {
 
     if (!entity) {
       this.alarmModalBodyEl.innerHTML = `
-        <div class="m3-alarm-empty">
-          <div class="m3-alarm-empty-icon">${icon('shield-alert', { size: 36 })}</div>
-          <div class="m3-alarm-empty-title">Entità <code>sh3d.allarme</code> non ancora creata</div>
-          <p class="m3-alarm-empty-sub">
-            L'amministratore può crearla da <strong>Impostazioni → Automazioni → Entità</strong> con ID <code>sh3d.allarme</code> (tipo Interruttore ON/OFF, Selettore modalità, ecc.).
+        <div class="m3-alarm-empty sh3d-empty-state">
+          <div class="sh3d-empty-icon m3-alarm-empty-icon">${icon('shield-alert', { size: 22 })}</div>
+          <div class="sh3d-empty-title m3-alarm-empty-title">Allarme casa non ancora configurato</div>
+          <p class="sh3d-empty-hint m3-alarm-empty-sub">
+            L'amministratore può configurarlo da <strong>Impostazioni → Automazioni → Entità</strong>.
           </p>
         </div>
       `;
@@ -3097,39 +3226,25 @@ export class SecurityFabHub {
         <div class="m3-alarm-switch-panel ${isOn ? 'is-on' : 'is-off'}">
           <div class="m3-alarm-state-hero">
             <span class="m3-alarm-state-dot ${isOn ? 'on' : 'off'}"></span>
-            <span class="m3-alarm-state-text">${isOn ? 'ALLARME ATTIVO (ON)' : 'ALLARME DISATTIVO (OFF)'}</span>
+            <span class="m3-alarm-state-text">${isOn ? 'Allarme attivo' : 'Allarme spento'}</span>
           </div>
           <button
             type="button"
-            class="m3-alarm-big-switch ${isOn ? 'checked' : ''}"
+            class="m3-alarm-toggle-row ${isOn ? 'checked' : ''}"
             id="btn-alarm-modal-switch"
             role="switch"
             aria-checked="${isOn}"
-            aria-label="Attiva o disattiva allarme"
+            aria-label="${isOn ? 'Disattiva allarme' : 'Attiva allarme'}"
             ${disabledAttr}
           >
-            <span class="m3-alarm-big-switch-thumb"></span>
+            <span class="m3-alarm-toggle-copy">
+              <span class="m3-alarm-toggle-title">${isOn ? 'Disattiva allarme' : 'Attiva allarme'}</span>
+              <span class="m3-alarm-toggle-sub">${isOn ? 'Protezione perimetrale inserita' : 'Protezione perimetrale disinserita'}</span>
+            </span>
+            <span class="m3-switch ${isOn ? 'checked' : ''}" aria-hidden="true">
+              <span class="m3-switch-thumb"></span>
+            </span>
           </button>
-          <div class="m3-alarm-action-pair">
-            <button
-              type="button"
-              class="m3-alarm-mode-btn ${isOn ? 'active-danger' : ''}"
-              id="btn-alarm-modal-on"
-              ${disabledAttr}
-            >
-              ${icon('shield-alert', { size: 18 })}
-              <span>ATTIVA</span>
-            </button>
-            <button
-              type="button"
-              class="m3-alarm-mode-btn ${!isOn ? 'active-safe' : ''}"
-              id="btn-alarm-modal-off"
-              ${disabledAttr}
-            >
-              ${icon('shield-check', { size: 18 })}
-              <span>DISATTIVA</span>
-            </button>
-          </div>
         </div>
       `;
     } else if (domain === 'select' && Array.isArray(entity.options) && entity.options.length > 0) {
@@ -3173,7 +3288,7 @@ export class SecurityFabHub {
             <span class="m3-alarm-state-text">Valore attuale: <strong>${escapeHtml(currState)}</strong></span>
           </div>
           <div class="m3-alarm-input-row">
-            <input type="number" step="any" class="m3-alarm-large-input" id="inp-alarm-modal-value" value="${escapeHtml(currState)}" ${disabledAttr} />
+            <input type="number" step="any" class="m3-alarm-large-input" id="inp-alarm-modal-value" name="inp-alarm-modal-value" value="${escapeHtml(currState)}" ${disabledAttr} />
             <button type="button" class="m3-alarm-submit-btn" id="btn-alarm-modal-apply" ${disabledAttr}>Applica</button>
           </div>
         </div>
@@ -3186,7 +3301,7 @@ export class SecurityFabHub {
             <span class="m3-alarm-state-text">Stato attuale: <strong>${escapeHtml(currState)}</strong></span>
           </div>
           <div class="m3-alarm-input-row">
-            <input type="text" class="m3-alarm-large-input" id="inp-alarm-modal-value" value="${escapeHtml(currState)}" ${disabledAttr} />
+            <input type="text" class="m3-alarm-large-input" id="inp-alarm-modal-value" name="inp-alarm-modal-value" value="${escapeHtml(currState)}" ${disabledAttr} />
             <button type="button" class="m3-alarm-submit-btn" id="btn-alarm-modal-apply" ${disabledAttr}>Imposta</button>
           </div>
         </div>
@@ -3197,12 +3312,6 @@ export class SecurityFabHub {
 
     this.alarmModalBodyEl.querySelector('#btn-alarm-modal-switch')?.addEventListener('click', () => {
       void this._applyAlarmEntityState({ operation: 'toggle' });
-    });
-    this.alarmModalBodyEl.querySelector('#btn-alarm-modal-on')?.addEventListener('click', () => {
-      void this._applyAlarmEntityState({ state: 'on', operation: 'turn_on' });
-    });
-    this.alarmModalBodyEl.querySelector('#btn-alarm-modal-off')?.addEventListener('click', () => {
-      void this._applyAlarmEntityState({ state: 'off', operation: 'turn_off' });
     });
     this.alarmModalBodyEl.querySelectorAll('[data-alarm-option]').forEach((btn) => {
       btn.addEventListener('click', () => {

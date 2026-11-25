@@ -8,6 +8,7 @@ from pathlib import Path
 from tests.e2e.helpers.artifacts import (
     parse_html_meta,
     parse_png_info,
+    read_all_css,
     run_js_scenario,
 )
 
@@ -74,7 +75,7 @@ def test_f13_t1_pwa_update_prompt_aggiorna_calls_update_sw():
 
 
 def test_f13_t1_style_css_safe_area_and_pwa_classes():
-    css = (REPO_ROOT / "src" / "style.css").read_text(encoding="utf-8")
+    css = read_all_css(REPO_ROOT)
     assert "env(safe-area-inset-" in css
     assert re.search(r"\.[a-z0-9_-]*pwa[a-z0-9_-]*", css, re.IGNORECASE), "Missing PWA toast styles in src/style.css"
     assert re.search(r"\.[a-z0-9_-]*(auth|login|oauth)[a-z0-9_-]*", css, re.IGNORECASE), "Missing OAuth login overlay styles in src/style.css"

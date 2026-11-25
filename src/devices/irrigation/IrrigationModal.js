@@ -93,8 +93,8 @@ export class IrrigationModal {
       </div>
 
       <!-- Pulsante Principale Hero: Avvia/Ferma Ciclo (input_boolean.irrigazione_attiva) -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <button id="btn-master-cycle" class="btn-irrigation-master ${isCycleActive ? 'active-stop' : 'idle-start'}">
+      <section class="modal-section">
+        <button type="button" id="btn-master-cycle" class="btn-irrigation-master ${isCycleActive ? 'active-stop' : 'idle-start'}">
           <svg class="master-btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             ${isCycleActive ? `
               <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"></rect>
@@ -107,11 +107,11 @@ export class IrrigationModal {
             <div class="master-btn-sub">${isCycleActive ? 'Ciclo in corso • Clicca per arrestare' : 'Avvia l\'irrigazione sequenziale programmata'}</div>
           </div>
         </button>
-      </div>
+      </section>
 
-      <!-- Sezione Zone del Giardino (Card-in-Card pulita ed essenziale) -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <label style="margin: 0;">Zone Giardino</label>
+      <!-- Sezione Zone del Giardino -->
+      <section class="modal-section">
+        <h4 class="modal-section-title">Zone Giardino</h4>
 
         <div class="irrigation-zones-stack">
           
@@ -129,8 +129,8 @@ export class IrrigationModal {
               </div>
 
               <!-- Switch Abilitazione Zona nel Ciclo -->
-              <label class="custom-ha-switch" title="Abilita/Disabilita Area 1 nel ciclo programmato">
-                <input type="checkbox" id="chk-area-1" ${area1Enabled ? 'checked' : ''}>
+              <label class="custom-ha-switch" for="chk-area-1" title="Abilita/Disabilita Area 1 nel ciclo programmato">
+                <input type="checkbox" class="native-raw" id="chk-area-1" name="chk-area-1" aria-label="Abilita Area 1 nel ciclo" ${area1Enabled ? 'checked' : ''}>
                 <span class="switch-track">
                   <span class="switch-thumb"></span>
                 </span>
@@ -140,16 +140,16 @@ export class IrrigationModal {
             <div class="zone-controls-row">
               <!-- Stepper Durata Minuti (multipli di 5) -->
               <div class="duration-stepper-box">
-                <button class="btn-time-step" data-step-area="1" data-delta="-5" title="-5 min">-</button>
+                <button type="button" class="btn-time-step" data-step-area="1" data-delta="-5" title="-5 min" aria-label="Riduci durata Area 1">-</button>
                 <div class="time-input-wrap">
-                  <input type="number" id="num-time-1" min="5" max="120" step="5" value="${time1}" class="time-number-input">
+                  <input type="number" id="num-time-1" name="num-time-1" min="5" max="120" step="5" value="${time1}" class="time-number-input" aria-label="Durata Area 1 in minuti">
                   <span class="time-unit">min</span>
                 </div>
-                <button class="btn-time-step" data-step-area="1" data-delta="5" title="+5 min">+</button>
+                <button type="button" class="btn-time-step" data-step-area="1" data-delta="5" title="+5 min" aria-label="Aumenta durata Area 1">+</button>
               </div>
 
               <!-- Pulsante Valvola Manuale Rapida (Icona Goccia d'Acqua) -->
-              <button class="btn-valve-trigger ${valve1 ? 'on' : ''}" data-valve-area="1" title="Attiva/Disattiva Area 1 manualmente">
+              <button type="button" class="btn-valve-trigger ${valve1 ? 'on' : ''}" data-valve-area="1" title="Attiva/Disattiva Area 1 manualmente">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="${valve1 ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
                 </svg>
@@ -157,7 +157,7 @@ export class IrrigationModal {
               </button>
 
               <!-- Inquadra Camera 3D -->
-              <button class="btn-zone-fly" data-fly="area1" title="Inquadra l'Area 1 nel modello 3D">
+              <button type="button" class="btn-zone-fly" data-fly="area1" title="Inquadra l'Area 1 nel modello 3D" aria-label="Inquadra Area 1 nel modello 3D">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
                   <circle cx="12" cy="13" r="4"></circle>
@@ -180,8 +180,8 @@ export class IrrigationModal {
               </div>
 
               <!-- Switch Abilitazione Zona nel Ciclo -->
-              <label class="custom-ha-switch" title="Abilita/Disabilita Area 2 nel ciclo programmato">
-                <input type="checkbox" id="chk-area-2" ${area2Enabled ? 'checked' : ''}>
+              <label class="custom-ha-switch" for="chk-area-2" title="Abilita/Disabilita Area 2 nel ciclo programmato">
+                <input type="checkbox" class="native-raw" id="chk-area-2" name="chk-area-2" aria-label="Abilita Area 2 nel ciclo" ${area2Enabled ? 'checked' : ''}>
                 <span class="switch-track">
                   <span class="switch-thumb"></span>
                 </span>
@@ -191,16 +191,16 @@ export class IrrigationModal {
             <div class="zone-controls-row">
               <!-- Stepper Durata Minuti (multipli di 5) -->
               <div class="duration-stepper-box">
-                <button class="btn-time-step" data-step-area="2" data-delta="-5" title="-5 min">-</button>
+                <button type="button" class="btn-time-step" data-step-area="2" data-delta="-5" title="-5 min" aria-label="Riduci durata Area 2">-</button>
                 <div class="time-input-wrap">
-                  <input type="number" id="num-time-2" min="5" max="120" step="5" value="${time2}" class="time-number-input">
+                  <input type="number" id="num-time-2" name="num-time-2" min="5" max="120" step="5" value="${time2}" class="time-number-input" aria-label="Durata Area 2 in minuti">
                   <span class="time-unit">min</span>
                 </div>
-                <button class="btn-time-step" data-step-area="2" data-delta="5" title="+5 min">+</button>
+                <button type="button" class="btn-time-step" data-step-area="2" data-delta="5" title="+5 min" aria-label="Aumenta durata Area 2">+</button>
               </div>
 
               <!-- Pulsante Valvola Manuale Rapida (Icona Goccia d'Acqua) -->
-              <button class="btn-valve-trigger ${valve2 ? 'on' : ''}" data-valve-area="2" title="Attiva/Disattiva Area 2 manualmente">
+              <button type="button" class="btn-valve-trigger ${valve2 ? 'on' : ''}" data-valve-area="2" title="Attiva/Disattiva Area 2 manualmente">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="${valve2 ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
                 </svg>
@@ -208,7 +208,7 @@ export class IrrigationModal {
               </button>
 
               <!-- Inquadra Camera 3D -->
-              <button class="btn-zone-fly" data-fly="area2" title="Inquadra l'Area 2 nel modello 3D">
+              <button type="button" class="btn-zone-fly" data-fly="area2" title="Inquadra l'Area 2 nel modello 3D" aria-label="Inquadra Area 2 nel modello 3D">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
                   <circle cx="12" cy="13" r="4"></circle>
@@ -231,8 +231,8 @@ export class IrrigationModal {
               </div>
 
               <!-- Switch Abilitazione Zona nel Ciclo -->
-              <label class="custom-ha-switch" title="Abilita/Disabilita Area 3 nel ciclo programmato">
-                <input type="checkbox" id="chk-area-3" ${area3Enabled ? 'checked' : ''}>
+              <label class="custom-ha-switch" for="chk-area-3" title="Abilita/Disabilita Area 3 nel ciclo programmato">
+                <input type="checkbox" class="native-raw" id="chk-area-3" name="chk-area-3" aria-label="Abilita Area 3 nel ciclo" ${area3Enabled ? 'checked' : ''}>
                 <span class="switch-track">
                   <span class="switch-thumb"></span>
                 </span>
@@ -242,16 +242,16 @@ export class IrrigationModal {
             <div class="zone-controls-row">
               <!-- Stepper Durata Minuti (multipli di 5) -->
               <div class="duration-stepper-box">
-                <button class="btn-time-step" data-step-area="3" data-delta="-5" title="-5 min">-</button>
+                <button type="button" class="btn-time-step" data-step-area="3" data-delta="-5" title="-5 min" aria-label="Riduci durata Area 3">-</button>
                 <div class="time-input-wrap">
-                  <input type="number" id="num-time-3" min="5" max="120" step="5" value="${time3}" class="time-number-input">
+                  <input type="number" id="num-time-3" name="num-time-3" min="5" max="120" step="5" value="${time3}" class="time-number-input" aria-label="Durata Area 3 in minuti">
                   <span class="time-unit">min</span>
                 </div>
-                <button class="btn-time-step" data-step-area="3" data-delta="5" title="+5 min">+</button>
+                <button type="button" class="btn-time-step" data-step-area="3" data-delta="5" title="+5 min" aria-label="Aumenta durata Area 3">+</button>
               </div>
 
               <!-- Pulsante Valvola Manuale Rapida (Icona Goccia d'Acqua) -->
-              <button class="btn-valve-trigger ${valve3 ? 'on' : ''}" data-valve-area="3" title="Attiva/Disattiva Area 3 manualmente">
+              <button type="button" class="btn-valve-trigger ${valve3 ? 'on' : ''}" data-valve-area="3" title="Attiva/Disattiva Area 3 manualmente">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="${valve3 ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
                 </svg>
@@ -259,7 +259,7 @@ export class IrrigationModal {
               </button>
 
               <!-- Inquadra Camera 3D -->
-              <button class="btn-zone-fly" data-fly="area3" title="Inquadra l'Area 3 nel modello 3D">
+              <button type="button" class="btn-zone-fly" data-fly="area3" title="Inquadra l'Area 3 nel modello 3D" aria-label="Inquadra Area 3 nel modello 3D">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
                   <circle cx="12" cy="13" r="4"></circle>
@@ -269,13 +269,13 @@ export class IrrigationModal {
           </div>
 
         </div>
-      </div>
+      </section>
 
       <!-- Azioni Rapide Valvole & Inquadrature 3D -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <label>Azioni Rapide & Telecamere</label>
+      <section class="modal-section">
+        <h4 class="modal-section-title">Azioni Rapide & Telecamere</h4>
         
-        <button class="btn-irrigation-stop-all" id="btn-valves-all-off" title="Chiude immediatamente tutte le valvole del giardino">
+        <button type="button" class="btn-irrigation-stop-all" id="btn-valves-all-off" title="Chiude immediatamente tutte le valvole del giardino">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"></circle>
             <line x1="15" y1="9" x2="9" y2="15"></line>
@@ -285,21 +285,21 @@ export class IrrigationModal {
         </button>
 
         <div class="irrigation-views-grid">
-          <button class="btn-irrigation-quick" data-fly="topdown">
+          <button type="button" class="btn-irrigation-quick" data-fly="topdown">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2"></rect>
               <path d="M3 9h18M9 21V9"></path>
             </svg>
             <span>Pianta Zenitale</span>
           </button>
-          <button class="btn-irrigation-quick" data-fly="garden">
+          <button type="button" class="btn-irrigation-quick" data-fly="garden">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
             </svg>
             <span>Panoramica Giardino</span>
           </button>
         </div>
-      </div>
+      </section>
     `;
 
     this.bindEvents();

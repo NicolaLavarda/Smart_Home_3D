@@ -261,7 +261,7 @@ export class ThermalModal {
           <div class="thermal-schedule-card">
             <label class="thermal-time-field" for="input-thermal-on-time">
               <span class="thermal-time-label">Orario accensione</span>
-              <input type="time" id="input-thermal-on-time" class="thermal-time-input" aria-label="Orario accensione caldaia" />
+              <input type="time" id="input-thermal-on-time" name="input-thermal-on-time" class="thermal-time-input" aria-label="Orario accensione caldaia" />
             </label>
             <div class="thermal-schedule-toggle-wrap">
               <span class="thermal-schedule-state" id="thermal-sched-on-state">Disattiva</span>
@@ -278,7 +278,7 @@ export class ThermalModal {
           <div class="thermal-schedule-card">
             <label class="thermal-time-field" for="input-thermal-off-time">
               <span class="thermal-time-label">Orario spegnimento</span>
-              <input type="time" id="input-thermal-off-time" class="thermal-time-input" aria-label="Orario spegnimento caldaia" />
+              <input type="time" id="input-thermal-off-time" name="input-thermal-off-time" class="thermal-time-input" aria-label="Orario spegnimento caldaia" />
             </label>
             <div class="thermal-schedule-toggle-wrap">
               <span class="thermal-schedule-state" id="thermal-sched-off-state">Disattiva</span>
@@ -537,6 +537,7 @@ export class ThermalModal {
         const sel = document.createElement('select');
         sel.className = 'thermal-native-select';
         sel.id = 'select-thermal-shower';
+        sel.name = 'select-thermal-shower';
         sel.setAttribute('aria-label', 'Doccia selezionata');
         options.forEach((opt) => {
           const o = document.createElement('option');

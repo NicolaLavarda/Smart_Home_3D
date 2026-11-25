@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.e2e.helpers.artifacts import run_js_scenario
+from tests.e2e.helpers.artifacts import read_all_css, run_js_scenario
 
 
 def test_f19_spatial_stream_client_scene_events_and_ha_discovery():
@@ -323,6 +323,9 @@ def test_f19_automation_studio_send_notification_editor():
 
       uiLayer.querySelector('#btn-auto-new-rule')?.click();
       await new Promise((r) => setTimeout(r, 10));
+      const nameInp = uiLayer.querySelector('#rule-inp-name');
+      nameInp.value = 'Notifica Cancelletto';
+      nameInp.dispatchEvent(new Event('input', { bubbles: true }));
       uiLayer.querySelector('#btn-rule-add-action')?.click();
       await new Promise((r) => setTimeout(r, 10));
 
@@ -361,7 +364,7 @@ def test_f19_automation_studio_send_notification_editor():
     assert act["params"]["actions"][0]["action"] == "SH3D_CALL_SERVICE:switch.turn_on:switch.cancelletto"
     assert act["params"]["actions"][0]["title"] == "Apri cancelletto"
 
-    css_src = (Path(__file__).resolve().parents[2] / "src" / "style.css").read_text(encoding="utf-8")
+    css_src = read_all_css(Path(__file__).resolve().parents[2])
     assert ".m3-security-panel.mode-events .m3-sec-cameras-viewport" in css_src
     assert ".m3-alarm-header-btn.is-silent" in css_src
     assert ".auto-notif-builder" in css_src

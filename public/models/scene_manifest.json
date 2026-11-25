@@ -7,7 +7,7 @@
     "light.1": {
       "entity_id": "light.1",
       "domain": "light",
-      "name": "Applique Salotto Est",
+      "name": "Divano Est",
       "action": "toggle",
       "ui_type": "light_emissive",
       "badge_style": "",
@@ -42,7 +42,7 @@
     "light.2": {
       "entity_id": "light.2",
       "domain": "light",
-      "name": "Applique Salotto Nord",
+      "name": "Divano Nord",
       "action": "toggle",
       "ui_type": "light_emissive",
       "badge_style": "",
@@ -77,7 +77,7 @@
     "light.luci_esterne": {
       "entity_id": "light.luci_esterne",
       "domain": "light",
-      "name": "Lampioncino Giardino 1",
+      "name": "Giardino",
       "action": "toggle",
       "ui_type": "light",
       "badge_style": "",
@@ -217,7 +217,7 @@
     "camera.carraio_scorrevole": {
       "entity_id": "camera.carraio_scorrevole",
       "domain": "camera",
-      "name": "camera.carraio_scorrevole",
+      "name": "Carraio",
       "action": "toggle",
       "ui_type": "default",
       "badge_style": "",
@@ -632,7 +632,7 @@
     "switch.switch_casa_interruttore_1": {
       "entity_id": "switch.switch_casa_interruttore_1",
       "domain": "switch",
-      "name": "Cancello Carraio",
+      "name": "Cancello",
       "action": "toggle",
       "ui_type": "sliding_gate",
       "badge_style": "",
@@ -697,7 +697,7 @@
     "light.bancone": {
       "entity_id": "light.bancone",
       "domain": "light",
-      "name": "Luce Bancone Ovest (HA: Bancone)",
+      "name": "Bancone",
       "action": "toggle",
       "ui_type": "light_emissive",
       "badge_style": "",
@@ -747,7 +747,7 @@
     "light.forno": {
       "entity_id": "light.forno",
       "domain": "light",
-      "name": "Lampadario Tavolo (HA: Forno)",
+      "name": "Sala forno",
       "action": "toggle",
       "ui_type": "light_emissive",
       "badge_style": "",
@@ -907,7 +907,7 @@
     "light.portico": {
       "entity_id": "light.portico",
       "domain": "light",
-      "name": "Luce Portico Est",
+      "name": "Portico",
       "action": "toggle",
       "ui_type": "light",
       "badge_style": "",
@@ -957,7 +957,7 @@
     "light.smart_plug_in_unit_switch_3": {
       "entity_id": "light.smart_plug_in_unit_switch_3",
       "domain": "light",
-      "name": "Faretto Soffitto Salotto 1",
+      "name": "Salotto",
       "action": "toggle",
       "ui_type": "light_emissive",
       "badge_style": "",
@@ -1727,7 +1727,7 @@
     "switch.smart_switch_caldaia": {
       "entity_id": "switch.smart_switch_caldaia",
       "domain": "switch",
-      "name": "Interruttore Caldaia",
+      "name": "Caldaia",
       "action": "toggle",
       "ui_type": "switch",
       "badge_style": "",
@@ -1762,7 +1762,7 @@
     "switch.switch_casa_interruttore_3": {
       "entity_id": "switch.switch_casa_interruttore_3",
       "domain": "switch",
-      "name": "Serranda Garage",
+      "name": "Garage",
       "action": "toggle",
       "ui_type": "switch",
       "badge_style": "",
@@ -1797,7 +1797,7 @@
     "switch.switch_casa_interruttore_2": {
       "entity_id": "switch.switch_casa_interruttore_2",
       "domain": "switch",
-      "name": "Serratura Cancelletto",
+      "name": "Cancelletto",
       "action": "toggle",
       "ui_type": "switch",
       "badge_style": "",
@@ -1832,7 +1832,7 @@
     "media_player.smart_tv_lg_oled_2": {
       "entity_id": "media_player.smart_tv_lg_oled_2",
       "domain": "media_player",
-      "name": "Smart TV Frame",
+      "name": "TV Sala",
       "action": "modal",
       "ui_type": "tv_frame",
       "badge_style": "",

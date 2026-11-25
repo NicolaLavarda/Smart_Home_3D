@@ -93,17 +93,17 @@ Script procedurale di creazione/rigenerazione della collezione `HA_SSoT_Devices`
 
 ---
 
-## 3. Script Scene Builder nella Root del Repository
+## 3. Script Scene Builder Storici (`archive/`)
 
-Nella root del repository risiedono i 5 script storici di generazione e rifinitura architettonica del modello 3D:
+In `archive/` risiedono i 5 script storici di generazione e rifinitura architettonica del modello 3D (precedentemente nella root):
 
 | Script | Righe | Scopo Principale | Note Operative |
 |---|---|---|---|
-| [build_clean_scene_v2.py](../../build_clean_scene_v2.py) | 1160 | Generatore architetturale completo da zero (terreni watertight, garage con rampa/scale interrate, edificio residenziale, recinzioni, materiali PBR procedurali, camere Revit). | **Protezione attiva:** solleva `RuntimeError("SAFETY ABORT...")` se la scena contiene già oggetti a meno di passare `--force-rebuild-all`. |
-| [add_main_furniture.py](../../add_main_furniture.py) | 806 | Aggiunge struttura principale degli arredi di cucina ad L, sala da pranzo (tavolo ruotato 90° Nord-Sud, vetrinetta, Kallax) e salotto. | Script di costruzione arredi principale. |
-| [create_salotto_refined.py](../../create_salotto_refined.py) | 1038 | Rifinitura v4 del salotto e zona pranzo (tavolo live-edge 2.65×1.05 m con 8 sedie orientate, mobile TV lowboard + TV 65", termosifone su parete sud, parete a 45° NW e stufa a legna con canna fumaria). | Opera su collezione `09_Arredi_Principali` e `08_Luci_e_Camere`. |
-| [update_kitchen_refined.py](../../update_kitchen_refined.py) | 598 | Rifinitura fotorealistica dell'angolo cucina (basi a 90° con paraste, top travertino con smusso a 45°, piano cottura ad angolo con griglie a ragno, paraschizzi ad arco, cappa angolare, mensole e accessori). | Opera su collezione `09_Arredi_Principali`. |
-| [update_stairs_and_walkway.py](../../update_stairs_and_walkway.py) | 563 | Corregge la compenetrazione delle scale sul vano scala, modella pianerottolo curvo con porta vetrata, panca in muratura e caminetto d'angolo, cancelletto pedonale e vialetto. | Allinea scale interne ed esterni pedonali. |
+| [archive/build_clean_scene_v2.py](../../archive/build_clean_scene_v2.py) | 1160 | Generatore architetturale completo da zero (terreni watertight, garage con rampa/scale interrate, edificio residenziale, recinzioni, materiali PBR procedurali, camere Revit). | **Protezione attiva:** solleva `RuntimeError("SAFETY ABORT...")` se la scena contiene già oggetti a meno di passare `--force-rebuild-all`. |
+| [archive/add_main_furniture.py](../../archive/add_main_furniture.py) | 806 | Aggiunge struttura principale degli arredi di cucina ad L, sala da pranzo (tavolo ruotato 90° Nord-Sud, vetrinetta, Kallax) e salotto. | Script di costruzione arredi principale. |
+| [archive/create_salotto_refined.py](../../archive/create_salotto_refined.py) | 1038 | Rifinitura v4 del salotto e zona pranzo (tavolo live-edge 2.65×1.05 m con 8 sedie orientate, mobile TV lowboard + TV 65", termosifone su parete sud, parete a 45° NW e stufa a legna con canna fumaria). | Opera su collezione `09_Arredi_Principali` e `08_Luci_e_Camere`. |
+| [archive/update_kitchen_refined.py](../../archive/update_kitchen_refined.py) | 598 | Rifinitura fotorealistica dell'angolo cucina (basi a 90° con paraste, top travertino con smusso a 45°, piano cottura ad angolo con griglie a ragno, paraschizzi ad arco, cappa angolare, mensole e accessori). | Opera su collezione `09_Arredi_Principali`. |
+| [archive/update_stairs_and_walkway.py](../../archive/update_stairs_and_walkway.py) | 563 | Corregge la compenetrazione delle scale sul vano scala, modella pianerottolo curvo con porta vetrata, panca in muratura e caminetto d'angolo, cancelletto pedonale e vialetto. | Allinea scale interne ed esterni pedonali. |
 
 > [!WARNING]
 > Non eseguire `build_clean_scene_v2.py --force-rebuild-all` su `Smart_Home_3D.blend` a meno di voler azzerare tutte le rifiniture successive; per aggiornamenti incrementali di dispositivi e proprietà usa `blender/scripts/setup_ha_properties.py` o gli script mirati in `tools/`.

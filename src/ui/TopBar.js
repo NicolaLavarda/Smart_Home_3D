@@ -46,24 +46,24 @@ export class TopBar {
       </div>
 
       <div class="top-bar-controls glass">
-        <button class="btn-icon-text" id="btn-toggle-night" title="Alterna modalità Giorno e Notte" aria-label="Alterna modalità Giorno e Notte">
+        <button class="btn-icon-text" id="btn-toggle-night" title="Alterna modalità Giorno e Notte" aria-label="Alterna modalità Giorno e Notte" aria-pressed="false">
           ${icon('moon', { size: 15 })} <span class="top-btn-label" id="night-text">Notte</span>
         </button>
 
-        <button class="btn-icon-text" id="btn-toggle-frustums" data-coverage-mode="off" title="Copertura telecamere: disattivata (clicca per 3D)" aria-label="Copertura telecamere: disattivata">
+        <button class="btn-icon-text" id="btn-toggle-frustums" data-coverage-mode="off" title="Copertura telecamere: disattivata (clicca per 3D)" aria-label="Copertura telecamere: disattivata" aria-pressed="false">
           ${icon('cctv', { size: 15 })} <span class="top-btn-label" id="frustums-text">Copertura Camere</span>
         </button>
 
-        <button class="btn-icon-text" id="btn-toggle-badges" title="Mostra/Nascondi badge dei dispositivi" aria-label="Mostra o nascondi badge dei dispositivi">
+        <button class="btn-icon-text" id="btn-toggle-badges" title="Mostra/Nascondi badge dei dispositivi" aria-label="Mostra o nascondi badge dei dispositivi" aria-pressed="false">
           ${icon('tag', { size: 15 })} <span class="top-btn-label">Badge Dispositivi</span>
         </button>
 
         <div class="settings-dropdown-wrap" id="settings-dropdown-wrap">
-          <button class="btn-icon-text btn-settings-gear" id="btn-settings-menu" title="Impostazioni" aria-label="Impostazioni" aria-haspopup="true" aria-expanded="false">
+          <button class="btn-icon-text btn-settings-gear" id="btn-settings-menu" title="Impostazioni" aria-label="Impostazioni" aria-haspopup="menu" aria-expanded="false">
             ${icon('settings', { size: 16 })}
             ${icon('chevron-down', { size: 13, className: 'settings-chevron' })}
           </button>
-          <div class="top-settings-dropdown glass" id="top-settings-dropdown">
+          <div class="top-settings-dropdown glass" id="top-settings-dropdown" role="menu" aria-label="Menu impostazioni">
             <div class="settings-user-card" id="top-user-profile">
               <div class="settings-user-meta">
                 <span class="settings-user-name" id="top-user-name">Non connesso</span>
@@ -71,20 +71,23 @@ export class TopBar {
               </div>
             </div>
             <div class="settings-dropdown-divider" id="top-settings-divider"></div>
-            <button class="settings-dropdown-item" id="btn-open-automations" title="Apri Automazioni Spaziali 3D, Aree e Perimetri" hidden disabled style="display: none;">
+            <button class="settings-dropdown-item" id="btn-open-automations" role="menuitem" title="Apri Automazioni Spaziali 3D, Aree e Perimetri" hidden disabled style="display: none;">
               ${icon('zap', { size: 15 })}
               <span>Automazioni</span>
             </button>
-            <button class="settings-dropdown-item" id="btn-open-cam-calib" title="Apri calibrazione ottica POV telecamere" hidden disabled style="display: none;">
+            <button class="settings-dropdown-item" id="btn-open-cam-calib" role="menuitem" title="Apri calibrazione ottica POV telecamere" hidden disabled style="display: none;">
               ${icon('sliders-horizontal', { size: 15 })}
               <span>Calibra Cam</span>
             </button>
-            <button class="settings-dropdown-item auth-login" id="btn-ha-auth-action" title="Accedi con Home Assistant">
+            <button class="settings-dropdown-item auth-login" id="btn-ha-auth-action" role="menuitem" title="Accedi con Home Assistant">
               ${icon('log-in', { size: 15 })}
               <span>Accedi con Home Assistant</span>
             </button>
-            <div class="settings-dropdown-divider"></div>
-            <div class="settings-perf-stats" id="top-perf-stats" style="padding: 4px 10px 6px; font-size: 10px; line-height: 1.35; color: #94a3b8; word-break: break-word;">v3-hd</div>
+            <div class="settings-dropdown-divider" id="top-perf-divider" hidden style="display: none;"></div>
+            <details class="settings-perf-details" id="top-perf-details" hidden style="display: none;">
+              <summary class="settings-perf-summary">Diagnostica grafica</summary>
+              <div class="settings-perf-stats" id="top-perf-stats">v3-hd</div>
+            </details>
           </div>
         </div>
       </div>
@@ -103,8 +106,12 @@ export class TopBar {
     this.calibBtn = this.container.querySelector('#btn-open-cam-calib');
     this.authActionBtn = this.container.querySelector('#btn-ha-auth-action');
     this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
+    this.perfDividerEl = this.container.querySelector('#top-perf-divider');
+    this.perfDetailsEl = this.container.querySelector('#top-perf-details');
     this.perfStatsEl = this.container.querySelector('#top-perf-stats');
 
+    this.nightBtn?.setAttribute('aria-pressed', String(Boolean(this.sceneManager?.isNightMode)));
+    this.badgesBtn?.setAttribute('aria-pressed', String(Boolean(this.interactionManager?.badgesVisible)));
     this.updateFrustumsButtonUI(this.cameraProjector?.getFrustumMode?.() || 'off');
     this.updateAuthUI();
 
@@ -177,6 +184,18 @@ export class TopBar {
       }
     }
 
+    if (this.perfDetailsEl) {
+      this.perfDetailsEl.hidden = !isAdmin;
+      this.perfDetailsEl.style.display = isAdmin ? '' : 'none';
+      if (!isAdmin) {
+        this.perfDetailsEl.open = false;
+      }
+    }
+    if (this.perfDividerEl) {
+      this.perfDividerEl.hidden = !isAdmin;
+      this.perfDividerEl.style.display = isAdmin ? '' : 'none';
+    }
+
     if (!isAdmin && !isMock && this.automationStudio?.isOpen) {
       this.automationStudio.close();
     }
@@ -205,6 +224,7 @@ export class TopBar {
     this.frustumsBtn.dataset.coverageMode = normalized;
     this.frustumsBtn.classList.toggle('active', normalized !== 'off');
     this.frustumsBtn.classList.toggle('active-2d', normalized === '2d');
+    this.frustumsBtn.setAttribute('aria-pressed', String(normalized !== 'off'));
 
     if (normalized === '3d') {
       if (labelEl) labelEl.textContent = 'Copertura 3D';
@@ -223,6 +243,7 @@ export class TopBar {
 
   closeSettingsDropdown() {
     this.settingsDropdown?.classList.remove('open');
+    this.container?.classList.remove('dropdown-open');
     this.settingsBtn?.classList.remove('active');
     this.settingsBtn?.setAttribute('aria-expanded', 'false');
   }
@@ -233,6 +254,7 @@ export class TopBar {
       const isNight = !this.sceneManager.isNightMode;
       this.sceneManager.setNightMode(isNight);
       this.nightBtn.classList.toggle('active', isNight);
+      this.nightBtn.setAttribute('aria-pressed', String(isNight));
       this.nightBtn.innerHTML = isNight
         ? `${icon('sun', { size: 15 })} <span class="top-btn-label" id="night-text">Giorno</span>`
         : `${icon('moon', { size: 15 })} <span class="top-btn-label" id="night-text">Notte</span>`;
@@ -252,6 +274,7 @@ export class TopBar {
       e.stopPropagation();
       const willOpen = !this.settingsDropdown.classList.contains('open');
       this.settingsDropdown.classList.toggle('open', willOpen);
+      this.container?.classList.toggle('dropdown-open', willOpen);
       this.settingsBtn.classList.toggle('active', willOpen);
       this.settingsBtn.setAttribute('aria-expanded', String(willOpen));
       if (willOpen && this.automationsBtn) {
@@ -350,6 +373,7 @@ export class TopBar {
     this.badgesBtn.addEventListener('click', () => {
       const isVisible = this.interactionManager.toggleBadges();
       this.badgesBtn.classList.toggle('active', isVisible);
+      this.badgesBtn.setAttribute('aria-pressed', String(Boolean(isVisible)));
     });
   }
 

@@ -40,57 +40,57 @@ ENTITY_MAPPINGS = {
         "ha_entity": "light.forno",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Lampadario Tavolo (HA: Forno)",
+        "ha_name": "Sala forno",
     },
     "Lampadario_Coppa_2": {
         "ha_entity": "light.forno",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Lampadario Tavolo (HA: Forno)",
+        "ha_name": "Sala forno",
     },
     "Lampadario_Coppa_3": {
         "ha_entity": "light.forno",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Lampadario Tavolo (HA: Forno)",
+        "ha_name": "Sala forno",
     },
     "Lampadario_Coppa_4": {
         "ha_entity": "light.forno",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Lampadario Tavolo (HA: Forno)",
+        "ha_name": "Sala forno",
     },
     "Lampadario_Pranzo_Asta": {
         "ha_entity": "light.forno",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Lampadario Tavolo (Asta)",
+        "ha_name": "Sala forno",
     },
     # 2. Luci sopra al bancone -> entità "light.bancone"
     "Isola_Lampada_Cono_1": {
         "ha_entity": "light.bancone",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Luce Bancone Ovest (HA: Bancone)",
+        "ha_name": "Bancone",
     },
     "Isola_Lampada_Cono_2": {
         "ha_entity": "light.bancone",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Luce Bancone Est (HA: Bancone)",
+        "ha_name": "Bancone",
     },
     # 3. Cancello -> switch reale su HA: switch.switch_casa_interruttore_1
     "Gate_Leaf_L": {
         "ha_entity": "switch.switch_casa_interruttore_1",
         "ha_action": "toggle",
         "ha_ui_type": "sliding_gate",
-        "ha_name": "Cancello Carraio",
+        "ha_name": "Cancello",
     },
     "Gate_Leaf_R": {
         "ha_entity": "switch.switch_casa_interruttore_1",
         "ha_action": "toggle",
         "ha_ui_type": "sliding_gate",
-        "ha_name": "Cancello Carraio",
+        "ha_name": "Cancello",
     },
     # 4. Lavastoviglie -> sensor reale su HA: sensor.lavastoviglie_stato_di_funzionamento
     "Lavastoviglie": {
@@ -116,34 +116,34 @@ ENTITY_MAPPINGS = {
         "ha_entity": "media_player.smart_tv_lg_oled_2",
         "ha_action": "modal",
         "ha_ui_type": "tv_display",
-        "ha_name": "Smart TV LG OLED",
+        "ha_name": "Smart TV",
     },
     "TV_Salotto_Bezel": {
         "ha_entity": "media_player.smart_tv_lg_oled_2",
         "ha_action": "modal",
         "ha_ui_type": "tv_frame",
-        "ha_name": "Smart TV Frame",
+        "ha_name": "Smart TV",
     },
     # 6. Salotto - Applique Parete Est -> light.1
     "Applique_Salotto_Est": {
         "ha_entity": "light.1",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Applique Salotto Est",
+        "ha_name": "Divano Est",
     },
     # 7. Salotto - Applique Parete Nord -> light.2
     "Applique_Salotto_Nord": {
         "ha_entity": "light.2",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Applique Salotto Nord",
+        "ha_name": "Divano Nord",
     },
     # 8. Salotto - Faretti a Soffitto 2x3 -> light.smart_plug_in_unit_switch_3
     "Salotto_Faretto_1": {
         "ha_entity": "light.smart_plug_in_unit_switch_3",
         "ha_action": "toggle",
         "ha_ui_type": "light_emissive",
-        "ha_name": "Faretto Soffitto Salotto 1",
+        "ha_name": "Salotto",
     },
     "Salotto_Faretto_2": {
         "ha_entity": "light.smart_plug_in_unit_switch_3",
@@ -180,7 +180,7 @@ ENTITY_MAPPINGS = {
         "ha_entity": "light.luci_esterne",
         "ha_action": "toggle",
         "ha_ui_type": "light",
-        "ha_name": "Lampioncino Giardino 1",
+        "ha_name": "Giardino",
     },
     "Bollard_Garden_2": {
         "ha_entity": "light.luci_esterne",
@@ -234,26 +234,26 @@ ENTITY_MAPPINGS = {
         "ha_entity": "light.portico",
         "ha_action": "toggle",
         "ha_ui_type": "light",
-        "ha_name": "Luce Portico Est",
+        "ha_name": "Portico",
     },
     # 10. Interruttori Cancelli e Garage
     "Switch_Gate_Carraio": {
         "ha_entity": "switch.switch_casa_interruttore_1",
         "ha_action": "toggle",
         "ha_ui_type": "switch",
-        "ha_name": "Cancello Carraio",
+        "ha_name": "Cancello",
     },
     "Switch_Gate_Ped": {
         "ha_entity": "switch.switch_casa_interruttore_2",
         "ha_action": "toggle",
         "ha_ui_type": "switch",
-        "ha_name": "Serratura Cancelletto",
+        "ha_name": "Cancelletto",
     },
     "Switch_Garage_Door": {
         "ha_entity": "switch.switch_casa_interruttore_3",
         "ha_action": "toggle",
         "ha_ui_type": "switch",
-        "ha_name": "Serranda Garage",
+        "ha_name": "Garage",
     },
     # 11. Centrale Termica Lavanderia
     "Sensor_Puffer_High": {
@@ -278,7 +278,7 @@ ENTITY_MAPPINGS = {
         "ha_entity": "switch.smart_switch_caldaia",
         "ha_action": "toggle",
         "ha_ui_type": "switch",
-        "ha_name": "Interruttore Caldaia",
+        "ha_name": "Caldaia",
     },
     # 12. Robot Aspirapolvere Ecovacs Deebot (Sala da pranzo muro Est vicino al camino)
     "Ecovacs_Deebot_Body": {

@@ -204,3 +204,17 @@ def inspect_vite_config(mode: str = "production", timeout_s: int = 20) -> dict[s
         raise RuntimeError(
             f"vite_config_inspect.mjs produced invalid JSON: {exc}\nSTDOUT:\n{stdout}"
         ) from exc
+
+
+def read_all_css(repo_root: Path | str | None = None) -> str:
+    """Read src/style.css and any modular CSS sheets under src/styles/."""
+    root = Path(repo_root) if repo_root else REPO_ROOT
+    parts: list[str] = []
+    entry = root / "src" / "style.css"
+    if entry.is_file():
+        parts.append(entry.read_text(encoding="utf-8"))
+    styles_dir = root / "src" / "styles"
+    if styles_dir.is_dir():
+        for css_file in sorted(styles_dir.rglob("*.css")):
+            parts.append(css_file.read_text(encoding="utf-8"))
+    return "\n".join(parts)

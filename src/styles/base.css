@@ -1,0 +1,144 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.26) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.26);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.44);
+}
+
+#canvas-container,
+#canvas-container canvas,
+button,
+[role="button"],
+[role="tab"],
+input[type="range"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body,
+html {
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Global Accessible Focus Ring */
+:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+button,
+[role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Custom Dark Checkbox (eliminates glaring white browser checkboxes) */
+input[type="checkbox"]:not(.native-raw) {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--md-outline);
+  background: rgba(11, 15, 23, 0.72);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+input[type="checkbox"]:not(.native-raw):checked {
+  background: var(--md-primary-solid);
+  border-color: var(--md-primary);
+}
+
+input[type="checkbox"]:not(.native-raw):checked::after {
+  content: '';
+  width: 9px;
+  height: 5px;
+  border-left: 2px solid #041d2e;
+  border-bottom: 2px solid #041d2e;
+  transform: rotate(-45deg) translate(0.5px, -1px);
+}
+
+input[type="checkbox"]:not(.native-raw):disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Native date/time inputs inside custom icon pills: prevent duplicate calendar/clock icons */
+.m3-input-pill {
+  position: relative;
+}
+
+.m3-input-pill input[type="date"]::-webkit-calendar-picker-indicator,
+.m3-input-pill input[type="time"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+/* Tabular figures helper */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

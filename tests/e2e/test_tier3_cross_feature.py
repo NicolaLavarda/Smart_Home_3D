@@ -9,6 +9,7 @@ import yaml
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tests.e2e.helpers.artifacts import read_all_css
 from tests.e2e.helpers.ps_bat_harness import (
     build_isolated_workspace,
     run_bat_dry_run,
@@ -717,7 +718,7 @@ def test_t3_19_f13_f11_f14_pwa_prompt_oauth_overlay_and_mobile_css_wiring():
     index_html = (REPO_ROOT / "index.html").read_text(encoding="utf-8")
     assert "viewport-fit=cover" in index_html
 
-    style_css = (REPO_ROOT / "src" / "style.css").read_text(encoding="utf-8")
+    style_css = read_all_css(REPO_ROOT)
     assert "safe-area-inset" in style_css
 
     pwa_prompt_path = REPO_ROOT / "src" / "ui" / "PwaUpdatePrompt.js"

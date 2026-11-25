@@ -30,54 +30,52 @@ export class TVRemote {
         </div>
 
         <div class="remote-row remote-header-buttons">
-          <button class="remote-btn btn-power" id="r-btn-power" title="Accendi (WoL) / Spegni TV">
+          <button type="button" class="remote-btn btn-power" id="r-btn-power" title="Accendi / Spegni TV" aria-label="Accendi o spegni TV">
             ${icon('power', { size: 17 })}
           </button>
-          <button class="remote-btn btn-util" id="r-btn-screen-toggle" title="Spegni/Accendi solo Schermo (Eco)">
-            <span style="font-size: 10px; font-weight: 700; color: #10b981;">ECO</span>
+          <button type="button" class="remote-btn btn-util" id="r-btn-screen-toggle" title="Spegni/Accendi solo Schermo (Eco)">
+            <span class="remote-eco-label">ECO</span>
           </button>
-          <button class="remote-btn btn-util" id="r-btn-input" title="Cambia Ingresso Sorgente">
+          <button type="button" class="remote-btn btn-util" id="r-btn-input" title="Cambia Ingresso Sorgente">
             INPUT
           </button>
         </div>
 
         <!-- Tastierino Numerico -->
         <div class="remote-numpad">
-          <button class="remote-btn btn-num" data-num="1">1</button>
-          <button class="remote-btn btn-num" data-num="2">2</button>
-          <button class="remote-btn btn-num" data-num="3">3</button>
-          <button class="remote-btn btn-num" data-num="4">4</button>
-          <button class="remote-btn btn-num" data-num="5">5</button>
-          <button class="remote-btn btn-num" data-num="6">6</button>
-          <button class="remote-btn btn-num" data-num="7">7</button>
-          <button class="remote-btn btn-num" data-num="8">8</button>
-          <button class="remote-btn btn-num" data-num="9">9</button>
-          <button class="remote-btn btn-util btn-small" id="r-btn-dash">LIST</button>
-          <button class="remote-btn btn-num" data-num="0">0</button>
-          <button class="remote-btn btn-util btn-small" id="r-btn-del">DEL</button>
+          <button type="button" class="remote-btn btn-num" data-num="1">1</button>
+          <button type="button" class="remote-btn btn-num" data-num="2">2</button>
+          <button type="button" class="remote-btn btn-num" data-num="3">3</button>
+          <button type="button" class="remote-btn btn-num" data-num="4">4</button>
+          <button type="button" class="remote-btn btn-num" data-num="5">5</button>
+          <button type="button" class="remote-btn btn-num" data-num="6">6</button>
+          <button type="button" class="remote-btn btn-num" data-num="7">7</button>
+          <button type="button" class="remote-btn btn-num" data-num="8">8</button>
+          <button type="button" class="remote-btn btn-num" data-num="9">9</button>
+          <button type="button" class="remote-btn btn-num btn-num--zero" data-num="0">0</button>
+          <button type="button" class="remote-btn btn-util btn-small" id="r-btn-del" title="Cancella">DEL</button>
         </div>
 
         <!-- Volume e Canali Rockers -->
         <div class="remote-rockers-grid">
           <div class="rocker-column">
-            <button class="remote-btn btn-rocker" id="r-btn-vol-up" title="Volume Su">VOL +</button>
-            <button class="remote-btn btn-rocker-sub" id="r-btn-mute" title="Mute Audio">MUTE</button>
-            <button class="remote-btn btn-rocker" id="r-btn-vol-down" title="Volume Giù">VOL -</button>
+            <button type="button" class="remote-btn btn-rocker" id="r-btn-vol-up" title="Volume Su">VOL +</button>
+            <button type="button" class="remote-btn btn-rocker-sub" id="r-btn-mute" title="Mute Audio">MUTE</button>
+            <button type="button" class="remote-btn btn-rocker" id="r-btn-vol-down" title="Volume Giù">VOL -</button>
           </div>
 
           <div class="rocker-center">
-            <button class="remote-btn btn-icon-round" id="r-btn-home" title="Home Dashboard">
+            <button type="button" class="remote-btn btn-icon-round" id="r-btn-home" title="Home Dashboard" aria-label="Home Dashboard">
               ${icon('home', { size: 16, strokeWidth: 2.2 })}
             </button>
-            <button class="remote-btn btn-icon-round" id="r-btn-back" title="Indietro / Esci">
+            <button type="button" class="remote-btn btn-icon-round" id="r-btn-back" title="Indietro / Esci" aria-label="Indietro">
               ${icon('chevron-left', { size: 16, strokeWidth: 2.2 })}
             </button>
           </div>
 
-          <div class="rocker-column">
-            <button class="remote-btn btn-rocker" id="r-btn-ch-up" title="Canale Su"><span>CH</span> ${icon('chevron-up', { size: 13 })}</button>
-            <button class="remote-btn btn-rocker-sub" id="r-btn-guide" title="Guida Canali">GUIDE</button>
-            <button class="remote-btn btn-rocker" id="r-btn-ch-down" title="Canale Giù"><span>CH</span> ${icon('chevron-down', { size: 13 })}</button>
+          <div class="rocker-column rocker-column--channels">
+            <button type="button" class="remote-btn btn-rocker" id="r-btn-ch-up" title="Canale Su"><span>CH</span> ${icon('chevron-up', { size: 13 })}</button>
+            <button type="button" class="remote-btn btn-rocker" id="r-btn-ch-down" title="Canale Giù"><span>CH</span> ${icon('chevron-down', { size: 13 })}</button>
           </div>
         </div>
 
@@ -119,18 +117,18 @@ export class TVRemote {
           </button>
         </div>
 
-        <!-- Sezione Funzioni Avanzate webOS (Toast e Browser) -->
+        <!-- Sezione Messaggio su schermo TV e Browser -->
         <div class="remote-advanced-section">
-          <div class="advanced-title">Funzioni webOS Avanzate</div>
+          <div class="advanced-title">Messaggio su schermo TV</div>
           
           <div class="advanced-input-group">
-            <input type="text" id="r-input-toast" placeholder="Messaggio notifica su TV..." class="remote-text-input" />
-            <button class="btn-action-sm" id="r-btn-send-toast">Invia Toast</button>
+            <input type="text" id="r-input-toast" name="r-input-toast" aria-label="Messaggio da mostrare su schermo TV" placeholder="Scrivi messaggio per la TV..." class="remote-text-input" />
+            <button type="button" class="btn-action-sm" id="r-btn-send-toast">Invia</button>
           </div>
 
           <div class="advanced-input-group">
-            <input type="text" id="r-input-url" value="https://www.google.com" placeholder="https://..." class="remote-text-input" />
-            <button class="btn-action-sm" id="r-btn-open-url">Apri Web</button>
+            <input type="text" id="r-input-url" name="r-input-url" aria-label="Indirizzo web da aprire sulla TV" value="https://www.google.com" placeholder="https://..." class="remote-text-input" />
+            <button type="button" class="btn-action-sm" id="r-btn-open-url">Apri Web</button>
           </div>
         </div>
       </div>

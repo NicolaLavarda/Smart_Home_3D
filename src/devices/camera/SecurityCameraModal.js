@@ -271,22 +271,27 @@ export class SecurityCameraModal {
       haClient,
     });
 
+    const safeMainStream = escapeHtml(mainStream);
+    const safeSubStream = escapeHtml(subStream);
+    const safeMainLabel = escapeHtml(mainLabel);
+    const safeSubLabel = escapeHtml(subLabel);
+
     container.innerHTML = `
       <div class="camera-preview-stream${isPano180 ? ' is-panoramic' : ''}" id="cam-preview-wrapper">
-        <video id="cam-modal-video" autoplay muted playsinline style="width:100%;height:100%;object-fit:${isPano180 ? 'contain' : 'cover'};display:block;"></video>
+        <video id="cam-modal-video" class="cam-modal-video${isPano180 ? ' is-panoramic' : ''}" autoplay muted playsinline></video>
         <span class="cam-latency-badge" id="cam-latency-badge">-- ms</span>
       </div>
 
-      <div class="control-row" style="gap: 8px;">
-        <div style="display:flex;gap:6px;flex:1;">
-          <button class="btn-icon-text stream-quality-btn active" data-stream="${mainStream}" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
-            ${mainLabel}
+      <div class="control-row cam-stream-toolbar">
+        <div class="cam-stream-quality-group">
+          <button type="button" class="btn-icon-text stream-quality-btn active" data-stream="${safeMainStream}">
+            ${safeMainLabel}
           </button>
-          <button class="btn-icon-text stream-quality-btn" data-stream="${subStream}" style="flex:1;justify-content:center;padding:6px 8px;font-size:11px;">
-            ${subLabel}
+          <button type="button" class="btn-icon-text stream-quality-btn" data-stream="${safeSubStream}">
+            ${safeSubLabel}
           </button>
         </div>
-        <button class="btn-icon-text" id="btn-cam-reconnect" title="Riconnetti stream" style="padding:6px 10px;font-size:11px;">
+        <button type="button" class="btn-icon-text cam-reconnect-btn" id="btn-cam-reconnect" title="Riconnetti stream">
           ${icon('refresh-cw', { size: 13 })} <span>Riconnetti</span>
         </button>
       </div>
@@ -909,14 +914,16 @@ export class SecurityCameraModal {
     containerEl.innerHTML = options
       .map((opt) => {
         const isActive = !isMissing && opt === activeOption;
+        const safeOpt = escapeHtml(opt);
+        const safeLabel = escapeHtml(formatOptionLabel(opt));
         return `
           <button
             type="button"
             class="cam-ctrl-chip${isActive ? ' active' : ''}"
-            data-option="${opt}"
+            data-option="${safeOpt}"
             ${isMissing ? 'disabled' : ''}
             aria-pressed="${isActive ? 'true' : 'false'}"
-          >${formatOptionLabel(opt)}</button>
+          >${safeLabel}</button>
         `;
       })
       .join('');

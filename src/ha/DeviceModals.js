@@ -1,6 +1,15 @@
 import { deviceRegistry } from '../devices/DeviceRegistry.js';
 import { icon } from '../ui/icons.js';
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export class DeviceModals {
   constructor(modalContainer, haClient, cameraController, assetLoader) {
     this.container = modalContainer;
@@ -21,15 +30,17 @@ export class DeviceModals {
   }
 
   initUI() {
+    this.container.setAttribute('role', 'dialog');
+    this.container.setAttribute('aria-labelledby', 'modal-title');
     this.container.innerHTML = `
-      <div class="modal-header" id="modal-header-toggle" title="Clicca per comprimere / espandere">
+      <div class="modal-header" id="modal-header-toggle" role="button" tabindex="0" aria-expanded="true" title="Clicca per comprimere / espandere">
         <div class="modal-title-box">
           <h3 id="modal-title">Dispositivo</h3>
           <span id="modal-subtitle"></span>
         </div>
         <div class="modal-header-actions">
           <span class="modal-collapse-chevron" id="modal-collapse-icon">${icon('chevron-up', { size: 15 })}</span>
-          <button class="btn-close" id="modal-close-btn" title="Chiudi">${icon('x', { size: 15 })}</button>
+          <button type="button" class="btn-close" id="modal-close-btn" title="Chiudi" aria-label="Chiudi pannello">${icon('x', { size: 15 })}</button>
         </div>
       </div>
       <div class="modal-controls" id="modal-content">
@@ -48,6 +59,14 @@ export class DeviceModals {
       this.setCollapsed(!this.container.classList.contains('collapsed'));
     });
 
+    this.modalHeader.addEventListener('keydown', (e) => {
+      if (e.target?.closest?.('#modal-close-btn')) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.setCollapsed(!this.container.classList.contains('collapsed'));
+      }
+    });
+
     this.closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.close();
@@ -60,6 +79,7 @@ export class DeviceModals {
   setCollapsed(collapsed) {
     this.isCollapsed = Boolean(collapsed);
     this.container.classList.toggle('collapsed', this.isCollapsed);
+    this.modalHeader?.setAttribute('aria-expanded', String(!this.isCollapsed));
     if (this.collapseIcon) {
       this.collapseIcon.innerHTML = icon(this.isCollapsed ? 'chevron-down' : 'chevron-up', { size: 15 });
     }
@@ -162,6 +182,9 @@ export class DeviceModals {
 
   close() {
     const wasOpen = this.container.classList.contains('open');
+    if (typeof document !== 'undefined' && this.container?.contains?.(document.activeElement)) {
+      document.activeElement?.blur?.();
+    }
     this.container.classList.remove('open');
     this.setCollapsed(false);
     if (this.currentEntityId) {
@@ -190,37 +213,38 @@ export class DeviceModals {
   renderTVModal(entity) {
     const isPlaying = entity.state === 'playing';
     const volume = Math.round((entity.attributes.volume_level ?? 0.5) * 100);
-    const title = entity.attributes.media_title || 'Nessun media in esecuzione';
-    const app = entity.attributes.app_name || 'TV Salotto';
+    const title = escapeHtml(entity.attributes.media_title || 'Nessun media in esecuzione');
+    const app = escapeHtml(entity.attributes.app_name || 'TV Salotto');
+    const stateLabel = escapeHtml(String(entity.state || '').toUpperCase());
 
     this.modalContent.innerHTML = `
       <div class="control-row">
-        <div>
-          <div style="font-weight: 600; font-size: 14px;">${title}</div>
-          <div style="font-size: 12px; color: var(--text-muted);">${app}</div>
+        <div class="modal-media-info">
+          <div class="modal-media-title">${title}</div>
+          <div class="modal-media-sub">${app}</div>
         </div>
         <span class="ha-status-badge">
           <span class="ha-dot ${isPlaying ? 'online' : 'offline'}"></span>
-          ${entity.state.toUpperCase()}
+          ${stateLabel}
         </span>
       </div>
 
       <div class="control-row">
         <label>Controllo Riproduzione</label>
-        <button class="btn-action-primary" id="tv-play-btn">
+        <button type="button" class="btn-action-primary" id="tv-play-btn">
           ${isPlaying ? `${icon('pause', { size: 14 })} <span>Sospendi</span>` : `${icon('play', { size: 14 })} <span>Riproduci</span>`}
         </button>
       </div>
 
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <div style="display: flex; justify-content: space-between;">
-          <label>Volume</label>
-          <span id="tv-vol-label" style="font-size: 12px; font-family: var(--font-mono);">${volume}%</span>
+      <div class="control-row control-row--stack">
+        <div class="control-row-head">
+          <label for="tv-volume-slider">Volume</label>
+          <span id="tv-vol-label" class="control-row-value">${volume}%</span>
         </div>
-        <input type="range" min="0" max="100" value="${volume}" id="tv-volume-slider" class="timeline-slider" />
+        <input type="range" min="0" max="100" value="${volume}" id="tv-volume-slider" name="tv-volume-slider" class="timeline-slider" />
       </div>
 
-      <button class="btn-icon-text" id="tv-power-btn" style="width: 100%; justify-content: center;">
+      <button type="button" class="btn-icon-text btn-full-width" id="tv-power-btn">
         ${icon('power', { size: 15 })} <span>Spegni / Accendi TV</span>
       </button>
     `;
@@ -249,32 +273,31 @@ export class DeviceModals {
   renderCameraModal(entity) {
     const camName = this.findMatchingBlenderCameraName(entity.entity_id);
     const camNode = camName ? this.assetLoader.cameras.get(camName) : null;
+    const safeCamName = escapeHtml(camName || 'Nessuna camera 3D diretta');
 
     this.modalContent.innerHTML = `
       <div class="camera-preview-stream">
         <span class="live-badge">LIVE STREAM</span>
-        <div style="text-align: center; color: var(--text-muted); font-size: 12px; padding: 20px;">
-          <div style="margin-bottom: 6px; color: var(--accent-cyan);">${icon('cctv', { size: 28 })}</div>
+        <div class="cam-fallback-preview">
+          <div class="cam-fallback-icon">${icon('cctv', { size: 28 })}</div>
           <div>H.265 / WebRTC Stream Attivo</div>
-          <div style="font-family: var(--font-mono); font-size: 11px; margin-top: 4px; color: var(--accent-cyan);">
-            1920x1080 @ 25fps • Frigate AI
+          <div class="cam-fallback-meta">
+            1920×1080 @ 25fps • WebRTC
           </div>
         </div>
       </div>
 
       <div class="control-row">
         <label>Telecamera 3D Associata</label>
-        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-main);">
-          ${camName || 'Nessuna camera 3D diretta'}
-        </span>
+        <span class="modal-mono-value">${safeCamName}</span>
       </div>
 
-      <button class="btn-action-primary" id="btn-camera-pov" style="width: 100%;">
+      <button type="button" class="btn-action-primary btn-full-width" id="btn-camera-pov">
         ${icon('crosshair', { size: 15 })} <span>Entra nella vista POV di questa telecamera</span>
       </button>
 
-      <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4; text-align: center;">
-        Allinea dolcemente la navigazione 3D alla visuale e al campo visivo (FOV) della telecamera reale esportata da Blender.
+      <div class="cam-fallback-hint">
+        Allinea la navigazione 3D alla visuale e al campo visivo della telecamera.
       </div>
     `;
 
@@ -298,25 +321,25 @@ export class DeviceModals {
     this.modalContent.innerHTML = `
       <div class="control-row">
         <label>Stato Luce</label>
-        <button class="btn-action-primary" id="light-toggle-btn">
+        <button type="button" class="btn-action-primary" id="light-toggle-btn">
           ${isOn ? 'Spegni' : 'Accendi'}
         </button>
       </div>
 
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <div style="display: flex; justify-content: space-between;">
-          <label>Luminosità</label>
-          <span id="light-bright-label" style="font-size: 12px; font-family: var(--font-mono);">${brightness}%</span>
+      <div class="control-row control-row--stack">
+        <div class="control-row-head">
+          <label for="light-bright-slider">Luminosità</label>
+          <span id="light-bright-label" class="control-row-value">${brightness}%</span>
         </div>
-        <input type="range" min="1" max="100" value="${brightness}" id="light-bright-slider" class="timeline-slider" />
+        <input type="range" min="1" max="100" value="${brightness}" id="light-bright-slider" name="light-bright-slider" class="timeline-slider" />
       </div>
 
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
+      <div class="control-row control-row--stack">
         <label>Colore Tonalità</label>
-        <div style="display: flex; gap: 8px;">
-          <button class="btn-icon-text color-preset" data-rgb="[255, 220, 160]" style="flex: 1; background: #ffe4b5; color: #000;">Caldo</button>
-          <button class="btn-icon-text color-preset" data-rgb="[255, 255, 255]" style="flex: 1; background: #ffffff; color: #000;">Neutro</button>
-          <button class="btn-icon-text color-preset" data-rgb="[180, 220, 255]" style="flex: 1; background: #bfdbfe; color: #000;">Freddo</button>
+        <div class="color-presets-row">
+          <button type="button" class="btn-icon-text color-preset color-preset--warm" data-rgb="[255, 220, 160]">Caldo</button>
+          <button type="button" class="btn-icon-text color-preset color-preset--neutral" data-rgb="[255, 255, 255]">Neutro</button>
+          <button type="button" class="btn-icon-text color-preset color-preset--cool" data-rgb="[180, 220, 255]">Freddo</button>
         </div>
       </div>
     `;
@@ -348,12 +371,13 @@ export class DeviceModals {
   }
 
   renderGenericModal(entity) {
+    const safeState = escapeHtml(entity.state);
     this.modalContent.innerHTML = `
       <div class="control-row">
         <label>Stato Corrente</label>
-        <span style="font-weight: 600;">${entity.state}</span>
+        <span class="modal-state-value">${safeState}</span>
       </div>
-      <button class="btn-action-primary" id="generic-toggle-btn">Toggle Stato</button>
+      <button type="button" class="btn-action-primary btn-full-width" id="generic-toggle-btn">Cambia stato</button>
     `;
     this.modalContent.querySelector('#generic-toggle-btn').addEventListener('click', () => {
       const domain = entity.entity_id.split('.')[0];

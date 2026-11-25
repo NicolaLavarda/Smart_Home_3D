@@ -1,6 +1,25 @@
 import { icon } from './icons.js';
 import { deviceRegistry } from '../devices/DeviceRegistry.js';
 
+const DEVICE_STATE_LABELS_IT = {
+  ready: 'Pronta',
+  idle: 'In attesa',
+  standby: 'Standby',
+  running: 'In corso',
+  paused: 'In pausa',
+  cleaning: 'In pulizia',
+  docked: 'Alla base',
+  off: 'Spento',
+  on: 'Acceso',
+  unavailable: 'Non disponibile',
+};
+
+function translateDeviceStateLabel(value) {
+  const clean = String(value ?? '').trim();
+  if (!clean) return '';
+  return DEVICE_STATE_LABELS_IT[clean.toLowerCase()] || clean;
+}
+
 const VIEW_ITEMS = [
   {
     id: 'overview',
@@ -293,6 +312,10 @@ export class NavigationFabHub {
   close() {
     if (!this.isOpen) return;
     this.isOpen = false;
+    if (typeof document !== 'undefined' && this.sheetEl?.contains?.(document.activeElement)) {
+      document.activeElement?.blur?.();
+      this.fabBtn?.focus?.();
+    }
     this.container.classList.remove('open');
     this.sheetEl?.classList.remove('open');
     this.sheetEl?.setAttribute('aria-hidden', 'true');
@@ -390,7 +413,8 @@ export class NavigationFabHub {
     if (tvCtrl) {
       const isOn = tvCtrl.isPoweredOn();
       const ent = tvCtrl.getEntity();
-      const source = ent?.attributes?.app_name || ent?.attributes?.source || 'Accesa';
+      const rawSource = ent?.attributes?.app_name || ent?.attributes?.source || (isOn ? 'Accesa' : 'Spenta');
+      const source = translateDeviceStateLabel(rawSource);
       updateTile('tv', isOn ? source : 'Spenta', isOn);
     }
 
@@ -398,10 +422,11 @@ export class NavigationFabHub {
     const dishCtrl = deviceRegistry.get('dishwasher');
     if (dishCtrl) {
       const status = dishCtrl.getStatus();
-      const sLow = String(status).toLowerCase();
+      const sLow = String(status).trim().toLowerCase();
+      const statusIt = translateDeviceStateLabel(status);
       const progress = dishCtrl.getProgress();
       const isRunning = sLow === 'running' || sLow === 'in funzione';
-      const label = isRunning && progress > 0 ? `In corso • ${progress}%` : status;
+      const label = isRunning && progress > 0 ? `In corso • ${progress}%` : statusIt;
       updateTile('dishwasher', label, isRunning);
     }
 
@@ -410,7 +435,7 @@ export class NavigationFabHub {
     if (vacCtrl) {
       const raw = vacCtrl.getRawState().toLowerCase();
       const batt = vacCtrl.getBattery();
-      const stateLbl = vacCtrl.getStateLabel();
+      const stateLbl = translateDeviceStateLabel(vacCtrl.getStateLabel());
       updateTile('deebot', `${stateLbl} • ${batt}%`, raw === 'cleaning' || raw === 'returning');
     }
   }

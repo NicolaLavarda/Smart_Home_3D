@@ -234,6 +234,7 @@ async function bootstrap() {
     const navExpanded = Boolean(navFabHub?.isOpen);
 
     uiLayer?.classList.toggle('sheet-open', anyDrawerOpen);
+    uiLayer?.classList.toggle('studio-open', Boolean(automationStudio?.isOpen));
     uiLayer?.classList.toggle('sec-strip-active', secStripActive);
     uiLayer?.classList.toggle('sec-expanded-active', secExpanded);
     uiLayer?.classList.toggle('nav-expanded-active', navExpanded);
@@ -293,6 +294,9 @@ async function bootstrap() {
     onOpen: () => {
       if (calibrationAssistant?.isOpen) {
         calibrationAssistant.close();
+      }
+      if (automationStudio?.isOpen) {
+        automationStudio.close();
       }
       navFabHub?.close();
       if (window.innerWidth <= 1024 && securityFabHub?.isExpanded) {

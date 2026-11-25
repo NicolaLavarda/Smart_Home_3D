@@ -60,6 +60,9 @@ export class CalibrationAssistantUI {
     this._openSeq = 0;
     this._userEditedSinceOpen = false;
     this._isSaving = false;
+    this._resetArmed = false;
+    this._resetArmTimer = null;
+    this._confirmBackdrop = null;
 
     this.isOpen = false;
     this.activeCameraName = 'Cam_Carraio';
@@ -103,7 +106,11 @@ export class CalibrationAssistantUI {
         this.setPnpMode(false);
         return;
       }
-      this.close();
+      if (this._confirmBackdrop) {
+        this._dismissConfirmDialog();
+        return;
+      }
+      this.requestClose();
     };
     this.onOpenCallback = null;
     this.onCloseCallback = null;
@@ -268,6 +275,8 @@ export class CalibrationAssistantUI {
 
     this.activeCameraName = resolvedCamName;
     this._userEditedSinceOpen = false;
+    this._disarmResetButton();
+    this._dismissConfirmDialog();
     this.state = this.loadSavedState(resolvedCamName);
 
     const manifestCam = this.getManifestCamera(resolvedCamName);
@@ -401,9 +410,16 @@ export class CalibrationAssistantUI {
     if (!this.isOpen) return;
     this._openSeq += 1;
     this.isOpen = false;
+    this._userEditedSinceOpen = false;
+    this._disarmResetButton();
+    this._dismissConfirmDialog();
     this.setPnpMode(false);
     this.pendingPoint3D = null;
     this.pnpStep = '3d';
+
+    if (typeof document !== 'undefined' && this.panelEl?.contains?.(document.activeElement)) {
+      document.activeElement?.blur?.();
+    }
 
     if (this.panelEl) {
       this.panelEl.classList.remove('open');
@@ -479,33 +495,35 @@ export class CalibrationAssistantUI {
     const panel = document.createElement('div');
     panel.className = 'calibration-panel glass';
     panel.id = 'calibration-assistant-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-labelledby', 'calib-panel-title');
     panel.innerHTML = `
-      <div class="calib-header" id="calib-header-toggle" title="Clicca per comprimere / espandere">
+      <div class="calib-header" id="calib-header-toggle" role="button" tabindex="0" aria-expanded="true" title="Clicca per comprimere / espandere">
         <div class="calib-title-wrap">
-          <div class="calib-title">${icon('sliders-horizontal', { size: 14 })} <span>Calibrazione Ottica POV</span></div>
+          <div class="calib-title" id="calib-panel-title">${icon('sliders-horizontal', { size: 14 })} <span>Calibrazione Ottica POV</span></div>
           <div class="calib-subtitle" id="calib-cam-name">Cam_Carraio • Reolink RLC-540A</div>
         </div>
         <div class="modal-header-actions">
           <span class="modal-collapse-chevron" id="calib-collapse-icon">${icon('chevron-up', { size: 15 })}</span>
-          <button type="button" class="btn-close" id="calib-close-btn" title="Chiudi Calibrazione">${icon('x', { size: 15 })}</button>
+          <button type="button" class="btn-close" id="calib-close-btn" title="Chiudi Calibrazione" aria-label="Chiudi Calibrazione">${icon('x', { size: 15 })}</button>
         </div>
       </div>
 
       <div class="calib-body" id="calib-content">
         <div class="calib-section" id="calib-cam-selector-row" style="display:none;">
-          <div class="calib-row-label">
+          <label class="calib-row-label" for="calib-cam-select">
             <span>Telecamera da calibrare</span>
-          </div>
+          </label>
           <div class="calib-cam-pills" id="calib-cam-pills" role="tablist" aria-label="Selezione telecamera"></div>
-          <select id="calib-cam-select" aria-label="Seleziona telecamera da calibrare" style="display:none;"></select>
+          <select id="calib-cam-select" name="calib-cam-select" aria-label="Seleziona telecamera da calibrare" style="display:none;"></select>
         </div>
 
         <div class="calib-section">
-          <div class="calib-row-label">
+          <label class="calib-row-label" for="calib-opacity">
             <span>Opacità Video Live</span>
             <span id="calib-val-opacity" class="calib-num">52%</span>
-          </div>
-          <input type="range" id="calib-opacity" min="0" max="100" value="52" class="timeline-slider" />
+          </label>
+          <input type="range" id="calib-opacity" name="calib-opacity" min="0" max="100" value="52" class="timeline-slider" />
           <div class="calib-opacity-presets" role="group" aria-label="Preset opacità video">
             <button type="button" class="calib-preset-chip" data-opacity="0">0% Solo 3D</button>
             <button type="button" class="calib-preset-chip" data-opacity="50">50% Mix</button>
@@ -554,65 +572,76 @@ export class CalibrationAssistantUI {
         </div>
 
         <div class="calib-actions-row">
-          <button type="button" class="btn-icon-text" id="calib-flip-180" style="flex:1;justify-content:center;font-size:11px;">
+          <button type="button" class="btn-icon-text calib-flip-btn" id="calib-flip-180">
             ${icon('refresh-cw', { size: 14 })} <span>Inverti Direzione 180°</span>
           </button>
         </div>
 
-        <div class="calib-grid">
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Yaw Δ (°)</span><span id="calib-val-yaw" class="calib-num">0.0°</span></div>
-            <input type="range" id="calib-yaw" min="-180" max="180" step="0.5" value="0" class="timeline-slider" />
-          </div>
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Pitch Δ (°)</span><span id="calib-val-pitch" class="calib-num">0.0°</span></div>
-            <input type="range" id="calib-pitch" min="-45" max="45" step="0.5" value="0" class="timeline-slider" />
-          </div>
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Roll Δ (°)</span><span id="calib-val-roll" class="calib-num">0.0°</span></div>
-            <input type="range" id="calib-roll" min="-30" max="30" step="0.5" value="0" class="timeline-slider" />
-          </div>
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>FOV Vert. (°)</span><span id="calib-val-fov" class="calib-num">42.0°</span></div>
-            <input type="range" id="calib-fov" min="20" max="110" step="0.5" value="42" class="timeline-slider" />
-          </div>
-        </div>
-
-        <div class="calib-grid-3">
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Off X (m)</span><span id="calib-val-ox" class="calib-num">0.00</span></div>
-            <input type="range" id="calib-ox" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
-          </div>
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Off Y (m)</span><span id="calib-val-oy" class="calib-num">0.00</span></div>
-            <input type="range" id="calib-oy" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
-          </div>
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Off Z (m)</span><span id="calib-val-oz" class="calib-num">0.00</span></div>
-            <input type="range" id="calib-oz" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+        <div class="calib-group">
+          <div class="calib-group-title">Orientamento e ottica</div>
+          <div class="calib-sliders-2col">
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-yaw"><span>Yaw Δ (°)</span><span id="calib-val-yaw" class="calib-num">0.0°</span></label>
+              <input type="range" id="calib-yaw" name="calib-yaw" min="-180" max="180" step="0.5" value="0" class="timeline-slider" />
+            </div>
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-pitch"><span>Pitch Δ (°)</span><span id="calib-val-pitch" class="calib-num">0.0°</span></label>
+              <input type="range" id="calib-pitch" name="calib-pitch" min="-45" max="45" step="0.5" value="0" class="timeline-slider" />
+            </div>
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-roll"><span>Roll Δ (°)</span><span id="calib-val-roll" class="calib-num">0.0°</span></label>
+              <input type="range" id="calib-roll" name="calib-roll" min="-30" max="30" step="0.5" value="0" class="timeline-slider" />
+            </div>
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-fov"><span>FOV Vert. (°)</span><span id="calib-val-fov" class="calib-num">42.0°</span></label>
+              <input type="range" id="calib-fov" name="calib-fov" min="20" max="110" step="0.5" value="42" class="timeline-slider" />
+            </div>
           </div>
         </div>
 
-        <div class="calib-grid">
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Distorsione k1</span><span id="calib-val-k1" class="calib-num">-0.18</span></div>
-            <input type="range" id="calib-k1" min="-0.6" max="0.4" step="0.01" value="-0.18" class="timeline-slider" />
-          </div>
-          <div class="calib-slider-box">
-            <div class="calib-row-label"><span>Distorsione k2</span><span id="calib-val-k2" class="calib-num">0.04</span></div>
-            <input type="range" id="calib-k2" min="-0.4" max="0.4" step="0.01" value="0.04" class="timeline-slider" />
+        <div class="calib-group">
+          <div class="calib-group-title">Posizione (metri)</div>
+          <div class="calib-sliders-offsets">
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-ox"><span>Off X (m)</span><span id="calib-val-ox" class="calib-num">0.00</span></label>
+              <input type="range" id="calib-ox" name="calib-ox" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+            </div>
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-oy"><span>Off Y (m)</span><span id="calib-val-oy" class="calib-num">0.00</span></label>
+              <input type="range" id="calib-oy" name="calib-oy" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+            </div>
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-oz"><span>Off Z (m)</span><span id="calib-val-oz" class="calib-num">0.00</span></label>
+              <input type="range" id="calib-oz" name="calib-oz" min="-2.0" max="2.0" step="0.02" value="0" class="timeline-slider" />
+            </div>
           </div>
         </div>
 
+        <div class="calib-group">
+          <div class="calib-group-title">Distorsione lente</div>
+          <div class="calib-sliders-2col">
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-k1"><span>Distorsione k1</span><span id="calib-val-k1" class="calib-num">-0.18</span></label>
+              <input type="range" id="calib-k1" name="calib-k1" min="-0.6" max="0.4" step="0.01" value="-0.18" class="timeline-slider" />
+            </div>
+            <div class="calib-slider-item">
+              <label class="calib-row-label" for="calib-k2"><span>Distorsione k2</span><span id="calib-val-k2" class="calib-num">0.04</span></label>
+              <input type="range" id="calib-k2" name="calib-k2" min="-0.4" max="0.4" step="0.01" value="0.04" class="timeline-slider" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="calib-footer" id="calib-footer">
         <div class="calib-actions-row">
-          <button type="button" class="btn-icon-text" id="calib-reset-btn" style="flex:1;justify-content:center;font-size:11px;">
-            ${icon('rotate-ccw', { size: 14 })} <span>Reset SSoT</span>
+          <button type="button" class="btn-icon-text calib-reset-btn" id="calib-reset-btn">
+            ${icon('rotate-ccw', { size: 14 })} <span id="calib-reset-label">Ripristina predefiniti</span>
           </button>
-          <button type="button" class="btn-action-primary" id="calib-save-btn" style="flex:1.6;padding:8px 12px;font-size:12px;">
-            ${icon('save', { size: 14 })} <span>Salva & Applica a Backend</span>
+          <button type="button" class="btn-action-primary calib-save-btn" id="calib-save-btn">
+            ${icon('save', { size: 14 })} <span>Salva calibrazione</span>
           </button>
         </div>
-        <div id="calib-status-msg" class="calib-status-msg"></div>
+        <div id="calib-status-msg" class="calib-status-msg" aria-live="polite"></div>
       </div>
     `;
 
@@ -625,6 +654,7 @@ export class CalibrationAssistantUI {
     if (!this.panelEl) return;
     const isCollapsed = Boolean(collapsed);
     this.panelEl.classList.toggle('collapsed', isCollapsed);
+    this.panelEl.querySelector('#calib-header-toggle')?.setAttribute('aria-expanded', String(!isCollapsed));
     const collapseIcon = this.panelEl.querySelector('#calib-collapse-icon');
     if (collapseIcon) {
       collapseIcon.innerHTML = icon(isCollapsed ? 'chevron-down' : 'chevron-up', { size: 15 });
@@ -801,24 +831,129 @@ export class CalibrationAssistantUI {
 
       pillsWrap.querySelectorAll('[data-calib-cam]').forEach((btn) => {
         btn.addEventListener('click', () => {
-          this.switchCamera(btn.dataset.calibCam);
+          this.requestSwitchCamera(btn.dataset.calibCam);
         });
       });
     }
   }
 
-  bindEvents() {
-    this.panelEl.querySelector('#calib-cam-select')?.addEventListener('change', (e) => {
-      this.switchCamera(e.target?.value);
+  _disarmResetButton() {
+    this._resetArmed = false;
+    if (this._resetArmTimer) {
+      clearTimeout(this._resetArmTimer);
+      this._resetArmTimer = null;
+    }
+    const resetBtn = this.panelEl?.querySelector('#calib-reset-btn');
+    const resetLabel = this.panelEl?.querySelector('#calib-reset-label');
+    if (resetBtn) resetBtn.classList.remove('is-armed');
+    if (resetLabel) resetLabel.textContent = 'Ripristina predefiniti';
+  }
+
+  _dismissConfirmDialog() {
+    if (this._confirmBackdrop) {
+      this._confirmBackdrop.remove();
+      this._confirmBackdrop = null;
+    }
+  }
+
+  _showDirtyConfirm({ title, message, saveLabel, discardLabel, onAfterSave, onDiscard }) {
+    if (!this.panelEl) return;
+    this._dismissConfirmDialog();
+    this.setCollapsed(false);
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sh3d-confirm-backdrop';
+    backdrop.innerHTML = `
+      <div class="sh3d-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="calib-confirm-title">
+        <div class="sh3d-confirm-title" id="calib-confirm-title">${title}</div>
+        <div class="sh3d-confirm-msg">${message}</div>
+        <div class="sh3d-confirm-actions">
+          <button type="button" class="sh3d-confirm-btn primary" data-confirm-action="save">${saveLabel}</button>
+          <button type="button" class="sh3d-confirm-btn danger" data-confirm-action="discard">${discardLabel}</button>
+          <button type="button" class="sh3d-confirm-btn" data-confirm-action="cancel">Continua a modificare</button>
+        </div>
+      </div>
+    `;
+
+    backdrop.querySelector('[data-confirm-action="save"]')?.addEventListener('click', async () => {
+      this._dismissConfirmDialog();
+      await this.saveAndSubmitToBackend();
+      this._userEditedSinceOpen = false;
+      onAfterSave?.();
     });
 
-    this.panelEl.querySelector('#calib-header-toggle').addEventListener('click', () => {
+    backdrop.querySelector('[data-confirm-action="discard"]')?.addEventListener('click', () => {
+      this._dismissConfirmDialog();
+      this._userEditedSinceOpen = false;
+      const restored = this.loadSavedState(this.activeCameraName);
+      this.state = restored;
+      this.syncInputsFromState();
+      this.applyLiveCalibration(false);
+      onDiscard?.();
+    });
+
+    backdrop.querySelector('[data-confirm-action="cancel"]')?.addEventListener('click', () => {
+      this._dismissConfirmDialog();
+      this._syncCameraSelector();
+    });
+
+    this.panelEl.appendChild(backdrop);
+    this._confirmBackdrop = backdrop;
+  }
+
+  requestClose() {
+    if (!this.isOpen) return;
+    if (this._userEditedSinceOpen) {
+      this._showDirtyConfirm({
+        title: 'Modifiche non salvate',
+        message: 'Hai modificato i parametri di calibrazione senza salvarli.',
+        saveLabel: 'Salva ed esci',
+        discardLabel: 'Scarta modifiche',
+        onAfterSave: () => this.close(),
+        onDiscard: () => this.close(),
+      });
+      return;
+    }
+    this.close();
+  }
+
+  requestSwitchCamera(nextCam) {
+    if (!nextCam || nextCam === this.activeCameraName) return;
+    if (!this.haClient?.isAdmin) return;
+    if (this._userEditedSinceOpen) {
+      this._showDirtyConfirm({
+        title: 'Modifiche non salvate',
+        message: 'Vuoi salvare la calibrazione prima di passare a un’altra telecamera?',
+        saveLabel: 'Salva e cambia',
+        discardLabel: 'Scarta modifiche',
+        onAfterSave: () => this.switchCamera(nextCam),
+        onDiscard: () => this.switchCamera(nextCam),
+      });
+      return;
+    }
+    this.switchCamera(nextCam);
+  }
+
+  bindEvents() {
+    this.panelEl.querySelector('#calib-cam-select')?.addEventListener('change', (e) => {
+      this.requestSwitchCamera(e.target?.value);
+    });
+
+    const headerToggle = this.panelEl.querySelector('#calib-header-toggle');
+    headerToggle?.addEventListener('click', () => {
       this.setCollapsed(!this.panelEl.classList.contains('collapsed'));
+    });
+    headerToggle?.addEventListener('keydown', (e) => {
+      if (e.target?.closest?.('#calib-close-btn')) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.setCollapsed(!this.panelEl.classList.contains('collapsed'));
+      }
     });
 
     this.panelEl.querySelector('#calib-close-btn').addEventListener('click', (e) => {
       e.stopPropagation();
-      this.close();
+      this.requestClose();
     });
 
     const opSlider = this.panelEl.querySelector('#calib-opacity');
@@ -894,6 +1029,19 @@ export class CalibrationAssistantUI {
     });
 
     this.panelEl.querySelector('#calib-reset-btn').addEventListener('click', async () => {
+      const resetBtn = this.panelEl?.querySelector('#calib-reset-btn');
+      const resetLabel = this.panelEl?.querySelector('#calib-reset-label');
+      if (!this._resetArmed) {
+        this._resetArmed = true;
+        resetBtn?.classList.add('is-armed');
+        if (resetLabel) resetLabel.textContent = 'Conferma ripristino';
+        if (this._resetArmTimer) clearTimeout(this._resetArmTimer);
+        this._resetArmTimer = setTimeout(() => {
+          this._disarmResetButton();
+        }, 4000);
+        return;
+      }
+      this._disarmResetButton();
       await this.resetToManifestDefault();
     });
 
@@ -1217,7 +1365,7 @@ export class CalibrationAssistantUI {
     }
     if (toggleLabel) {
       toggleLabel.textContent = isPano
-        ? 'PnP solo Pinhole'
+        ? 'PnP solo Standard'
         : this.pnpMode
           ? 'Ferma Raccolta'
           : this.correspondences.length > 0
@@ -1603,7 +1751,7 @@ export class CalibrationAssistantUI {
       this._showRbacToast('Calibrazione riservata agli utenti Admin.');
       return false;
     }
-    this._userEditedSinceOpen = true;
+    this._userEditedSinceOpen = false;
     const camName = this.activeCameraName;
     try {
       if (typeof localStorage !== 'undefined') {
@@ -1626,14 +1774,14 @@ export class CalibrationAssistantUI {
     if (this.spatialStreamClient && typeof this.spatialStreamClient.resetCameraCalibration === 'function') {
       const res = await this.spatialStreamClient.resetCameraCalibration(camName);
       if (res && res.status === 'ok') {
-        this.setStatus('Ripristinati parametri originali Blender SSoT (salvato anche sul server).', 'info');
+        this.setStatus('Valori predefiniti ripristinati (sincronizzato sul server).', 'info');
         return true;
       }
-      this.setStatus('Ripristinati in locale. Server non raggiungibile per rimuovere l\'override.', 'warn');
+      this.setStatus('Valori predefiniti ripristinati in locale. Server non raggiungibile.', 'warn');
       return false;
     }
 
-    this.setStatus('Ripristinati parametri originali da Blender SSoT.', 'info');
+    this.setStatus('Valori predefiniti ripristinati.', 'info');
     return true;
   }
 
@@ -1661,6 +1809,7 @@ export class CalibrationAssistantUI {
       const payload = this.buildBackendPayload(pose);
       const res = await this.spatialStreamClient.updateCameraCalibration(camName, payload);
       if (res && res.status === 'ok') {
+        this._userEditedSinceOpen = false;
         this.saveStateToLocal(camName, {
           syncedToBackend: true,
           updatedAt: res.calibration?.updated_at ?? null,

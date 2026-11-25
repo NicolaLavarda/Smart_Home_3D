@@ -21,6 +21,19 @@ export class VacuumModal {
     this.fanSpeedDropdownOpen = false;
     this.waterFlowDropdownOpen = false;
     this.activeTab = 'controls'; // 'controls' | 'consumables' | 'stats'
+    this._onDocClick = (e) => {
+      if (!this.container || !this.container.isConnected) {
+        if (typeof document !== 'undefined') {
+          document.removeEventListener('click', this._onDocClick);
+        }
+        return;
+      }
+      if (this.fanSpeedDropdownOpen && !e.target?.closest?.('#btn-fan-speed-pill') && !e.target?.closest?.('#menu-fan-speed')) {
+        this.fanSpeedDropdownOpen = false;
+        const menu = this.container?.querySelector('#menu-fan-speed');
+        if (menu) menu.classList.remove('open');
+      }
+    };
   }
 
   render(container, context = {}) {
@@ -133,11 +146,11 @@ export class VacuumModal {
           </button>
         </div>
 
-        <!-- 4. Pillole di Stato & Regolazione Rapida (Fan speed + Modalità) -->
+        <!-- 4. Pillole di Stato & Regolazione Rapida (Aspirazione + Modalità) -->
         <div class="deebot-pills-row">
           <!-- Fan Speed Pill -->
           <div class="deebot-pill-dropdown-wrap">
-            <button class="deebot-pill-btn" id="btn-fan-speed-pill" title="Modifica velocità aspirazione">
+            <button type="button" class="deebot-pill-btn" id="btn-fan-speed-pill" title="Modifica velocità aspirazione" aria-haspopup="menu" aria-expanded="${this.fanSpeedDropdownOpen ? 'true' : 'false'}">
               <div class="pill-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 12c-2-2-2-5 0-7s5-2 7 0-2 5-7 7z"></path>
@@ -147,7 +160,7 @@ export class VacuumModal {
                 </svg>
               </div>
               <div class="pill-text-block">
-                <span class="pill-label">Fan speed</span>
+                <span class="pill-label">Aspirazione</span>
                 <span class="pill-value">${fanSpeedLabel}</span>
               </div>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="pill-chevron">
@@ -176,8 +189,8 @@ export class VacuumModal {
             </div>
           </div>
 
-          <!-- Mappa & Modalità Pill -->
-          <div class="deebot-pill-btn" id="btn-mode-pill">
+          <!-- Mappa & Modalità Chip (sola lettura) -->
+          <div class="deebot-status-chip" id="btn-mode-pill">
             <div class="pill-icon">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="7" height="7"></rect>
@@ -187,12 +200,9 @@ export class VacuumModal {
               </svg>
             </div>
             <div class="pill-text-block">
-              <span class="pill-label">In pulizia</span>
+              <span class="pill-label">Mappa attiva</span>
               <span class="pill-value">${activeMap}</span>
             </div>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="pill-chevron">
-              <polyline points="9 18 15 12 9 6"></polyline>
-            </svg>
           </div>
         </div>
 
@@ -240,8 +250,8 @@ export class VacuumModal {
                 <div class="feature-sub">Aumenta l'aspirazione su moquette</div>
               </div>
             </div>
-            <label class="custom-ha-switch">
-              <input type="checkbox" id="chk-carpet-boost" ${carpetBoost ? 'checked' : ''}>
+            <label class="custom-ha-switch" for="chk-carpet-boost">
+              <input type="checkbox" class="native-raw" id="chk-carpet-boost" name="chk-carpet-boost" aria-label="Potenziamento Tappeto" ${carpetBoost ? 'checked' : ''}>
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
@@ -258,8 +268,8 @@ export class VacuumModal {
                 <div class="feature-sub">Mappe salvate e pulizia per area</div>
               </div>
             </div>
-            <label class="custom-ha-switch">
-              <input type="checkbox" id="chk-adv-mode" ${advMode ? 'checked' : ''}>
+            <label class="custom-ha-switch" for="chk-adv-mode">
+              <input type="checkbox" class="native-raw" id="chk-adv-mode" name="chk-adv-mode" aria-label="Modalità Avanzata" ${advMode ? 'checked' : ''}>
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
@@ -362,6 +372,7 @@ export class VacuumModal {
     btnFan?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.fanSpeedDropdownOpen = !this.fanSpeedDropdownOpen;
+      btnFan.setAttribute('aria-expanded', String(this.fanSpeedDropdownOpen));
       const menu = this.container.querySelector('#menu-fan-speed');
       if (menu) menu.classList.toggle('open', this.fanSpeedDropdownOpen);
     });
@@ -416,15 +427,11 @@ export class VacuumModal {
       });
     });
 
-    // Chiudi dropdown al click esterno
-    const handleOutsideClick = (e) => {
-      if (this.fanSpeedDropdownOpen && !e.target.closest('#btn-fan-speed-pill') && !e.target.closest('#menu-fan-speed')) {
-        this.fanSpeedDropdownOpen = false;
-        const menu = this.container?.querySelector('#menu-fan-speed');
-        if (menu) menu.classList.remove('open');
-      }
-    };
-    document.addEventListener('click', handleOutsideClick, { once: true });
+    // Chiudi dropdown al click esterno (rimuove eventuale listener precedente per evitare leak su updateLive)
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('click', this._onDocClick);
+      document.addEventListener('click', this._onDocClick);
+    }
   }
 
   updateLive() {

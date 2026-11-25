@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from tests.e2e.helpers.artifacts import run_js_scenario
+from tests.e2e.helpers.artifacts import read_all_css, run_js_scenario
 
 
 def test_f18_spatial_stream_client_biometric_ws_and_rest():
@@ -678,7 +678,7 @@ def test_f18_admin_hitl_and_whitelist_rbac_ui():
     assert d["demotedHitlEditorHidden"] is True
     assert d["demotedHitlCount"] == 0
 
-    css_src = (Path(__file__).resolve().parents[2] / "src" / "style.css").read_text(encoding="utf-8")
+    css_src = read_all_css(Path(__file__).resolve().parents[2])
     assert ".m3-security-panel:not(.mode-strip) .m3-sec-body" in css_src
     assert ".m3-security-panel.mode-settings .m3-sec-cameras-viewport" in css_src
     assert "overflow-y: auto" in css_src

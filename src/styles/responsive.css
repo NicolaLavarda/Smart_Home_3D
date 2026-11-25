@@ -1,0 +1,704 @@
+/* ==========================================================================
+   RESPONSIVE ADAPTATION (TABLET, MOBILE & TOUCH / COARSE POINTERS)
+   ========================================================================== */
+
+/* Shared overscroll containment & Firefox range thumb parity */
+.calibration-panel {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.timeline-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--bg-primary);
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  cursor: pointer;
+}
+
+/* Adjust calibration panel height when security bottom strip is active */
+.ui-layer.sec-strip-active .calibration-panel:not(.collapsed) {
+  max-height: calc(100dvh - var(--sec-strip-total-h) - 116px);
+}
+
+/* Tablet & Compact Laptop (<= 1024px) */
+@media (max-width: 1024px) {
+  .top-bar {
+    margin: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left));
+    gap: 10px;
+  }
+
+  .top-bar-left {
+    padding: 8px 13px;
+    gap: 10px;
+  }
+
+  .top-bar-controls {
+    padding: 7px 10px;
+    gap: 6px;
+  }
+
+  .btn-icon-text {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .modal-drawer,
+  .calibration-panel {
+    top: calc(max(12px, env(safe-area-inset-top)) + 68px);
+    right: max(14px, env(safe-area-inset-right));
+    width: min(350px, calc(100vw - 28px));
+    max-height: calc(100dvh - 170px);
+  }
+
+  .pnp-hud-banner {
+    top: calc(max(12px, env(safe-area-inset-top)) + 68px);
+    left: max(14px, env(safe-area-inset-left));
+    transform: none;
+    max-width: calc(100vw - 388px);
+  }
+}
+
+/* Mobile & Small Tablet (<= 767px) */
+@media (max-width: 767px) {
+  :root {
+    --sec-strip-video-h: 96px;
+    --sec-strip-total-h: 154px;
+  }
+
+  .top-bar {
+    margin: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    gap: 8px;
+  }
+
+  .top-bar-left {
+    flex: 0 1 auto;
+    padding: 7px 11px;
+    border-radius: var(--r-md);
+    gap: 10px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .logo-badge {
+    gap: 9px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .logo-icon {
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+    border-radius: 8px;
+  }
+
+  .logo-text-group {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .logo-title {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
+  .logo-text-group .ha-status-badge {
+    padding: 2px 7px;
+    font-size: 10px;
+    gap: 5px;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .logo-text-group .ha-dot {
+    flex-shrink: 0;
+  }
+
+  .logo-text-group #ha-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .top-bar-controls {
+    flex-shrink: 0;
+    padding: 5px 6px;
+    gap: 5px;
+    border-radius: var(--r-md);
+  }
+
+  .top-bar-controls .btn-icon-text {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+
+  .top-settings-dropdown {
+    right: 0;
+    max-width: calc(100vw - 24px);
+  }
+
+  .pnp-hud-banner {
+    top: calc(max(10px, env(safe-area-inset-top)) + 64px);
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    transform: none;
+    max-width: none;
+    border-radius: var(--r-md);
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding: 8px 10px;
+  }
+
+  .pnp-hud-text {
+    flex: 1 1 180px;
+    white-space: normal;
+  }
+
+  /* Bottom-sheet adaptation for Drawers, Calibration & Automation Studio */
+  .modal-drawer,
+  .calibration-panel,
+  .auto-studio-drawer {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: 76dvh;
+    border-radius: 22px 22px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .modal-drawer,
+  .calibration-panel {
+    z-index: 62;
+  }
+
+  .calibration-panel {
+    padding: 10px 0 env(safe-area-inset-bottom, 0px) 0;
+  }
+
+  .modal-drawer::before,
+  .calibration-panel::before,
+  .auto-studio-drawer::before {
+    content: '';
+    display: block;
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.24);
+    margin: 8px auto 0 auto;
+    flex-shrink: 0;
+  }
+
+  .modal-drawer {
+    transform: translateY(105%);
+    gap: 0;
+  }
+
+  .modal-drawer.open {
+    transform: translateY(0);
+  }
+
+  .modal-drawer.collapsed,
+  .calibration-panel.collapsed,
+  .auto-studio-drawer.collapsed {
+    top: auto;
+    bottom: 0;
+    padding: 8px 0 max(10px, env(safe-area-inset-bottom, 0px)) 0;
+    max-height: none;
+  }
+
+  .camera-preview-stream:not(.is-panoramic) {
+    height: auto;
+    aspect-ratio: 16 / 9;
+    max-height: 210px;
+  }
+
+  /* Bottom FABs & M3 Hubs */
+  .security-hub-root {
+    left: max(14px, env(safe-area-inset-left, 0px));
+    bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .nav-hub-root {
+    right: max(14px, env(safe-area-inset-right, 0px));
+    bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .m3-fab {
+    height: 54px;
+    padding: 0 16px;
+    font-size: 13.5px;
+    gap: 8px;
+  }
+
+  .ui-layer.sheet-open .nav-hub-root,
+  .ui-layer.sheet-open .security-hub-root:not(.mode-strip) {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(16px);
+  }
+
+  .m3-nav-sheet,
+  .m3-security-panel:not(.mode-strip) {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: 86dvh;
+    border-radius: 24px 24px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    transform-origin: bottom center;
+    transform: translateY(105%);
+  }
+
+  .m3-nav-sheet.open,
+  .m3-security-panel.open:not(.mode-strip) {
+    transform: translateY(0);
+  }
+
+  .m3-security-panel.mode-strip {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 20px 20px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .m3-sec-header {
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    gap: 8px;
+  }
+
+  .m3-segmented {
+    order: 3;
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .m3-seg-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 8px;
+    font-size: 12px;
+    gap: 5px;
+    justify-content: center;
+  }
+
+  .m3-sec-cameras-viewport {
+    padding: 10px 12px 8px;
+  }
+
+  .m3-sec-cameras-track {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .m3-sec-cameras-track[data-cam-count="1"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .m3-cam-tile {
+    max-height: 205px;
+  }
+
+  .m3-sec-history-section {
+    padding: 10px 14px 22px;
+  }
+
+  .m3-sec-settings-section {
+    padding: 12px 14px 26px;
+  }
+
+  .m3-settings-group {
+    padding: 13px 14px;
+  }
+
+  .m3-settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .m3-settings-choice {
+    width: 100%;
+  }
+
+  .m3-settings-choice-btn {
+    flex: 1 1 0;
+    min-height: 44px;
+  }
+
+  .m3-settings-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .m3-admin-plate-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .m3-admin-plate-form input,
+  .m3-bio-input,
+  .m3-bio-select,
+  .m3-bio-hitl-editor input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  #sec-admin-plate-vehicle {
+    grid-column: 1 / -1;
+  }
+
+  #btn-sec-admin-plate-add {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .m3-admin-btn,
+  .m3-bio-hitl-btn,
+  .m3-bio-admin-toggle {
+    min-height: 44px;
+  }
+
+  .m3-admin-del-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .m3-bio-filters-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .m3-bio-filter-pill {
+    flex: 1 1 140px;
+    min-height: 44px;
+  }
+
+  .m3-bio-events-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .m3-datetime-inputs {
+    width: 100%;
+  }
+
+  .m3-input-pill {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .m3-hub-tile {
+    min-height: 72px;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .m3-tile-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  /* Touch-friendly 44px targets inside device modals & calibration */
+  .btn-close,
+  .m3-icon-btn,
+  .m3-stepper-btn,
+  .m3-tonal-toggle,
+  .thermal-tab-btn,
+  .calib-preset-chip,
+  .calib-cam-pill,
+  .auto-seg-tab {
+    min-height: 44px;
+  }
+
+  .btn-close,
+  .m3-icon-btn {
+    min-width: 44px;
+  }
+
+  /* POV HUD on mobile */
+  .pov-overlay-hud {
+    top: 64px;
+    width: min(360px, calc(100vw - 20px));
+    gap: 5px 8px;
+    padding: 6px 12px;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    border-radius: var(--r-md);
+  }
+
+  .pov-hud-identity {
+    order: 1;
+    flex: 1 1 auto;
+    width: auto;
+    justify-content: flex-start;
+  }
+
+  .pov-hud-actions {
+    order: 2;
+    flex: 0 0 auto;
+    width: auto;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .pov-hud-btn {
+    min-height: 36px;
+    padding: 4px 9px;
+    font-size: 11px;
+  }
+
+  .pov-hud-opacity-wrap {
+    order: 3;
+    flex: 1 1 100%;
+    width: 100%;
+    padding: 0;
+    gap: 8px;
+  }
+
+  .pov-hud-slider {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 180px;
+    height: 20px;
+  }
+}
+
+@media (max-width: 600px) {
+  .m3-admin-form-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Compact Phones (<= 580px): keep top bar in a single slim row without wrapping/clipping */
+@media (max-width: 580px) {
+  .top-bar-controls .top-btn-label {
+    display: none;
+  }
+
+  .top-bar-controls .btn-icon-text {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px;
+    justify-content: center;
+  }
+
+  .btn-settings-gear .settings-chevron {
+    display: none;
+  }
+
+  .m3-cam-tile .m3-cam-badge {
+    display: none;
+  }
+}
+
+/* Very Narrow Phones (<= 420px): keep 4-tab bars & grids clean without squeeze */
+@media (max-width: 420px) {
+  .m3-segmented {
+    gap: 2px;
+    padding: 3px;
+  }
+
+  .m3-seg-btn {
+    padding: 0 5px;
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  .m3-seg-btn .lucide-icon {
+    width: 13px;
+    height: 13px;
+  }
+
+  .thermal-tabs {
+    gap: 3px;
+    padding: 3px;
+  }
+
+  .thermal-tab-btn {
+    padding: 0 4px;
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  .tv-sources-grid,
+  .dishwasher-actions-grid,
+  .consumables-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .calib-sliders-2col,
+  .irrigation-views-grid,
+  .irrigation-quick-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .m3-fab {
+    padding: 0 13px;
+    font-size: 12.5px;
+  }
+
+  .m3-hub-tile {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .m3-tile-title {
+    font-size: 13px;
+  }
+
+  .m3-tile-sub {
+    font-size: 10.5px;
+  }
+}
+
+/* Short Landscape Viewports (phones / small tablets in landscape) */
+@media (max-height: 540px) {
+  .modal-drawer,
+  .calibration-panel,
+  .auto-studio-drawer {
+    max-height: calc(100dvh - 76px);
+  }
+}
+
+/* Touch / Coarse Pointer Input Targets (44x44px ergonomic minimum) & Blur Killer */
+@media (pointer: coarse) {
+  .btn-close,
+  .btn-vol-step,
+  .btn-icon-round,
+  .dpad-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .duration-stepper-box {
+    height: 44px;
+    padding: 3px;
+  }
+
+  .btn-time-step {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .btn-valve-trigger {
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .btn-zone-fly {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .top-bar-controls .btn-icon-text,
+  .settings-dropdown-item,
+  .btn-num,
+  .btn-rocker,
+  .btn-media,
+  .btn-action-primary,
+  .btn-dish-action,
+  .btn-irrigation-stop-all,
+  .btn-irrigation-quick {
+    min-height: 44px;
+  }
+
+  .timeline-slider {
+    height: 8px;
+  }
+
+  .timeline-slider::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+  }
+
+  .timeline-slider::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+  }
+
+  .device-badge-3d {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  /* Avoid backdrop-filter blur over WebGL canvas on coarse-pointer mobile GPUs */
+  .glass,
+  .device-badge-3d,
+  .deebot-dropdown-menu,
+  #ha-auth-overlay,
+  .pwa-update-toast,
+  .m3-nav-sheet,
+  .m3-security-panel,
+  .m3-fab,
+  .auto-studio-drawer,
+  .m3-alarm-modal-overlay {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .glass {
+    background: var(--md-surface);
+  }
+}
+
+/* No-hover devices: prevent sticky hover lifts and clarify active press feedback */
+@media (hover: none) {
+  .btn-icon-text:hover,
+  .btn-action-primary:hover,
+  .btn-power-on:hover,
+  .btn-power-off:hover,
+  .source-chip:hover,
+  .remote-app-btn:hover,
+  .device-badge-3d:hover,
+  .badge-irrigation:hover,
+  .btn-start-prog:hover,
+  .btn-stop-prog:hover,
+  .program-chip:hover,
+  .btn-zone-fly:hover,
+  .btn-irrigation-stop-all:hover,
+  .btn-irrigation-quick:hover {
+    transform: none;
+  }
+
+  .btn-icon-text:active,
+  .source-chip:active,
+  .program-chip:active,
+  .option-btn:active,
+  .btn-action-primary:active {
+    transform: scale(0.97);
+    opacity: 0.9;
+  }
+}

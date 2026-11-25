@@ -95,11 +95,11 @@ export class DishwasherModal {
       </div>
 
       <!-- Azioni Primarie (Power, Avvio, Stop) -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <label>Controlli Rapidi</label>
+      <section class="modal-section">
+        <h4 class="modal-section-title">Controlli Rapidi</h4>
         <div class="dishwasher-actions-grid">
           <!-- Power Button -->
-          <button class="btn-dish-action ${isPoweredOn ? 'btn-power-off' : 'btn-power-on'}" id="btn-dish-power">
+          <button type="button" class="btn-dish-action ${isPoweredOn ? 'btn-power-off' : 'btn-power-on'}" id="btn-dish-power">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
               <line x1="12" y1="2" x2="12" y2="12"></line>
@@ -108,7 +108,7 @@ export class DishwasherModal {
           </button>
 
           <!-- Start Program Button -->
-          <button class="btn-dish-action btn-start-prog" id="btn-dish-start">
+          <button type="button" class="btn-dish-action btn-start-prog" id="btn-dish-start">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
@@ -116,18 +116,18 @@ export class DishwasherModal {
           </button>
 
           <!-- Stop Program Button -->
-          <button class="btn-dish-action btn-stop-prog" id="btn-dish-stop">
+          <button type="button" class="btn-dish-action btn-stop-prog" id="btn-dish-stop">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
               <rect x="5" y="5" width="14" height="14" rx="2"></rect>
             </svg>
             <span>Ferma</span>
           </button>
         </div>
-      </div>
+      </section>
 
       <!-- Selezione Programma -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <label>Selezione Programma di Lavaggio</label>
+      <section class="modal-section">
+        <h4 class="modal-section-title">Selezione Programma di Lavaggio</h4>
         <div class="programs-chips-grid">
           ${this.renderProgramChip('Auto 45°-65°C', 'Dishcare.Dishwasher.Program.Auto2', program)}
           ${this.renderProgramChip('Eco 50°C', 'Dishcare.Dishwasher.Program.Eco50', program)}
@@ -136,11 +136,11 @@ export class DishwasherModal {
           ${this.renderProgramChip('Silenzioso 50°C', 'Dishcare.Dishwasher.Program.NightWash', program)}
           ${this.renderProgramChip('Bicchieri 40°C', 'Dishcare.Dishwasher.Program.Glass40', program)}
         </div>
-      </div>
+      </section>
 
       <!-- Opzioni Speciali e Funzioni Aggiuntive -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <label>Opzioni e Funzioni Speciali</label>
+      <section class="modal-section">
+        <h4 class="modal-section-title">Opzioni e Funzioni Speciali</h4>
         <div class="options-toggle-grid">
           ${this.renderOptionButton(
             'switch.lavastoviglie_extra_dry',
@@ -164,15 +164,15 @@ export class DishwasherModal {
           )}
           ${this.renderOptionButton(
             'switch.lavastoviglie_silence_on_demand',
-            'Silence on Demand',
+            'Modalità silenziosa',
             `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>`
           )}
         </div>
-      </div>
+      </section>
 
       <!-- Diagnostica e Consumabili -->
-      <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <label>Stato Consumabili e Sensori</label>
+      <section class="modal-section">
+        <h4 class="modal-section-title">Stato Consumabili e Sensori</h4>
         <div class="consumables-row">
           <div class="consumable-pill ${isSaltLow ? 'warning' : 'ok'}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -196,17 +196,17 @@ export class DishwasherModal {
             </div>
           </div>
 
-          <div class="consumable-pill ${isDoorOpen ? 'info' : 'ok'}" id="btn-toggle-door-modal" style="cursor: pointer;" title="Clicca per testare l'apertura/chiusura della porta 3D (40°)">
+          <button type="button" class="consumable-pill consumable-pill--interactive ${isDoorOpen ? 'info' : 'ok'}" id="btn-toggle-door-modal" title="Clicca per testare apertura o chiusura dello sportello 3D (40°)" aria-label="Testa apertura o chiusura dello sportello 3D">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 21h18M6 21V3h12v18M14 12v.01"></path>
             </svg>
             <div>
-              <div class="consumable-label">Sportello (Porta)</div>
+              <div class="consumable-label">Sportello (Test 3D)</div>
               <div class="consumable-val">${isDoorOpen ? 'Aperto (40°)' : 'Chiuso'}</div>
             </div>
-          </div>
+          </button>
         </div>
-      </div>
+      </section>
     `;
 
     this.bindEvents(container);

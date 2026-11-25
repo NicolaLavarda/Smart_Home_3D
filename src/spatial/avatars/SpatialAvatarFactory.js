@@ -119,7 +119,7 @@ export class SpatialAvatarFactory {
       'background: rgba(15, 23, 42, 0.88);',
       `border: 1px solid ${style.badgeColor};`,
       'color: #f8fafc;',
-      'font-family: Inter, system-ui, sans-serif;',
+      "font-family: var(--font-sans, 'IBM Plex Sans', system-ui, sans-serif);",
       'font-size: 11px;',
       'font-weight: 600;',
       'white-space: nowrap;',

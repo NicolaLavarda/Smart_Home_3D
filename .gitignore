@@ -16,5 +16,12 @@ caddy/caddy.exe
 tools/nssm.exe
 logs/
 kernel.errors.txt
+skills-lock.json
+.skills/
+.claude/
+.cursor/
+.codex/
+.unslop-cache/
+unslop-story/
 
 

@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from spatial_server.config import SpatialServerConfig
 from spatial_server.main import create_app
 from spatial_server.recordings.filesystem_nvr import FilesystemNvrArchiveRepository
-from tests.e2e.helpers.artifacts import run_js_scenario
+from tests.e2e.helpers.artifacts import read_all_css, run_js_scenario
 
 
 def _invoke_zero_await(coro):
@@ -585,7 +585,7 @@ def test_f17_responsive_camera_presets_and_device_refinements():
     assert 'viewBox="0 0 630 180"' in youtube_svg
     assert ">YouTube<" in youtube_svg
 
-    css_src = (repo_root / "src" / "style.css").read_text(encoding="utf-8")
+    css_src = read_all_css(repo_root)
     assert ".ui-layer.nav-expanded-active .m3-fab-security" in css_src
     assert ".ui-layer.sec-expanded-active .m3-fab-nav" in css_src
     assert ".m3-hub-tile-device:first-child:nth-last-child(odd)" in css_src

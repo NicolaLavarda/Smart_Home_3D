@@ -163,7 +163,7 @@ export class InteractionManager {
         `;
         valEl = badgeEl.querySelector('.badge-val');
       } else if (entityId === 'media_player.smart_tv_lg_oled_2' || entityId === 'media_player.lg_webos_smart_tv') {
-        // Badge Smart TV OLED
+        // Badge Smart TV Salotto
         badgeEl = document.createElement('div');
         badgeEl.className = 'device-badge-3d state-off badge-tv';
         badgeEl.dataset.entityId = entityId;
@@ -172,8 +172,10 @@ export class InteractionManager {
             <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
             <polyline points="17 2 12 7 7 2"></polyline>
           </svg>
-          <span class="badge-name">Smart TV OLED</span>
+          <span class="badge-name">Smart TV:</span>
+          <span class="badge-val" style="color: #94a3b8; font-weight: 600;">Spenta</span>
         `;
+        valEl = badgeEl.querySelector('.badge-val');
       } else if (entityId === 'vacuum.deebot') {
         // Badge Robot Aspirapolvere Ecovacs Deebot (100% SVG pulito)
         badgeEl = document.createElement('div');
@@ -426,6 +428,9 @@ export class InteractionManager {
 
     if (badge.valEl && entityId.startsWith('switch.smart_switch_area')) {
       badge.valEl.textContent = isOn ? 'In funzione' : 'Spento';
+      badge.valEl.style.color = isOn ? '#38bdf8' : '#94a3b8';
+    } else if (badge.valEl && (entityId === 'media_player.smart_tv_lg_oled_2' || entityId === 'media_player.lg_webos_smart_tv')) {
+      badge.valEl.textContent = isOn ? 'Accesa' : 'Spenta';
       badge.valEl.style.color = isOn ? '#38bdf8' : '#94a3b8';
     } else if (badge.valEl && entityId === 'vacuum.deebot') {
       const s = String(friendlyState || '').toLowerCase();
