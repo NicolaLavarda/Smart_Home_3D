@@ -2126,6 +2126,7 @@
 
 .cam-stream-toolbar {
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .cam-stream-quality-group {

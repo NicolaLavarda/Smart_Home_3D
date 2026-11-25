@@ -61,7 +61,7 @@ export class Go2RtcMSEStream extends IVideoStreamProvider {
       'avc1.640032', // H.264 High L5.0
       'avc1.640033', // H.264 High L5.1 (5MP / 4K)
       'avc1.42E01E', // H.264 Baseline
-      'hvc1.1.6.L153.B0', // H.265 / HEVC L5.1 (4K RLC-810A)
+      'hvc1.1.6.L153.B0', // H.265 / HEVC L5.1 (4K RLC-811A)
       'hev1.1.6.L153.B0', // H.265 / HEVC L5.1 alt
       'hvc1.1.6.L180.B0', // H.265 / HEVC L6.0 (16MP Duo 3 PoE)
       'hev1.1.6.L180.B0', // H.265 / HEVC L6.0 alt

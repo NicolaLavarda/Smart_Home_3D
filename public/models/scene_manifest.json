@@ -1898,12 +1898,12 @@
       "stream_id": "carraio_main",
       "sub_stream_id": "carraio_sub",
       "camera_ip": "192.168.86.47",
-      "lens_mm": 4.0,
-      "sensor_width_mm": 6.7128,
-      "sensor_height_mm": 3.0709,
-      "fov_v_deg": 42.0,
-      "fov_h_deg": 80.0,
-      "aspect_ratio": 1.7778,
+      "lens_mm": 2.8,
+      "sensor_width_mm": 6.6738,
+      "sensor_height_mm": 5.0054,
+      "fov_v_deg": 83.58,
+      "fov_h_deg": 100.0,
+      "aspect_ratio": 1.3333,
       "clip_near": 0.1,
       "clip_far": 250.0,
       "blender_transform": {
@@ -1987,7 +1987,7 @@
       },
       "camera_model": "Reolink RLC-540A",
       "main_stream_label": "Main 5MP",
-      "sub_stream_label": "Sub 640×360"
+      "sub_stream_label": "Sub 640×480"
     },
     "Cam_Cooktop_Hood_Detail": {
       "name": "Cam_Cooktop_Hood_Detail",
@@ -2836,13 +2836,13 @@
     "Cam_Portico": {
       "name": "Cam_Portico",
       "ha_camera_entity": "camera.portico",
-      "ha_label": "Portico (Reolink RLC-810A)",
+      "ha_label": "Portico (Reolink RLC-811A)",
       "coverage_zone": "Portico",
       "is_real_security_camera": true,
       "optical_model": "pinhole_radtan",
       "distortion_coeffs": [
-        0.0,
-        0.0,
+        -0.22,
+        0.05,
         0.0,
         0.0,
         0.0
@@ -2850,11 +2850,11 @@
       "stream_id": "portico_main",
       "sub_stream_id": "portico_sub",
       "camera_ip": "192.168.86.51",
-      "lens_mm": 4.0,
-      "sensor_width_mm": 7.5917,
-      "sensor_height_mm": 3.2322,
-      "fov_v_deg": 44.0,
-      "fov_h_deg": 87.0,
+      "lens_mm": 2.7,
+      "sensor_width_mm": 7.0374,
+      "sensor_height_mm": 3.9585,
+      "fov_v_deg": 72.49,
+      "fov_h_deg": 105.0,
       "aspect_ratio": 1.7778,
       "clip_near": 0.1,
       "clip_far": 250.0,
@@ -2937,7 +2937,7 @@
           1.0
         ]
       },
-      "camera_model": "Reolink RLC-810A",
+      "camera_model": "Reolink RLC-811A",
       "main_stream_label": "Main 4K",
       "sub_stream_label": "Sub 640×360"
     },

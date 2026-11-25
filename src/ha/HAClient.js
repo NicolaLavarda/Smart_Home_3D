@@ -525,7 +525,7 @@ export class HAClient {
         state: 'idle',
         attributes: {
           friendly_name: 'Portico',
-          brand: 'Reolink RLC-810A 4K',
+          brand: 'Reolink RLC-811A 4K',
         },
       },
       'camera.ingresso': {

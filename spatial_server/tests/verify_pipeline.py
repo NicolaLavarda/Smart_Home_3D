@@ -399,7 +399,7 @@ def test_multicam_portico_raycast_openvino_and_overlap_fusion() -> None:
     glb_path = REPO_ROOT / "public" / "models" / "house_optimized.glb"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    # 1. Manifest SSoT + Pinhole optical model for Cam_Portico (Reolink RLC-810A)
+    # 1. Manifest SSoT + Pinhole optical model for Cam_Portico (Reolink RLC-811A)
     assert "Cam_Portico" in manifest["cameras"], "Cam_Portico missing from scene_manifest.json"
     portico_entry = manifest["cameras"]["Cam_Portico"]
     assert portico_entry["is_real_security_camera"] is True
@@ -407,8 +407,8 @@ def test_multicam_portico_raycast_openvino_and_overlap_fusion() -> None:
     assert portico_entry["stream_id"] == "portico_main"
     assert portico_entry["sub_stream_id"] == "portico_sub"
     assert portico_entry["camera_ip"] == "192.168.86.51"
-    assert abs(float(portico_entry["fov_h_deg"]) - 87.0) < 0.2
-    assert abs(float(portico_entry["fov_v_deg"]) - 44.0) < 0.2
+    assert abs(float(portico_entry["fov_h_deg"]) - 105.0) < 0.2
+    assert abs(float(portico_entry["fov_v_deg"]) - 72.49) < 0.2
 
     portico_model = create_optical_model_from_manifest("Cam_Portico", portico_entry)
     assert isinstance(portico_model, PinholeRadTanOpticalModel)

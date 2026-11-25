@@ -151,7 +151,7 @@ export class SecurityCameraController extends BaseDeviceController {
     const title =
       manifestCam?.ha_label ||
       catalogCam?.name ||
-      (camName === 'Cam_Portico' ? 'Portico (Reolink RLC-810A)' : null) ||
+      (camName === 'Cam_Portico' ? 'Portico (Reolink RLC-811A)' : null) ||
       (camName === 'Cam_Ingresso' ? 'Ingresso (Reolink Duo 3 PoE)' : null) ||
       (camName === 'Cam_Stradina' ? 'Stradina (Reolink Duo 3 PoE)' : null) ||
       entity?.attributes?.friendly_name ||

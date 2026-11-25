@@ -316,7 +316,7 @@ def test_f10_t3_security_hub_keeps_streams_alive_on_close_and_fallback_main_to_s
       const catalog = new CameraCatalog();
       catalog.registerCamera({
         id: 'Cam_Portico',
-        name: 'Portico (Reolink RLC-810A)',
+        name: 'Portico (Reolink RLC-811A)',
         shortName: 'Portico',
         entityId: 'camera.portico',
         mainStream: 'portico_main',
@@ -452,7 +452,7 @@ def test_f10_t3_explicit_main_switch_never_snaps_back_to_sub_and_resolves_ha_tra
       const catalog = new CameraCatalog();
       catalog.registerCamera({
         id: 'Cam_Portico',
-        name: 'Portico (Reolink RLC-810A)',
+        name: 'Portico (Reolink RLC-811A)',
         shortName: 'Portico',
         entityId: 'camera.portico',
         mainStream: 'portico_main',

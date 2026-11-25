@@ -22,8 +22,8 @@ export class CameraController {
     this.targetPos = new THREE.Vector3();
     this.startTarget = new THREE.Vector3();
     this.endTarget = new THREE.Vector3();
-    this.startFov = 45;
-    this.targetFov = 45;
+    this.startFov = 56;
+    this.targetFov = 56;
     this.onTransitionComplete = null;
 
     // Stato follow continuo di un target dinamico (es. Robot Deebot)
@@ -92,96 +92,96 @@ export class CameraController {
     this.domElement.addEventListener('wheel', this._onUserInteract, { passive: true });
     this.domElement.addEventListener('touchstart', this._onUserInteract, { passive: true });
 
-    // Preset Viste
+    // Preset Viste (FOV più ampio 54°-62° V per far respirare gli spazi interni ed esterni)
     this.presets = {
       overview: {
         eye: new THREE.Vector3(24.0, 22.0, 32.0),
         target: new THREE.Vector3(-0.5, 1.0, 16.0),
-        fov: 45,
+        fov: 56,
       },
       gate: {
         eye: new THREE.Vector3(-12.2, 3.6, -1.5),
         target: new THREE.Vector3(-12.2, 1.0, 6.28),
-        fov: 50,
+        fov: 58,
       },
       carraio_cam: {
         eye: new THREE.Vector3(-11.29, 1.68, 6.03),
         target: new THREE.Vector3(-11.29, 0.5, -2.5),
-        fov: 42,
+        fov: 58,
       },
       living: {
         eye: new THREE.Vector3(6.0, 3.2, 6.4),
         target: new THREE.Vector3(2.8, 1.2, 3.2),
-        fov: 48,
+        fov: 60,
       },
       dining: {
-        eye: new THREE.Vector3(8.0, 1.30, 7.0),
+        eye: new THREE.Vector3(8.65, 1.28, 6.54),
         target: new THREE.Vector3(12.8, 1.15, 3.6),
-        fov: 50,
+        fov: 60,
       },
       kitchen: {
         eye: new THREE.Vector3(11.2, 2.6, 3.4),
         target: new THREE.Vector3(7.8, 1.1, 6.2),
-        fov: 50,
+        fov: 60,
       },
       laundry: {
         eye: new THREE.Vector3(1.12, 1.46, 12.90),
         target: new THREE.Vector3(0.98, 0.95, 14.78),
-        fov: 54,
+        fov: 62,
       },
       garden: {
         eye: new THREE.Vector3(-24.0, 19.0, 36.0),
         target: new THREE.Vector3(-1.0, 1.0, 14.0),
-        fov: 48,
+        fov: 58,
       },
       irrigation_area1: {
         eye: new THREE.Vector3(-0.5, 14.0, 42.0),
         target: new THREE.Vector3(-0.5, 0.0, 27.5),
-        fov: 48,
+        fov: 56,
       },
       irrigation_area2: {
         eye: new THREE.Vector3(10.0, 11.0, 3.5),
         target: new THREE.Vector3(10.0, 0.0, 13.0),
-        fov: 48,
+        fov: 56,
       },
       irrigation_area3: {
         eye: new THREE.Vector3(-18.0, 13.0, 11.5),
         target: new THREE.Vector3(-4.0, 0.0, 11.5),
-        fov: 48,
+        fov: 56,
       },
       topdown: {
         eye: new THREE.Vector3(-0.5, 45.0, 15.01),
         target: new THREE.Vector3(-0.5, 0.0, 15.0),
-        fov: 45,
+        fov: 54,
       },
       // Viste contestuali dedicate per i 5 centri di controllo / dispositivi (primo piano + contesto stanza/giardino)
       device_thermal: {
         // Interno lavanderia (oltre il muro nord a Z=12.63 verso il portico) con caldaia e puffer in primo piano
         eye: new THREE.Vector3(1.12, 1.46, 12.90),
         target: new THREE.Vector3(0.98, 0.95, 14.78),
-        fov: 54,
+        fov: 62,
       },
       device_irrigation: {
         eye: new THREE.Vector3(-16.0, 17.5, 34.0),
         target: new THREE.Vector3(0.5, 0.5, 16.5),
-        fov: 48,
+        fov: 58,
       },
       device_tv: {
         eye: new THREE.Vector3(5.3, 2.05, 4.7),
         target: new THREE.Vector3(1.0, 1.15, 2.85),
-        fov: 48,
+        fov: 58,
       },
       device_dishwasher: {
         // Stessa angolazione diagonale della vista cucina, centrata e leggermente avvicinata sulla lavastoviglie
         eye: new THREE.Vector3(10.55, 1.88, 4.75),
         target: new THREE.Vector3(8.38, 0.72, 7.00),
-        fov: 48,
+        fov: 58,
       },
       device_deebot: {
         // Vista di fallback usata solo se le coordinate live/3D del robot non sono disponibili
         eye: new THREE.Vector3(9.4, 2.25, 4.3),
         target: new THREE.Vector3(13.2, 0.45, 2.1),
-        fov: 48,
+        fov: 58,
       },
     };
 
@@ -191,62 +191,62 @@ export class CameraController {
       overview: {
         eye: new THREE.Vector3(20.0, 32.0, 37.5),
         target: new THREE.Vector3(7.2, 1.0, 7.5),
-        fov: 54,
+        fov: 62,
       },
       topdown: {
         eye: new THREE.Vector3(6.9, 46.0, 10.21),
         target: new THREE.Vector3(6.9, 0.0, 10.2),
-        fov: 50,
+        fov: 56,
       },
       garden: {
         eye: new THREE.Vector3(-27.0, 24.5, 40.0),
         target: new THREE.Vector3(-1.5, 1.0, 14.0),
-        fov: 58,
+        fov: 64,
       },
       living: {
         eye: new THREE.Vector3(6.1, 3.1, 6.5),
         target: new THREE.Vector3(2.6, 1.15, 3.1),
-        fov: 60,
+        fov: 66,
       },
       dining: {
-        eye: new THREE.Vector3(7.8, 1.45, 7.0),
+        eye: new THREE.Vector3(8.45, 1.41, 6.54),
         target: new THREE.Vector3(12.6, 1.15, 3.6),
-        fov: 60,
+        fov: 66,
       },
       kitchen: {
         eye: new THREE.Vector3(11.3, 2.55, 3.4),
         target: new THREE.Vector3(7.8, 1.05, 6.2),
-        fov: 60,
+        fov: 66,
       },
       laundry: {
         eye: new THREE.Vector3(1.12, 1.46, 12.90),
         target: new THREE.Vector3(0.98, 0.90, 14.78),
-        fov: 68,
+        fov: 70,
       },
       device_thermal: {
         eye: new THREE.Vector3(1.12, 1.46, 12.90),
         target: new THREE.Vector3(0.98, 0.90, 14.78),
-        fov: 68,
+        fov: 70,
       },
       device_irrigation: {
         eye: new THREE.Vector3(-22.0, 24.5, 40.0),
         target: new THREE.Vector3(-0.5, 0.5, 15.0),
-        fov: 58,
+        fov: 64,
       },
       device_tv: {
         eye: new THREE.Vector3(5.3, 2.05, 4.7),
         target: new THREE.Vector3(1.0, 1.15, 2.85),
-        fov: 60,
+        fov: 66,
       },
       device_dishwasher: {
         eye: new THREE.Vector3(10.55, 1.88, 4.75),
         target: new THREE.Vector3(8.38, 0.72, 7.00),
-        fov: 60,
+        fov: 66,
       },
       device_deebot: {
         eye: new THREE.Vector3(9.4, 2.25, 4.3),
         target: new THREE.Vector3(13.2, 0.45, 2.1),
-        fov: 58,
+        fov: 64,
       },
     };
 
@@ -266,8 +266,8 @@ export class CameraController {
     return aspect < 0.85;
   }
 
-  getResponsiveFov(baseFov = 46) {
-    return this.isPortraitViewport() ? Math.min(66, baseFov + 10) : baseFov;
+  getResponsiveFov(baseFov = 58) {
+    return this.isPortraitViewport() ? Math.min(72, baseFov + 8) : baseFov;
   }
 
   getPresetForViewport(presetKey) {
@@ -305,7 +305,7 @@ export class CameraController {
     return true;
   }
 
-  startFollowing(getTargetFn, offset = new THREE.Vector3(-2.1, 1.65, 2.1), duration = 1.1, targetFov = 46) {
+  startFollowing(getTargetFn, offset = new THREE.Vector3(-2.1, 1.65, 2.1), duration = 1.1, targetFov = 58) {
     if (typeof getTargetFn !== 'function') return;
     this.followTargetFn = getTargetFn;
     this.followOffset = offset.clone();
@@ -425,7 +425,7 @@ export class CameraController {
     }
   }
 
-    flyTo(eyePosition, targetPosition, duration = 1.2, onComplete = null, targetFov = 45, keepFollowing = false, keepPov = false) {
+    flyTo(eyePosition, targetPosition, duration = 1.2, onComplete = null, targetFov = 56, keepFollowing = false, keepPov = false) {
       if (eyePosition && !eyePosition.isVector3 && eyePosition.position && eyePosition.target) {
         const opts = eyePosition;
         return this.flyTo(
@@ -466,7 +466,7 @@ export class CameraController {
       this.endTarget.copy(targetPosition);
 
       this.startFov = this.camera.fov;
-      this.targetFov = targetFov || 45;
+      this.targetFov = targetFov || 56;
 
       this.onTransitionComplete = onComplete;
     }
@@ -478,7 +478,7 @@ export class CameraController {
         if (duration <= 0) {
           this.applyPresetImmediate(presetKey);
         } else {
-          this.flyTo(preset.eye, preset.target, duration, null, preset.fov || 45);
+          this.flyTo(preset.eye, preset.target, duration, null, preset.fov || 56);
         }
       }
     }

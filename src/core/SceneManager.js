@@ -16,7 +16,7 @@ export class SceneManager {
     this.isMobileProfile = this.detectMobileTouchProfile();
 
     // Setup Camera
-    this.camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 1000);
+    this.camera = new THREE.PerspectiveCamera(56, this.width / this.height, 0.1, 1000);
     this.camera.position.set(23.0, 18.0, 25.0);
 
     // WebGL Renderer calibrato con profilo mobile/desktop adattivo (qualità HD nitida + shadow map on-demand su mobile)

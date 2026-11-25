@@ -38,12 +38,24 @@ def create_optical_model_from_manifest(camera_id: str, cam_entry: dict[str, Any]
             fov_v_deg=fov_v,
         )
 
+    aspect_raw = cam_entry.get("aspect_ratio", 16.0 / 9.0)
+    try:
+        aspect_ratio = float(aspect_raw)
+    except (TypeError, ValueError):
+        aspect_ratio = 16.0 / 9.0
+    if aspect_ratio <= 0.2:
+        aspect_ratio = 16.0 / 9.0
+    image_height = 1080
+    image_width = max(1, int(round(image_height * aspect_ratio)))
+
     return PinholeRadTanOpticalModel(
         camera_id=camera_id,
         extrinsic_cv_to_world=extrinsic,
         fov_h_deg=fov_h,
         fov_v_deg=fov_v,
         distortion_coeffs=cam_entry.get("distortion_coeffs", [-0.18, 0.04, 0.0, 0.0, 0.0]),
+        image_width=image_width,
+        image_height=image_height,
     )
 
 
