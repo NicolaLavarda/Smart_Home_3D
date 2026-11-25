@@ -167,6 +167,14 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self._raw_detections_total = 0
         self._last_frame_ts = 0.0
         self._last_error: Optional[str] = None
+        self._target_fps: float = max(0.25, float(target_fps))
+        self._last_infer_ms: float = 0.0
+        self._infer_ms_ema: float = 0.0
+        self._reconnect_count: int = 0
+        self._has_connected_once: bool = False
+        self._mean_luma: float = 0.0
+        self._mean_saturation: float = 0.0
+        self._is_night_ir: bool = False
         if shared_compiled_ov is not None:
             if hasattr(shared_compiled_ov, "run") and hasattr(shared_compiled_ov, "get_inputs"):
                 self._ort_session = shared_compiled_ov
@@ -374,6 +382,32 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             self.model_path,
         )
 
+    def set_target_fps(self, fps: float) -> None:
+        clamped = max(0.25, float(fps))
+        self._target_fps = clamped
+        self.frame_interval_s = 1.0 / clamped
+
+    def get_target_fps(self) -> float:
+        return float(getattr(self, "_target_fps", 1.0 / max(self.frame_interval_s, 1e-3)))
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        return {
+            "camera_id": self.camera_id,
+            "rtsp_connected": self._rtsp_connected,
+            "backend": self._backend_name,
+            "target_fps": round(self.get_target_fps(), 3),
+            "frames_read": self._frames_read,
+            "frames_inferred": self._frames_inferred,
+            "raw_detections_total": self._raw_detections_total,
+            "last_infer_ms": round(self._last_infer_ms, 2),
+            "infer_ms_ema": round(self._infer_ms_ema, 2),
+            "reconnect_count": self._reconnect_count,
+            "mean_luma": round(self._mean_luma, 1),
+            "mean_saturation": round(self._mean_saturation, 1),
+            "is_night_ir": self._is_night_ir,
+            "last_error": self._last_error,
+        }
+
     def status_details(self) -> str:
         rtsp_state = "rtsp=ok" if self._rtsp_connected else "rtsp=waiting"
         cam_id = getattr(self, "camera_id", None)
@@ -442,6 +476,9 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                         cap = None
                         await asyncio.sleep(3.0)
                         continue
+                    if self._has_connected_once:
+                        self._reconnect_count += 1
+                    self._has_connected_once = True
                     self._rtsp_connected = True
                     warned_unavailable = False
                     self._last_error = None
@@ -478,9 +515,22 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                         self._latest_frame = frame.copy()
                         self._latest_frame_ts = now_frame_ts
 
+                t_infer_start = time.perf_counter()
                 events = await loop.run_in_executor(self._executor, self._infer_frame, frame, now_frame_ts)
+                infer_ms = (time.perf_counter() - t_infer_start) * 1000.0
+                self._last_infer_ms = infer_ms
+                self._infer_ms_ema = infer_ms if self._infer_ms_ema <= 0.0 else (0.8 * self._infer_ms_ema + 0.2 * infer_ms)
                 self._frames_inferred += 1
                 self._raw_detections_total += len(events)
+                if self._frames_inferred == 1 or (self._frames_inferred % 10 == 0):
+                    try:
+                        small = cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA)
+                        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+                        self._mean_saturation = float(hsv[:, :, 1].mean())
+                        self._mean_luma = float(hsv[:, :, 2].mean())
+                        self._is_night_ir = self._mean_saturation < 14.0
+                    except Exception:
+                        pass
                 self._last_error = None
                 last_infer_t = time.monotonic()
 

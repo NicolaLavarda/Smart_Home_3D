@@ -501,6 +501,7 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         self._tracks: dict[int, _KalmanTrack] = {}
         self._expired_tracks: dict[int, tuple[_KalmanTrack, float]] = {}
         self._recent_merges: list[tuple[int, int]] = []
+        self._lifecycle_events: list[dict[str, Any]] = []
         self._last_now = 0.0
         self.camera_visibility_fn = camera_visibility_fn
 
@@ -647,7 +648,15 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
             if effective_now - max(tr.camera_sources.values(), default=tr.last_ts) > self.track_ttl_s
         ]
         for tid in expired:
-            self._expired_tracks[tid] = (self._tracks[tid], effective_now)
+            tr_exp = self._tracks[tid]
+            self._expired_tracks[tid] = (tr_exp, effective_now)
+            self._record_lifecycle(
+                event="expired",
+                track_id=tid,
+                class_label=tr_exp.class_label,
+                camera_id=tr_exp.last_camera_id,
+                timestamp=effective_now,
+            )
             del self._tracks[tid]
 
         max_reid_ttl = max(self.stationary_vehicle_reid_s, self.person_reid_s, 10.0) + 5.0
@@ -891,7 +900,7 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                         and obs.identity == tr_exp.identity
                     )
                     same_cam = obs.camera_id in tr_exp.camera_sources
-                    max_r = 4.5 if same_id else (1.6 if same_cam else 0.0)
+                    max_r = 4.5 if same_id else (min(2.6, 1.4 + 0.35 * dt_exp) if same_cam else 0.0)
                     if dist_xz > max_r:
                         continue
                 else:
@@ -910,6 +919,15 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                 tr_exp.correct(obs, batch_seq=batch_seq)
                 self._tracks[revive_tid] = tr_exp
                 obs_assignments[orig_idx] = revive_tid
+                self._record_lifecycle(
+                    event="reid_revived",
+                    track_id=revive_tid,
+                    class_label=obs.class_label,
+                    camera_id=obs.camera_id,
+                    dt_gap_s=round(max(0.0, now_ts - tr_exp.last_ts), 3),
+                    dist_xz_m=round(_dist, 3),
+                    timestamp=now_ts,
+                )
                 continue
 
             tid = self._next_track_id
@@ -939,6 +957,13 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                 stationary_since_ts=ts0,
             )
             obs_assignments[orig_idx] = tid
+            self._record_lifecycle(
+                event="created",
+                track_id=tid,
+                class_label=obs.class_label,
+                camera_id=obs.camera_id,
+                timestamp=now_ts,
+            )
 
         # Propagate assignments to any suppressed intra-camera duplicates
         for dup_orig_idx, prim_orig_idx in dup_map.items():
@@ -1013,6 +1038,17 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
             -int(tr.track_id),  # Prefer older (lower) track_id for stability
         )
 
+    def _record_lifecycle(self, **entry: Any) -> None:
+        self._lifecycle_events.append(entry)
+        if len(self._lifecycle_events) > 500:
+            self._lifecycle_events = self._lifecycle_events[-500:]
+
+    def pop_lifecycle_events(self) -> list[dict[str, Any]]:
+        """Return and clear recent track lifecycle telemetry entries."""
+        items = list(self._lifecycle_events)
+        self._lifecycle_events.clear()
+        return items
+
     def pop_merged_tracks(self) -> list[tuple[int, int]]:
         """Return and clear recent ``(kept_track_id, dropped_track_id)`` merges."""
         merges = list(self._recent_merges)
@@ -1033,6 +1069,13 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         tr_keep.absorb_other_track(tr_drop, now_ts)
         del self._tracks[tid_drop]
         self._recent_merges.append((tid_keep, tid_drop))
+        self._record_lifecycle(
+            event="merged",
+            track_id=tid_keep,
+            dropped_track_id=tid_drop,
+            class_label=tr_keep.class_label,
+            timestamp=now_ts,
+        )
         for obs_idx, assigned_tid in list(obs_assignments.items()):
             if assigned_tid == tid_drop:
                 obs_assignments[obs_idx] = tid_keep

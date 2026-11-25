@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import math
 import re
@@ -79,6 +80,66 @@ def _coarse_event_class(class_label: str) -> str:
     return class_label
 
 
+def _bbox_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    inter = (ix2 - ix1) * (iy2 - iy1)
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return (inter / union) if union > 1e-9 else 0.0
+
+
+def _extract_norm_gray_thumb(
+    frame_bgr: np.ndarray,
+    bbox_norm: tuple[float, float, float, float],
+) -> Optional[np.ndarray]:
+    if frame_bgr is None or frame_bgr.size == 0:
+        return None
+    h, w = frame_bgr.shape[:2]
+    if w < 16 or h < 16:
+        return None
+    x1 = max(0, min(w - 1, int(round(bbox_norm[0] * w))))
+    y1 = max(0, min(h - 1, int(round(bbox_norm[1] * h))))
+    x2 = max(x1 + 1, min(w, int(round(bbox_norm[2] * w))))
+    y2 = max(y1 + 1, min(h, int(round(bbox_norm[3] * h))))
+    crop = frame_bgr[y1:y2, x1:x2]
+    if crop.size == 0 or crop.shape[0] < 4 or crop.shape[1] < 4:
+        return None
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    resized = cv2.resize(gray, (64, 32), interpolation=cv2.INTER_AREA).astype(np.float32).reshape(-1)
+    resized -= float(resized.mean())
+    norm = float(np.linalg.norm(resized))
+    if norm < 1e-5:
+        return None
+    resized /= norm
+    return resized
+
+
+def _thumb_ncc(a: Optional[np.ndarray], b: Optional[np.ndarray]) -> Optional[float]:
+    if a is None or b is None or a.shape != b.shape:
+        return None
+    return float(np.dot(a, b))
+
+
+@dataclass
+class _ParkedVehicleSlot:
+    camera_id: str
+    bbox_norm: Optional[tuple[float, float, float, float]]
+    world_xz: tuple[float, float]
+    plate: Optional[str]
+    thumb_gray: Optional[np.ndarray]
+    parked_since_ts: float
+    last_confirmed_ts: float
+    miss_checks: int = 0
+
+
 def _compute_importance(
     subjects: list[SceneSubjectRecord],
     *,
@@ -152,6 +213,10 @@ class SceneEventManager:
         self._track_alias_in_event: dict[int, int] = {}
         self._vehicle_motion_state: dict[int, tuple[float, float, float]] = {}
         self._parked_vehicle_anchors: list[tuple[float, float, Optional[str], float]] = []
+        self._parked_slots: list[_ParkedVehicleSlot] = []
+        self._bg_parked_tids: set[int] = set()
+        self._last_slot_verify_ts: float = 0.0
+        self._slot_events: list[dict[str, Any]] = []
         self._latest_cam_detections: dict[str, tuple[float, list[tuple[DetectionEvent, Optional[int]]]]] = {}
         self._last_snapshot_fetch_mono: float = 0.0
         self._pending_snapshot_task: Optional[asyncio.Task[None]] = None
@@ -475,22 +540,73 @@ class SceneEventManager:
 
         # Map each DetectionEvent to its assigned (canonicalized) track_id
         event_to_tid: dict[int, int] = {}
+        veh_det_by_tid: dict[int, tuple[str, tuple[float, float, float, float]]] = {}
         idx_source = grounded_events if grounded_events is not None else events
         for obs_idx, tid in obs_assignments.items():
             if 0 <= obs_idx < len(idx_source):
-                event_to_tid[id(idx_source[obs_idx])] = self._resolve_tid_alias(tid)
+                canon_map_tid = self._resolve_tid_alias(tid)
+                evt_ref = idx_source[obs_idx]
+                event_to_tid[id(evt_ref)] = canon_map_tid
+                if evt_ref.class_label in _VEHICLE_CLASSES and canon_map_tid not in veh_det_by_tid:
+                    veh_det_by_tid[canon_map_tid] = (
+                        evt_ref.camera_id,
+                        (float(evt_ref.bbox.x_min), float(evt_ref.bbox.y_min), float(evt_ref.bbox.x_max), float(evt_ref.bbox.y_max)),
+                    )
 
-        # Clean up aged vehicle motion / parked anchors
+        # Clean up aged vehicle motion / parked anchors / parked visual slots
         self._parked_vehicle_anchors = [
             (ax, az, a_plate, a_ts)
             for (ax, az, a_plate, a_ts) in self._parked_vehicle_anchors
             if abs(ts - a_ts) <= 180.0
         ]
+        self._parked_slots = [
+            s for s in self._parked_slots
+            if abs(ts - s.last_confirmed_ts) <= 14400.0
+        ]
+        if len(self._parked_slots) > 12:
+            self._parked_slots = self._parked_slots[-12:]
         if len(self._vehicle_motion_state) > 200:
             self._vehicle_motion_state = {
                 k: v for k, v in self._vehicle_motion_state.items()
                 if abs(ts - v[2]) <= (self.stationary_vehicle_s + 300.0)
             }
+
+        def _get_cam_thumb(cam_id: str, bbox_norm: tuple[float, float, float, float]) -> Optional[np.ndarray]:
+            if self.substream_frame_getter is None:
+                return None
+            try:
+                res = self.substream_frame_getter(cam_id)
+                if res is None:
+                    return None
+                frame_bgr, frame_ts = res
+                if abs(ts - float(frame_ts)) <= 10.0 or abs(time.time() - float(frame_ts)) <= 10.0:
+                    return _extract_norm_gray_thumb(frame_bgr, bbox_norm)
+            except Exception:
+                return None
+            return None
+
+        def _find_matching_slot(
+            tr_obj: TrackedEntity3D,
+            det_info: Optional[tuple[str, tuple[float, float, float, float]]],
+            tr_plate_norm: Optional[str],
+        ) -> Optional[_ParkedVehicleSlot]:
+            for slot in self._parked_slots:
+                if tr_plate_norm and slot.plate and tr_plate_norm == slot.plate:
+                    return slot
+                if det_info is not None and slot.bbox_norm is not None and det_info[0] == slot.camera_id:
+                    iou = _bbox_iou(slot.bbox_norm, det_info[1])
+                    dist_xz = math.hypot(float(tr_obj.state.x) - slot.world_xz[0], float(tr_obj.state.z) - slot.world_xz[1])
+                    if iou >= 0.55 and dist_xz <= 3.5:
+                        if slot.thumb_gray is not None:
+                            cur_thumb = _get_cam_thumb(det_info[0], det_info[1])
+                            ncc = _thumb_ncc(slot.thumb_gray, cur_thumb)
+                            if ncc is None or ncc >= 0.72:
+                                return slot
+                        else:
+                            return slot
+                if math.hypot(float(tr_obj.state.x) - slot.world_xz[0], float(tr_obj.state.z) - slot.world_xz[1]) <= 2.2:
+                    return slot
+            return None
 
         # Identify background stationary parked vehicles
         bg_parked_tids: set[int] = set()
@@ -500,21 +616,62 @@ class SceneEventManager:
             tid = tr.track_id
             speed_xz = math.hypot(float(tr.state.vx), float(tr.state.vz))
             tr_plate = (tr.plate or "").strip().upper() or None
+            det_info = veh_det_by_tid.get(tid) or veh_det_by_tid.get(self._resolve_tid_alias(tid))
+            matched_slot = _find_matching_slot(tr, det_info, tr_plate)
+
             state_entry = self._vehicle_motion_state.get(tid)
             if state_entry is None:
                 inherited_ts = ts
                 if speed_xz < 0.45:
-                    for ax, az, a_plate, _a_ts in self._parked_vehicle_anchors:
-                        dist_a = math.hypot(float(tr.state.x) - ax, float(tr.state.z) - az)
-                        if (tr_plate and a_plate and tr_plate == a_plate) or dist_a <= 2.2:
-                            inherited_ts = ts - self.stationary_vehicle_s - 0.1
-                            break
+                    if matched_slot is not None:
+                        inherited_ts = min(matched_slot.parked_since_ts, ts - self.stationary_vehicle_s - 0.1)
+                    else:
+                        for ax, az, a_plate, _a_ts in self._parked_vehicle_anchors:
+                            dist_a = math.hypot(float(tr.state.x) - ax, float(tr.state.z) - az)
+                            if (tr_plate and a_plate and tr_plate == a_plate) or dist_a <= 2.2:
+                                inherited_ts = ts - self.stationary_vehicle_s - 0.1
+                                break
                 self._vehicle_motion_state[tid] = (float(tr.state.x), float(tr.state.z), inherited_ts)
                 ax, az, anchor_ts = float(tr.state.x), float(tr.state.z), inherited_ts
             else:
                 ax, az, anchor_ts = state_entry
                 disp = math.hypot(float(tr.state.x) - ax, float(tr.state.z) - az)
-                if disp > 0.65 or speed_xz >= 0.65:
+                already_parked = (ts - anchor_ts) >= self.stationary_vehicle_s or matched_slot is not None
+                if already_parked:
+                    iou_departed = (
+                        matched_slot is not None
+                        and matched_slot.bbox_norm is not None
+                        and det_info is not None
+                        and det_info[0] == matched_slot.camera_id
+                        and _bbox_iou(matched_slot.bbox_norm, det_info[1]) < 0.45
+                    )
+                    if disp > 1.15 or speed_xz >= 0.85 or iou_departed:
+                        old_ax, old_az = ax, az
+                        ax, az, anchor_ts = float(tr.state.x), float(tr.state.z), ts
+                        self._vehicle_motion_state[tid] = (ax, az, anchor_ts)
+                        self._parked_vehicle_anchors = [
+                            item for item in self._parked_vehicle_anchors
+                            if math.hypot(old_ax - item[0], old_az - item[1]) > 2.2
+                            and math.hypot(ax - item[0], az - item[1]) > 2.2
+                        ]
+                        removed_slots = [
+                            s for s in self._parked_slots
+                            if s is matched_slot or math.hypot(old_ax - s.world_xz[0], old_az - s.world_xz[1]) <= 2.2
+                        ]
+                        if removed_slots:
+                            for s_rem in removed_slots:
+                                if s_rem in self._parked_slots:
+                                    self._parked_slots.remove(s_rem)
+                            self._record_slot_event(
+                                event="slot_departed",
+                                camera_id=removed_slots[0].camera_id,
+                                track_id=tid,
+                                disp_m=round(disp, 3),
+                                speed_mps=round(speed_xz, 3),
+                                iou_departed=iou_departed,
+                                timestamp=ts,
+                            )
+                elif disp > 0.65 or speed_xz >= 0.65:
                     ax, az, anchor_ts = float(tr.state.x), float(tr.state.z), ts
                     self._vehicle_motion_state[tid] = (ax, az, anchor_ts)
                     self._parked_vehicle_anchors = [
@@ -532,6 +689,44 @@ class SceneEventManager:
                         break
                 if not updated_anchor:
                     self._parked_vehicle_anchors.append((ax, az, tr_plate, ts))
+
+                if matched_slot is not None:
+                    matched_slot.last_confirmed_ts = ts
+                    matched_slot.miss_checks = 0
+                    if tr_plate and not matched_slot.plate:
+                        matched_slot.plate = tr_plate
+                    if det_info is not None and matched_slot.bbox_norm is None:
+                        matched_slot.bbox_norm = det_info[1]
+                        matched_slot.camera_id = det_info[0]
+                    if det_info is not None and matched_slot.thumb_gray is None:
+                        matched_slot.thumb_gray = _get_cam_thumb(det_info[0], det_info[1])
+                else:
+                    slot_cam = det_info[0] if det_info is not None else (tr.state.camera_sources[0] if tr.state.camera_sources else "")
+                    slot_bbox = det_info[1] if det_info is not None else None
+                    slot_thumb = _get_cam_thumb(slot_cam, slot_bbox) if (slot_cam and slot_bbox is not None) else None
+                    self._parked_slots.append(
+                        _ParkedVehicleSlot(
+                            camera_id=slot_cam,
+                            bbox_norm=slot_bbox,
+                            world_xz=(ax, az),
+                            plate=tr_plate,
+                            thumb_gray=slot_thumb,
+                            parked_since_ts=anchor_ts,
+                            last_confirmed_ts=ts,
+                            miss_checks=0,
+                        )
+                    )
+                    self._record_slot_event(
+                        event="slot_registered",
+                        camera_id=slot_cam,
+                        track_id=tid,
+                        plate=tr_plate,
+                        world_xz=[round(ax, 2), round(az, 2)],
+                        has_thumb=slot_thumb is not None,
+                        timestamp=ts,
+                    )
+
+        self._bg_parked_tids = set(bg_parked_tids)
 
         active_foreground_tracks = [t for t in relevant_tracks if t.track_id not in bg_parked_tids]
         if relevant_tracks:
@@ -1093,10 +1288,63 @@ class SceneEventManager:
             await self._broadcast_event(updated_ev)
         return updated_ev
 
+    def _record_slot_event(self, **entry: Any) -> None:
+        self._slot_events.append(entry)
+        if len(self._slot_events) > 300:
+            self._slot_events = self._slot_events[-300:]
+
+    def get_background_parked_track_ids(self) -> set[int]:
+        return set(self._bg_parked_tids)
+
+    def get_parked_slots_count(self) -> int:
+        return len(self._parked_slots)
+
+    def pop_slot_events(self) -> list[dict[str, Any]]:
+        items = list(self._slot_events)
+        self._slot_events.clear()
+        return items
+
     async def tick(self, now_ts: Optional[float] = None) -> Optional[SceneEventRecord]:
         ts = float(now_ts if now_ts is not None else time.time())
         closed_ev: Optional[SceneEventRecord] = None
         async with self._lock:
+            if (
+                self._parked_slots
+                and self.substream_frame_getter is not None
+                and abs(ts - self._last_slot_verify_ts) >= 30.0
+            ):
+                self._last_slot_verify_ts = ts
+                remaining_slots: list[_ParkedVehicleSlot] = []
+                for slot in self._parked_slots:
+                    if abs(ts - slot.last_confirmed_ts) > 14400.0:
+                        self._record_slot_event(event="slot_expired", camera_id=slot.camera_id, timestamp=ts)
+                        continue
+                    if slot.camera_id and slot.bbox_norm is not None and slot.thumb_gray is not None:
+                        try:
+                            res = self.substream_frame_getter(slot.camera_id)
+                            if res is not None:
+                                frame_bgr, _fts = res
+                                cur_thumb = _extract_norm_gray_thumb(frame_bgr, slot.bbox_norm)
+                                ncc = _thumb_ncc(slot.thumb_gray, cur_thumb)
+                                if ncc is not None:
+                                    if ncc >= 0.72:
+                                        slot.last_confirmed_ts = ts
+                                        slot.miss_checks = 0
+                                    elif ncc < 0.45:
+                                        slot.miss_checks += 1
+                                        if slot.miss_checks >= 2:
+                                            self._record_slot_event(
+                                                event="slot_cleared_visual",
+                                                camera_id=slot.camera_id,
+                                                ncc=round(ncc, 3),
+                                                timestamp=ts,
+                                            )
+                                            continue
+                        except Exception:
+                            pass
+                    remaining_slots.append(slot)
+                self._parked_slots = remaining_slots
+
             ev = self._active_event
             if ev is not None and (
                 (ts - ev.ended_at) >= self.inertia_s

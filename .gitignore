@@ -12,6 +12,7 @@ spatial_server/data/*.db*
 spatial_server/models/
 spatial_server/data/camera_calibrations.json
 spatial_server/data/biometrics/
+spatial_server/data/research_telemetry/
 caddy/caddy.exe
 tools/nssm.exe
 logs/

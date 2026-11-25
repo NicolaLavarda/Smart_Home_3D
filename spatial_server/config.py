@@ -291,6 +291,16 @@ class SpatialServerConfig:
     events_snapshot_max_mb: float = 400.0
     events_snapshot_max_width: int = 1280
     signed_media_ttl_s: int = 86400
+    openvino_adaptive_fps_enabled: bool = True
+    openvino_adaptive_idle_fps: float = 1.2
+    openvino_adaptive_min_idle_fps: float = 1.0
+    openvino_adaptive_max_person_fps: float = 5.0
+    openvino_adaptive_max_vehicle_fps: float = 3.5
+    openvino_adaptive_boost_hold_s: float = 5.0
+    research_telemetry_enabled: Optional[bool] = None
+    research_telemetry_max_mb: float = 250.0
+    research_telemetry_retention_days: int = 7
+    research_telemetry_save_crops: bool = True
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -365,6 +375,13 @@ class SpatialServerConfig:
         biometrics_enabled = _parse_bool_env("BIOMETRICS_ENABLED", False)
         if dev_mode and (os.getenv("BIOMETRICS_DEV_ENABLED") or "").strip():
             biometrics_enabled = _parse_bool_env("BIOMETRICS_DEV_ENABLED", biometrics_enabled)
+
+        raw_research_flag = (os.getenv("RESEARCH_TELEMETRY_ENABLED") or "").strip().lower()
+        research_telemetry_enabled: Optional[bool]
+        if raw_research_flag in ("", "auto"):
+            research_telemetry_enabled = None
+        else:
+            research_telemetry_enabled = _parse_bool_env("RESEARCH_TELEMETRY_ENABLED", not dev_mode)
 
         return cls(
             host=host,
@@ -462,5 +479,15 @@ class SpatialServerConfig:
             events_snapshot_max_mb=max(10.0, float(os.getenv("SPATIAL_EVENTS_SNAPSHOT_MAX_MB", "400.0"))),
             events_snapshot_max_width=max(480, min(3840, int(os.getenv("SPATIAL_EVENTS_SNAPSHOT_MAX_WIDTH", "1280")))),
             signed_media_ttl_s=max(60, int(os.getenv("SPATIAL_SIGNED_MEDIA_TTL_S", "86400"))),
+            openvino_adaptive_fps_enabled=_parse_bool_env("OPENVINO_ADAPTIVE_FPS_ENABLED", True),
+            openvino_adaptive_idle_fps=max(0.5, float(os.getenv("OPENVINO_ADAPTIVE_IDLE_FPS", "1.2"))),
+            openvino_adaptive_min_idle_fps=max(0.5, float(os.getenv("OPENVINO_ADAPTIVE_MIN_IDLE_FPS", "1.0"))),
+            openvino_adaptive_max_person_fps=max(1.0, float(os.getenv("OPENVINO_ADAPTIVE_MAX_PERSON_FPS", "5.0"))),
+            openvino_adaptive_max_vehicle_fps=max(1.0, float(os.getenv("OPENVINO_ADAPTIVE_MAX_VEHICLE_FPS", "3.5"))),
+            openvino_adaptive_boost_hold_s=max(0.5, float(os.getenv("OPENVINO_ADAPTIVE_BOOST_HOLD_S", "5.0"))),
+            research_telemetry_enabled=research_telemetry_enabled,
+            research_telemetry_max_mb=max(20.0, float(os.getenv("RESEARCH_TELEMETRY_MAX_MB", "250.0"))),
+            research_telemetry_retention_days=max(1, int(os.getenv("RESEARCH_TELEMETRY_RETENTION_DAYS", "7"))),
+            research_telemetry_save_crops=_parse_bool_env("RESEARCH_TELEMETRY_SAVE_CROPS", True),
         )
 

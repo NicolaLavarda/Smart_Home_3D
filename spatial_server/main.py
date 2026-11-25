@@ -78,11 +78,13 @@ from spatial_server.domain.models import (
 )
 from spatial_server.geometry import ISpatialRaycaster, TrimeshGroundRaycaster
 from spatial_server.ingestion import (
+    AdaptiveFpsScheduler,
     IDetectionSource,
     MqttFrigateDetectionSource,
     OpenVINORtspDetectionSource,
     SyntheticWalkSimulatorSource,
 )
+from spatial_server.research import ProductionResearchCollector
 from spatial_server.optics import (
     CameraCalibrationSolver,
     EquirectangularPanoramicOpticalModel,
@@ -293,6 +295,31 @@ class SpatialPipelineService:
             scene_event_manager=self.scene_event_manager,
             signed_media_service=self.signed_media_service,
         )
+        self.fps_scheduler = AdaptiveFpsScheduler(
+            list(optical_models.keys()),
+            total_budget_fps=config.openvino_target_fps,
+            idle_fps=config.openvino_adaptive_idle_fps,
+            min_idle_fps=config.openvino_adaptive_min_idle_fps,
+            max_person_fps=config.openvino_adaptive_max_person_fps,
+            max_vehicle_fps=config.openvino_adaptive_max_vehicle_fps,
+            boost_hold_s=config.openvino_adaptive_boost_hold_s,
+            enabled=config.openvino_adaptive_fps_enabled,
+        )
+        eff_research = (
+            (not config.dev_mode)
+            if config.research_telemetry_enabled is None
+            else bool(config.research_telemetry_enabled)
+        )
+        self.research_collector: Optional[ProductionResearchCollector] = (
+            ProductionResearchCollector(
+                config.data_dir / "research_telemetry",
+                max_disk_mb=config.research_telemetry_max_mb,
+                retention_days=config.research_telemetry_retention_days,
+                save_crops=config.research_telemetry_save_crops,
+            )
+            if eff_research
+            else None
+        )
 
     async def _on_ha_bridge_states_batch(self, states: dict[str, dict[str, Any]], trigger_on_diff: bool) -> None:
         await self.automation_engine.sync_ha_states_batch(states, trigger_on_diff=trigger_on_diff)
@@ -406,6 +433,19 @@ class SpatialPipelineService:
                 "imposta SH3D_DEV_MODE=false in produzione!",
                 self.config.auth_required,
             )
+        if self.research_collector is not None:
+            self.research_collector.start(
+                session_meta={
+                    "ingestion_mode": self.ingestion_mode,
+                    "cameras": list(self.optical_models.keys()),
+                    "openvino_device": self.config.openvino_device,
+                    "openvino_target_fps": self.config.openvino_target_fps,
+                    "openvino_conf_threshold": self.config.openvino_conf_threshold,
+                    "adaptive_fps_enabled": self.config.openvino_adaptive_fps_enabled,
+                    "biometrics_enabled": self.config.biometrics_enabled,
+                    "events_inertia_s": self.config.events_inertia_s,
+                }
+            )
         if self.biometric_coordinator is not None:
             await self.biometric_coordinator.start()
         if self.recorder_coordinator is not None:
@@ -445,6 +485,8 @@ class SpatialPipelineService:
                 pass
             self._flush_task = None
         await self.flush_pending_to_db()
+        if self.research_collector is not None:
+            self.research_collector.stop()
 
     async def _stop_sources(self) -> None:
         for src in self.active_sources:
@@ -493,19 +535,20 @@ class SpatialPipelineService:
         if not targets:
             return []
 
-        per_cam_fps = max(1.5, float(self.config.openvino_target_fps) / max(len(targets), 1))
+        self.fps_scheduler.register_cameras([cam_id for cam_id, _ in targets])
         shared_lock = threading.Lock() if len(targets) > 1 else None
         sources: list[OpenVINORtspDetectionSource] = []
         shared_ov = None
         shared_backend: Optional[str] = None
 
         for idx, (cam_id, rtsp_url) in enumerate(targets):
+            initial_cam_fps = self.fps_scheduler.get_target_fps(cam_id)
             src = OpenVINORtspDetectionSource(
                 rtsp_url=rtsp_url,
                 camera_id=cam_id,
                 openvino_device=self.config.openvino_device,
                 model_path=self.config.openvino_model_path,
-                target_fps=per_cam_fps,
+                target_fps=initial_cam_fps,
                 conf_threshold=self.config.openvino_conf_threshold,
                 shared_compiled_ov=shared_ov if idx > 0 else None,
                 shared_backend_name=shared_backend if idx > 0 else None,
@@ -744,6 +787,72 @@ class SpatialPipelineService:
 
         return persistable
 
+    def _apply_fps_allocations(self, alloc: dict[str, float]) -> None:
+        for src in self.active_sources:
+            cam_id = getattr(src, "camera_id", None)
+            if cam_id and cam_id in alloc and hasattr(src, "set_target_fps"):
+                src.set_target_fps(alloc[cam_id])
+
+    def _update_adaptive_fps_and_telemetry(
+        self,
+        events: list[DetectionEvent],
+        active_tracks: list[TrackedEntity3D],
+        obs_meta: list[tuple[DetectionEvent, float]],
+        obs_assignments: dict[int, int],
+        now_ts: float,
+    ) -> None:
+        bg_parked = self.scene_event_manager.get_background_parked_track_ids()
+        person_cams: set[str] = {e.camera_id for e in events if e.class_label == "person"}
+        vehicle_cams: set[str] = set()
+        for tr in active_tracks:
+            if tr.class_label == "person":
+                person_cams.update(tr.state.camera_sources)
+            elif tr.class_label in ("car", "truck", "motorbike") and tr.track_id not in bg_parked:
+                vehicle_cams.update(tr.state.camera_sources)
+
+        alloc = self.fps_scheduler.update_camera_activity(person_cams, vehicle_cams, now_ts)
+        self._apply_fps_allocations(alloc)
+
+        if self.research_collector is not None:
+            lifecycle_items: list[dict[str, Any]] = []
+            if hasattr(self.tracker, "pop_lifecycle_events"):
+                lifecycle_items.extend(self.tracker.pop_lifecycle_events())
+            lifecycle_items.extend(self.scene_event_manager.pop_slot_events())
+            if lifecycle_items:
+                self.research_collector.record_track_lifecycle(lifecycle_items)
+
+            if obs_assignments and obs_meta:
+                tracks_by_id = {tr.track_id: tr for tr in active_tracks}
+                cam_runtime_by_id: dict[str, dict[str, Any]] = {}
+                for src in self.active_sources:
+                    if hasattr(src, "get_runtime_stats"):
+                        st = src.get_runtime_stats()
+                        cam_runtime_by_id[str(st.get("camera_id") or "")] = st
+
+                for obs_idx, tid in obs_assignments.items():
+                    if not (0 <= obs_idx < len(obs_meta)):
+                        continue
+                    evt, _rng = obs_meta[obs_idx]
+                    tr = tracks_by_id.get(tid)
+                    frame_res = self.get_latest_substream_frame(evt.camera_id)
+                    if frame_res is None:
+                        continue
+                    frame_bgr, _fts = frame_res
+                    cam_st = cam_runtime_by_id.get(evt.camera_id) or {}
+                    self.research_collector.maybe_record_crop_sample(
+                        track_id=tid,
+                        camera_id=evt.camera_id,
+                        class_label=evt.class_label,
+                        bbox_norm=(evt.bbox.x_min, evt.bbox.y_min, evt.bbox.x_max, evt.bbox.y_max),
+                        frame_bgr=frame_bgr,
+                        world_xyz=(tr.state.x, tr.state.y, tr.state.z) if tr is not None else (0.0, 0.0, 0.0),
+                        confidence=evt.confidence,
+                        is_night_ir=bool(cam_st.get("is_night_ir", False)),
+                        mean_luma=float(cam_st.get("mean_luma", 0.0)),
+                        mean_saturation=float(cam_st.get("mean_saturation", 0.0)),
+                        timestamp=evt.timestamp,
+                    )
+
     async def process_detection_batch(self, events: list[DetectionEvent]) -> list[TrackedEntity3D]:
         if not events:
             now_ts = time.time()
@@ -751,6 +860,7 @@ class SpatialPipelineService:
                 active_tracks, _ = self.tracker.update_with_assignments([], now_ts)
             self._prune_biometric_consensus(active_tracks)
             self._prune_stale_persist_anchors(active_tracks)
+            self._update_adaptive_fps_and_telemetry([], active_tracks, [], {}, now_ts)
             await self.broadcast_frame(active_tracks, now_ts)
             return active_tracks
 
@@ -937,6 +1047,10 @@ class SpatialPipelineService:
             await self.automation_engine.on_tracks_updated(active_tracks, now_ts)
         except Exception as exc:
             logger.warning("Automation evaluation warning on tracks update: %s", exc)
+        try:
+            self._update_adaptive_fps_and_telemetry(events, active_tracks, obs_meta, obs_assignments, now_ts)
+        except Exception as exc:
+            logger.debug("Adaptive FPS / research telemetry batch update warning: %s", exc)
         return active_tracks
 
     async def broadcast_biometric_event(
@@ -1327,6 +1441,24 @@ class SpatialPipelineService:
             except Exception as exc:
                 logger.warning("Automation scene escalation warning: %s", exc)
         if update.biometric_status in ("locked", "unknown"):
+            if self.research_collector is not None:
+                self.research_collector.record_biometric_outcome(
+                    {
+                        "timestamp": update.timestamp,
+                        "track_id": update.track_id,
+                        "modality": update.modality,
+                        "camera_id": update.camera_id,
+                        "identity": updated_track.identity,
+                        "identity_confidence": updated_track.identity_confidence,
+                        "plate": updated_track.plate,
+                        "plate_confidence": update.plate_confidence,
+                        "plate_format": update.plate_format,
+                        "plate_whitelisted": updated_track.plate_whitelisted,
+                        "biometric_status": update.biometric_status,
+                        "attempts_count": update.attempts_count,
+                        "quality_score": update.quality_score,
+                    }
+                )
             await self.broadcast_biometric_event(update, event_id=event_id)
             try:
                 await self.automation_engine.on_biometric_update(
@@ -1409,11 +1541,37 @@ class SpatialPipelineService:
                 if now_mono - last_event_tick >= 1.0:
                     last_event_tick = now_mono
                     now_tick = time.time()
+                    alloc = self.fps_scheduler.refresh(now_tick)
+                    self._apply_fps_allocations(alloc)
                     closed_ev = await self.scene_event_manager.tick(now_tick)
                     if closed_ev is not None:
                         await self.automation_engine.on_scene_event_lifecycle("closed", closed_ev, now_tick)
+                        if self.research_collector is not None:
+                            self.research_collector.record_scene_event(closed_ev, lifecycle="closed")
+                    if self.research_collector is not None:
+                        cam_stats = [
+                            src.get_runtime_stats()
+                            for src in self.active_sources
+                            if hasattr(src, "get_runtime_stats")
+                        ]
+                        bio_diag = (
+                            self.biometric_coordinator.get_diagnostics()
+                            if self.biometric_coordinator is not None
+                            else None
+                        )
+                        self.research_collector.maybe_record_health(
+                            fps_snapshot=self.fps_scheduler.get_snapshot(),
+                            camera_stats=cam_stats,
+                            active_tracks_count=len(self.tracker.get_active_tracks()),
+                            parked_slots_count=self.scene_event_manager.get_parked_slots_count(),
+                            biometrics_diag=bio_diag,
+                            interval_s=60.0,
+                            now_ts=now_tick,
+                        )
                 if now_mono - last_prune > 3600:
                     loop = asyncio.get_running_loop()
+                    if self.research_collector is not None:
+                        await loop.run_in_executor(None, self.research_collector.prune)
                     cutoff_tracks = time.time() - self.config.db_retention_days * 86400
                     await loop.run_in_executor(None, self.repository.prune_older_than, cutoff_tracks)
 
@@ -1826,8 +1984,30 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
                 "active_event_id": service.scene_event_manager.get_active_event().event_id
                 if service.scene_event_manager.get_active_event() is not None
                 else None,
+                "parked_slots_count": service.scene_event_manager.get_parked_slots_count(),
                 "snapshots": service.event_snapshot_store.get_usage_stats(),
             },
+            "fps_scheduler": service.fps_scheduler.get_snapshot(),
+            "research_telemetry": (
+                service.research_collector.get_status()
+                if service.research_collector is not None
+                else {"enabled": False}
+            ),
+        }
+
+    @app.get("/api/v1/research/status")
+    async def get_research_status(
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "research_telemetry": (
+                service.research_collector.get_status()
+                if service.research_collector is not None
+                else {"enabled": False}
+            ),
+            "fps_scheduler": service.fps_scheduler.get_snapshot(),
+            "parked_slots_count": service.scene_event_manager.get_parked_slots_count(),
         }
 
     @app.get("/api/v1/tracks")
