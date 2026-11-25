@@ -921,11 +921,15 @@ class SpatialPipelineService:
                 now_ts,
                 zones_by_track=zones_by_track,
                 alarm_state=alarm_state,
+                grounded_events=[evt for evt, _ in obs_meta],
+                merged_track_pairs=self.tracker.pop_merged_tracks(),
             )
             if curr_scene_ev is not None:
                 if curr_scene_ev.event_id != prev_scene_id:
                     await self.automation_engine.on_scene_event_lifecycle("started", curr_scene_ev, now_ts)
-                elif prev_scene_imp != "alert" and curr_scene_ev.importance == "alert":
+                elif curr_scene_ev.importance in ("alert", "silent_alert") and curr_scene_ev.importance != prev_scene_imp and not (
+                    prev_scene_imp == "alert" and curr_scene_ev.importance == "silent_alert"
+                ):
                     await self.automation_engine.on_scene_event_lifecycle("importance_escalated", curr_scene_ev, now_ts)
         except Exception as exc:
             logger.warning("SceneEvent aggregation warning on detection batch: %s", exc)
@@ -1311,7 +1315,9 @@ class SpatialPipelineService:
                 )
             except Exception as exc:
                 logger.warning("SceneEvent biometric update warning: %s", exc)
-        if bio_ev is not None and prev_scene_imp != "alert" and bio_ev.importance == "alert":
+        if bio_ev is not None and bio_ev.importance in ("alert", "silent_alert") and bio_ev.importance != prev_scene_imp and not (
+            prev_scene_imp == "alert" and bio_ev.importance == "silent_alert"
+        ):
             try:
                 await self.automation_engine.on_scene_event_lifecycle(
                     "importance_escalated",

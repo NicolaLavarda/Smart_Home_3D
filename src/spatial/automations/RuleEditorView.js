@@ -585,7 +585,8 @@ export class RuleEditorView {
             <span>Importanza</span>
             <select ${this._ctrl('trg', pathStr, 'importance')} data-trig-param="${escapeHtml(pathStr)}:importance">
               <option value="any" ${(!p.importance || p.importance === 'any') ? 'selected' : ''}>Qualsiasi</option>
-              <option value="alert" ${p.importance === 'alert' ? 'selected' : ''}>Allerta</option>
+              <option value="alert" ${p.importance === 'alert' ? 'selected' : ''}>Allarme</option>
+              <option value="silent_alert" ${p.importance === 'silent_alert' ? 'selected' : ''}>Allarme Silenzioso</option>
               <option value="notable" ${p.importance === 'notable' ? 'selected' : ''}>Rilevante</option>
               <option value="routine" ${p.importance === 'routine' ? 'selected' : ''}>Routine</option>
             </select>
@@ -977,7 +978,8 @@ export class RuleEditorView {
             <span>Importanza episodio</span>
             <select ${this._ctrl('cnd', pathStr, 'importance')} data-cond-param="${escapeHtml(pathStr)}:importance">
               <option value="any" ${(!p.importance || p.importance === 'any') ? 'selected' : ''}>Qualsiasi</option>
-              <option value="alert" ${p.importance === 'alert' ? 'selected' : ''}>Allerta</option>
+              <option value="alert" ${p.importance === 'alert' ? 'selected' : ''}>Allarme</option>
+              <option value="silent_alert" ${p.importance === 'silent_alert' ? 'selected' : ''}>Allarme Silenzioso</option>
               <option value="notable" ${p.importance === 'notable' ? 'selected' : ''}>Rilevante</option>
               <option value="routine" ${p.importance === 'routine' ? 'selected' : ''}>Routine</option>
             </select>

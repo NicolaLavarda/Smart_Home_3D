@@ -367,4 +367,174 @@ def test_f19_automation_studio_send_notification_editor():
     css_src = read_all_css(Path(__file__).resolve().parents[2])
     assert ".m3-security-panel.mode-events .m3-sec-cameras-viewport" in css_src
     assert ".m3-alarm-header-btn.is-silent" in css_src
+    assert ".m3-scene-imp-pill.is-silent-alert" in css_src
     assert ".auto-notif-builder" in css_src
+
+
+def test_f19_events_three_state_badges_and_subject_pills():
+    code = """
+      const { SecurityFabHub } = await loadModule('/src/ui/SecurityFabHub.js');
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+
+      const now = Math.floor(Date.now() / 1000);
+      const eventsPayload = [
+        {
+          event_id: 'evt_silent_person',
+          status: 'closed',
+          started_at: now - 30,
+          ended_at: now - 20,
+          duration_s: 10,
+          importance: 'silent_alert',
+          alarm_state: 'Silenzioso',
+          summary_it: "C'è una persona al carraio con Veicolo (HD858PK).",
+          best_camera_id: 'Cam_Carraio',
+          cameras: ['Cam_Carraio'],
+          zones: ['Carraio'],
+          subjects: [
+            { track_id: 1, class_label: 'car' },
+            { track_id: 2, class_label: 'car' },
+            { track_id: 3, class_label: 'person', identity: null },
+            { track_id: 4, class_label: 'car', plate: 'HD858PK', plate_whitelisted: true },
+          ],
+        },
+        {
+          event_id: 'evt_armed_person',
+          status: 'closed',
+          started_at: now - 60,
+          ended_at: now - 50,
+          duration_s: 10,
+          importance: 'alert',
+          alarm_state: 'Acceso',
+          summary_it: "C'è una persona all'ingresso.",
+          best_camera_id: 'Cam_Ingresso',
+          cameras: ['Cam_Ingresso'],
+          zones: ['Ingresso'],
+          subjects: [{ track_id: 5, class_label: 'person', identity: null }],
+        },
+        {
+          event_id: 'evt_legacy_vehicle_only_alert',
+          status: 'closed',
+          started_at: now - 90,
+          ended_at: now - 80,
+          duration_s: 10,
+          importance: 'alert',
+          alarm_state: 'Acceso',
+          summary_it: "C'è un veicolo al carraio.",
+          best_camera_id: 'Cam_Carraio',
+          cameras: ['Cam_Carraio'],
+          zones: ['Carraio'],
+          subjects: [{ track_id: 6, class_label: 'car' }],
+        },
+        {
+          event_id: 'evt_legacy_silent_alert',
+          status: 'closed',
+          started_at: now - 120,
+          ended_at: now - 110,
+          duration_s: 10,
+          importance: 'alert',
+          alarm_state: 'Silenzioso',
+          summary_it: "C'è Nicola all'ingresso.",
+          best_camera_id: 'Cam_Ingresso',
+          cameras: ['Cam_Ingresso'],
+          zones: ['Ingresso'],
+          subjects: [{ track_id: 7, class_label: 'person', identity: 'Nicola' }],
+        },
+      ];
+
+      const hub = new SecurityFabHub(root, {
+        cameraCatalog: { getCameras: () => [], onChange: () => () => {} },
+        videoStreamManager: {
+          attachToVideoElement: async () => ({ getStatus: () => ({ mode: 'standby' }), onStatusChange: () => () => {} }),
+          detachFromVideoElement: () => {},
+        },
+        recordingManager: {
+          getStorageSummary: async () => ({ configured: false, providers: [] }),
+          registerSlot: () => {},
+          unregisterSlot: () => {},
+          detachAll: () => {},
+          setPlaybackRate: () => {},
+          setPlaying: () => {},
+          seekAllToTimestamp: async () => {},
+          setPlaybackMode: () => {},
+          queryAllSegments: async () => new Map(),
+          querySegments: async () => [],
+          syncPlaybackTick: () => {},
+        },
+        trajectoryRenderer: {
+          setLiveMode: () => {},
+          setEntitiesVisible: () => {},
+          updateAtTime: () => 0,
+          setWindowBounds: () => {},
+          setTracksData: () => {},
+        },
+        spatialStreamClient: {
+          connected: true,
+          resolveUrl: (u) => u,
+          onStatusChange: () => () => {},
+          onFrame: () => () => {},
+          onBiometricEvent: () => () => {},
+          onSceneEvent: () => () => {},
+          onAutomationEvent: () => () => {},
+          fetchVirtualEntities: async () => ({
+            virtual_entities: [{
+              entity_id: 'sh3d.allarme',
+              domain: 'select',
+              state: 'Silenzioso',
+              options: ['Spento', 'Silenzioso', 'Acceso'],
+            }],
+          }),
+          fetchSceneEvents: async () => ({ status: 'ok', count: eventsPayload.length, events: eventsPayload }),
+        },
+        haClient: { isAdmin: () => true, userRole: 'admin', onAuthChange: () => () => {} },
+      });
+
+      await new Promise((r) => setTimeout(r, 15));
+      hub.openExpanded();
+      await hub.setMode('events');
+
+      const cards = Array.from(root.querySelectorAll('.m3-scene-card'));
+      const cardData = cards.map((card) => ({
+        id: card.getAttribute('data-scene-replay'),
+        pillText: card.querySelector('.m3-scene-imp-pill')?.textContent?.trim(),
+        pillClasses: String(card.querySelector('.m3-scene-imp-pill')?.className || '').split(/\s+/).filter(Boolean),
+        subjectTexts: Array.from(card.querySelectorAll('.m3-scene-subj-pill, .spatial-plate-pill')).map((el) => el.textContent.trim()),
+      }));
+
+      // Verify alert filter includes both alert and silent_alert
+      const silentMatchesAlertFilter = hub._eventMatchesCurrentFilter(eventsPayload[0]);
+      hub.sceneEventsFilters.category = 'alert';
+      const filteredSilent = hub._eventMatchesCurrentFilter(eventsPayload[0]);
+      const filteredArmed = hub._eventMatchesCurrentFilter(eventsPayload[1]);
+      const filteredLegacyVeh = hub._eventMatchesCurrentFilter(eventsPayload[2]);
+
+      hub.dispose();
+      root.remove();
+      return { cardData, silentMatchesAlertFilter, filteredSilent, filteredArmed, filteredLegacyVeh };
+    """
+    res = run_js_scenario({"code": code})
+    assert res["ok"] is True, res
+    d = res["data"]
+    by_id = {c["id"]: c for c in d["cardData"]}
+
+    assert by_id["evt_silent_person"]["pillText"] == "Allarme Silenzioso"
+    assert "is-silent-alert" in by_id["evt_silent_person"]["pillClasses"]
+    # People appear first, duplicate generic 'car' collapsed into a single Italian 'Veicolo'
+    assert by_id["evt_silent_person"]["subjectTexts"][0] == "Sconosciuto"
+    assert by_id["evt_silent_person"]["subjectTexts"].count("Veicolo") == 1
+    assert "car" not in by_id["evt_silent_person"]["subjectTexts"]
+
+    assert by_id["evt_armed_person"]["pillText"] == "Allarme"
+    assert "is-alert" in by_id["evt_armed_person"]["pillClasses"]
+
+    # Legacy DB row with importance='alert' but 0 people downgrades to 'Rilevato'
+    assert by_id["evt_legacy_vehicle_only_alert"]["pillText"] == "Rilevato"
+    assert "is-notable" in by_id["evt_legacy_vehicle_only_alert"]["pillClasses"]
+
+    # Legacy DB row with importance='alert' + alarm_state='Silenzioso' + person maps to orange 'Allarme Silenzioso'
+    assert by_id["evt_legacy_silent_alert"]["pillText"] == "Allarme Silenzioso"
+    assert "is-silent-alert" in by_id["evt_legacy_silent_alert"]["pillClasses"]
+
+    assert d["filteredSilent"] is True
+    assert d["filteredArmed"] is True
+    assert d["filteredLegacyVeh"] is False

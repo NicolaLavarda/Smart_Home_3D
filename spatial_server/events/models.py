@@ -35,6 +35,8 @@ class SceneSubjectRecord(BaseModel):
     last_seen: float = 0.0
     cameras: list[str] = Field(default_factory=list)
     zones: list[str] = Field(default_factory=list)
+    last_xyz: Optional[tuple[float, float, float]] = None
+    merged_track_ids: list[int] = Field(default_factory=list)
 
 
 class FrameBoxAnnotation(BaseModel):
@@ -57,12 +59,14 @@ class SceneEventRecord(BaseModel):
     ended_at: float
     duration_s: float = 0.0
     replay_start_at: float = 0.0
-    importance: Literal["routine", "notable", "alert"] = "notable"
+    importance: Literal["routine", "notable", "silent_alert", "alert"] = "notable"
     title: str = ""
     summary_it: str = ""
     best_camera_id: Optional[str] = None
     cameras: list[str] = Field(default_factory=list)
     zones: list[str] = Field(default_factory=list)
+    last_xyz: Optional[tuple[float, float, float]] = None
+    merged_track_ids: list[int] = Field(default_factory=list)
     zone_ids: list[str] = Field(default_factory=list)
     track_ids: list[int] = Field(default_factory=list)
     subjects: list[SceneSubjectRecord] = Field(default_factory=list)

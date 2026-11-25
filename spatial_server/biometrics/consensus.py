@@ -48,6 +48,8 @@ class TrackBiometricConsensusManager:
         max_fast_attempts: int = 6,
         unknown_backoff_s: float = 4.0,
         whitelist_max_distance: int = 1,
+        min_plate_confidence_std: float = 0.55,
+        min_plate_confidence_generic: float = 0.72,
     ) -> None:
         self.crop_store = crop_store
         self.whitelist_matcher = whitelist_matcher
@@ -57,6 +59,8 @@ class TrackBiometricConsensusManager:
         self.max_fast_attempts = max(1, int(max_fast_attempts))
         self.unknown_backoff_s = max(self.min_eval_interval_s, float(unknown_backoff_s))
         self.whitelist_max_distance = max(0, int(whitelist_max_distance))
+        self.min_plate_confidence_std = max(0.0, float(min_plate_confidence_std))
+        self.min_plate_confidence_generic = max(0.0, float(min_plate_confidence_generic))
 
         self._lock = threading.RLock()
         self._states: dict[tuple[int, str], _TrackModalState] = {}
@@ -231,12 +235,25 @@ class TrackBiometricConsensusManager:
                 self._maybe_save_best_crop(st, evaluation.crop_bgr, crop_rank, timestamp)
 
                 if evaluation.metrics.passed and evaluation.plate:
-                    st.valid_eval_count += 1
                     label = evaluation.plate
-                    weight = max(0.05, float(evaluation.confidence) * max(0.2, float(evaluation.quality_score)) * float(camera_weight))
+                    fmt = (evaluation.plate_format or "").strip().upper()
+                    conf = float(evaluation.confidence)
+                    is_exact_wl = bool(
+                        self.whitelist_matcher is not None
+                        and self.whitelist_matcher.match(label, max_distance=0)[0] is not None
+                    )
+                    if not is_exact_wl:
+                        if fmt == "EU_GENERIC":
+                            if len(label) < 5 or conf < self.min_plate_confidence_generic:
+                                return self._finalize_alpr_state(st, camera_id=camera_id, timestamp=timestamp)
+                        elif conf < self.min_plate_confidence_std:
+                            return self._finalize_alpr_state(st, camera_id=camera_id, timestamp=timestamp)
+
+                    st.valid_eval_count += 1
+                    weight = max(0.05, conf * max(0.2, float(evaluation.quality_score)) * float(camera_weight))
                     st.votes[label] = st.votes.get(label, 0.0) + weight
                     st.counts[label] = st.counts.get(label, 0) + 1
-                    st.best_conf_by_label[label] = max(st.best_conf_by_label.get(label, 0.0), float(evaluation.confidence))
+                    st.best_conf_by_label[label] = max(st.best_conf_by_label.get(label, 0.0), conf)
                     st.meta_by_label[label] = {
                         "plate_raw": evaluation.plate_raw,
                         "plate_format": evaluation.plate_format,

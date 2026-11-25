@@ -108,6 +108,8 @@ class _KalmanTrack:
     camera_hits: dict[str, int] = field(default_factory=dict)
     camera_batch_seq: dict[str, int] = field(default_factory=dict)
     last_camera_id: Optional[str] = None
+    stationary_anchor_pos: Optional[np.ndarray] = None
+    stationary_since_ts: float = 0.0
 
     def max_physical_speed(self) -> float:
         return 13.5 if _coarse_class(self.class_label) == "vehicle" else 4.2
@@ -288,6 +290,20 @@ class _KalmanTrack:
         self.last_ts = max(self.last_ts, float(obs.timestamp))
         self.hits += 1
 
+        if self.stationary_anchor_pos is None:
+            self.stationary_anchor_pos = self.x[:3].copy()
+            self.stationary_since_ts = float(obs.timestamp or ref_ts)
+        else:
+            anchor_disp = float(
+                math.hypot(
+                    float(self.x[0] - self.stationary_anchor_pos[0]),
+                    float(self.x[2] - self.stationary_anchor_pos[2]),
+                )
+            )
+            if anchor_disp > 0.65:
+                self.stationary_anchor_pos = self.x[:3].copy()
+                self.stationary_since_ts = float(obs.timestamp or ref_ts)
+
         if not self.biometric_locked:
             if obs.identity and obs.identity_confidence >= self.identity_confidence:
                 self.identity = obs.identity
@@ -347,6 +363,26 @@ class _KalmanTrack:
         self.created_ts = min(self.created_ts, other.created_ts) if self.created_ts > 0 and other.created_ts > 0 else max(self.created_ts, other.created_ts)
         self.last_ts = max(self.last_ts, other.last_ts)
         self.confidence = max(self.confidence, other.confidence)
+
+        if other.stationary_anchor_pos is not None:
+            if self.stationary_anchor_pos is None:
+                self.stationary_anchor_pos = other.stationary_anchor_pos.copy()
+                self.stationary_since_ts = other.stationary_since_ts
+            else:
+                d_anchors = float(
+                    math.hypot(
+                        float(self.stationary_anchor_pos[0] - other.stationary_anchor_pos[0]),
+                        float(self.stationary_anchor_pos[2] - other.stationary_anchor_pos[2]),
+                    )
+                )
+                if d_anchors <= 1.2:
+                    if other.stationary_since_ts > 0.0 and (
+                        self.stationary_since_ts <= 0.0 or other.stationary_since_ts < self.stationary_since_ts
+                    ):
+                        self.stationary_since_ts = other.stationary_since_ts
+                else:
+                    self.stationary_anchor_pos = self.x[:3].copy()
+                    self.stationary_since_ts = ref_ts
 
         # Merge biometric state (locked state always wins)
         if other.biometric_locked and not self.biometric_locked:
@@ -447,6 +483,8 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         merge_radius_vehicle_m: float = 4.8,
         initial_next_track_id: int = 1,
         camera_visibility_fn: Optional[Callable[[str, tuple[float, float, float]], bool]] = None,
+        stationary_vehicle_reid_s: float = 120.0,
+        person_reid_s: float = 10.0,
     ) -> None:
         self.track_ttl_s = track_ttl_s
         self.max_gate_person_m = max_gate_person_m
@@ -457,8 +495,12 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         self.uncalibrated_zone_vehicle_m = max(self.cross_cam_gate_vehicle_m, uncalibrated_zone_vehicle_m)
         self.merge_radius_person_m = merge_radius_person_m
         self.merge_radius_vehicle_m = merge_radius_vehicle_m
+        self.stationary_vehicle_reid_s = max(0.0, float(stationary_vehicle_reid_s))
+        self.person_reid_s = max(0.0, float(person_reid_s))
         self._next_track_id = max(1, int(initial_next_track_id))
         self._tracks: dict[int, _KalmanTrack] = {}
+        self._expired_tracks: dict[int, tuple[_KalmanTrack, float]] = {}
+        self._recent_merges: list[tuple[int, int]] = []
         self._last_now = 0.0
         self.camera_visibility_fn = camera_visibility_fn
 
@@ -599,13 +641,22 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         for tr in self._tracks.values():
             tr.predict(effective_now)
 
-        # Prune expired tracks
+        # Prune expired tracks (retain briefly in _expired_tracks for flicker/occlusion Re-ID)
         expired = [
             tid for tid, tr in self._tracks.items()
             if effective_now - max(tr.camera_sources.values(), default=tr.last_ts) > self.track_ttl_s
         ]
         for tid in expired:
+            self._expired_tracks[tid] = (self._tracks[tid], effective_now)
             del self._tracks[tid]
+
+        max_reid_ttl = max(self.stationary_vehicle_reid_s, self.person_reid_s, 10.0) + 5.0
+        stale_reid = [
+            tid for tid, (_tr, exp_ts) in self._expired_tracks.items()
+            if effective_now - exp_ts > max_reid_ttl
+        ]
+        for tid in stale_reid:
+            del self._expired_tracks[tid]
 
         # 2. Group incoming observations by camera so multi-camera views of the same target fuse sequentially
         obs_assignments: dict[int, int] = {}
@@ -796,16 +847,75 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                     matched_obs.add(oi)
                     matched_tids.add(tid)
 
-        # Stage 3: Create new tracks only for genuinely new unmatched observations
+        # Stage 3: Re-ID recently expired stationary/flickering tracks before allocating new track_id
         for oi, (orig_idx, obs) in enumerate(dedup_obs_list):
             if oi in matched_obs:
                 continue
+            p0_xz = _compute_measurement_variance(obs)
+            ts0 = float(obs.timestamp or now_ts)
+            obs_coarse = _coarse_class(obs.class_label)
+
+            best_reid: Optional[tuple[float, int, _KalmanTrack]] = None
+            for exp_tid, (tr_exp, exp_ts) in self._expired_tracks.items():
+                if _coarse_class(tr_exp.class_label) != obs_coarse:
+                    continue
+                if not self._obs_biometrically_compatible(tr_exp, obs):
+                    continue
+                dt_exp = max(0.0, now_ts - exp_ts)
+                d_cur = float(math.hypot(float(obs.position[0] - tr_exp.x[0]), float(obs.position[2] - tr_exp.x[2])))
+                d_anchor = (
+                    float(
+                        math.hypot(
+                            float(obs.position[0] - tr_exp.stationary_anchor_pos[0]),
+                            float(obs.position[2] - tr_exp.stationary_anchor_pos[2]),
+                        )
+                    )
+                    if tr_exp.stationary_anchor_pos is not None
+                    else d_cur
+                )
+                dist_xz = min(d_cur, d_anchor)
+
+                if obs_coarse == "vehicle":
+                    if dt_exp > self.stationary_vehicle_reid_s:
+                        continue
+                    same_plate = bool(obs.plate and tr_exp.plate and obs.plate == tr_exp.plate)
+                    max_r = 6.5 if same_plate else 2.8
+                    if dist_xz > max_r:
+                        continue
+                elif obs_coarse == "person":
+                    if dt_exp > self.person_reid_s:
+                        continue
+                    same_id = bool(
+                        _is_meaningful_identity(obs.identity)
+                        and _is_meaningful_identity(tr_exp.identity)
+                        and obs.identity == tr_exp.identity
+                    )
+                    same_cam = obs.camera_id in tr_exp.camera_sources
+                    max_r = 4.5 if same_id else (1.6 if same_cam else 0.0)
+                    if dist_xz > max_r:
+                        continue
+                else:
+                    continue
+
+                if best_reid is None or dist_xz < best_reid[0]:
+                    best_reid = (dist_xz, exp_tid, tr_exp)
+
+            if best_reid is not None:
+                _dist, revive_tid, tr_exp = best_reid
+                del self._expired_tracks[revive_tid]
+                tr_exp.x[3:6] = 0.0
+                tr_exp.last_ts = ts0
+                tr_exp.P[0, 0] = max(float(tr_exp.P[0, 0]), p0_xz)
+                tr_exp.P[2, 2] = max(float(tr_exp.P[2, 2]), p0_xz)
+                tr_exp.correct(obs, batch_seq=batch_seq)
+                self._tracks[revive_tid] = tr_exp
+                obs_assignments[orig_idx] = revive_tid
+                continue
+
             tid = self._next_track_id
             self._next_track_id += 1
             x0 = np.array([obs.position[0], obs.position[1], obs.position[2], 0.0, 0.0, 0.0], dtype=np.float64)
-            p0_xz = _compute_measurement_variance(obs)
             P0 = np.diag([p0_xz, 0.1, p0_xz, 1.5, 0.5, 1.5])
-            ts0 = float(obs.timestamp or now_ts)
             pos_arr = np.array(obs.position, dtype=np.float64)
             self._tracks[tid] = _KalmanTrack(
                 track_id=tid,
@@ -825,6 +935,8 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                 camera_hits={obs.camera_id: 1},
                 camera_batch_seq={obs.camera_id: batch_seq},
                 last_camera_id=obs.camera_id,
+                stationary_anchor_pos=pos_arr.copy(),
+                stationary_since_ts=ts0,
             )
             obs_assignments[orig_idx] = tid
 
@@ -901,6 +1013,12 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
             -int(tr.track_id),  # Prefer older (lower) track_id for stability
         )
 
+    def pop_merged_tracks(self) -> list[tuple[int, int]]:
+        """Return and clear recent ``(kept_track_id, dropped_track_id)`` merges."""
+        merges = list(self._recent_merges)
+        self._recent_merges.clear()
+        return merges
+
     def _merge_track_pair(
         self,
         tid_keep: int,
@@ -914,6 +1032,7 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         tr_drop = self._tracks[tid_drop]
         tr_keep.absorb_other_track(tr_drop, now_ts)
         del self._tracks[tid_drop]
+        self._recent_merges.append((tid_keep, tid_drop))
         for obs_idx, assigned_tid in list(obs_assignments.items()):
             if assigned_tid == tid_drop:
                 obs_assignments[obs_idx] = tid_keep

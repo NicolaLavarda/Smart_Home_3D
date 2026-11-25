@@ -38,6 +38,8 @@ from spatial_server.events import (
 from spatial_server.integrations import HomeAssistantBridgeService
 from spatial_server.main import create_app
 from spatial_server.persistence.repository import SQLiteWALTrackRepository
+from spatial_server.tracking.interfaces import TrackObservation3D
+from spatial_server.tracking.kalman_tracker import Kalman3DMultiTracker
 
 
 def _encode_test_jpeg(width: int = 640, height: int = 360) -> bytes:
@@ -532,3 +534,275 @@ def test_events_api_routes_and_hmac_media(tmp_path: Path) -> None:
         res_del = client.delete(f"/api/v1/events/{ev_id}")
         assert res_del.status_code == 200
         assert client.get(f"/api/v1/events/{ev_id}").status_code == 404
+
+
+def test_parked_vehicle_reid_and_subject_consolidation(tmp_path: Path) -> None:
+    """Stationary IR-flickering parked cars must keep 1 track_id across gaps and never spawn 25 fake vehicles or endless episodes."""
+    tracker = Kalman3DMultiTracker(track_ttl_s=4.5, stationary_vehicle_reid_s=120.0)
+    obs1 = TrackObservation3D(
+        camera_id="Cam_Carraio",
+        class_label="car",
+        confidence=0.88,
+        position=(5.0, 0.0, 8.0),
+        timestamp=1000.0,
+    )
+    tracks1, _ = tracker.update_with_assignments([obs1], 1000.0)
+    assert len(tracks1) == 1
+    initial_tid = tracks1[0].track_id
+
+    # Flicker gap > track_ttl_s (12s empty frames)
+    empty_tracks, _ = tracker.update_with_assignments([], 1012.0)
+    assert empty_tracks == []
+
+    # Parked car reappears at essentially the same spot -> same track_id revived (no new track 2..25)
+    obs2 = TrackObservation3D(
+        camera_id="Cam_Carraio",
+        class_label="car",
+        confidence=0.86,
+        position=(5.15, 0.0, 8.1),
+        timestamp=1013.0,
+    )
+    tracks2, assign2 = tracker.update_with_assignments([obs2], 1013.0)
+    assert len(tracks2) == 1
+    assert tracks2[0].track_id == initial_tid
+    assert assign2[0] == initial_tid
+
+    # Narrator collapses duplicate subjects sharing normalized plate
+    s1 = SceneSubjectRecord(track_id=10, class_label="car", plate="HD858PK", plate_whitelisted=True, plate_owner="Papà")
+    s2 = SceneSubjectRecord(track_id=11, class_label="car", plate="HD858PK", plate_whitelisted=True, plate_owner="Papà")
+    assert build_scene_sentence_it([s1, s2], camera_id="Cam_Carraio") == "Auto di Papà (HD858PK) al carraio."
+
+    # SceneEventManager parked vehicle suppression & physical consolidation
+    async def _run() -> None:
+        repo = SQLiteWALTrackRepository(tmp_path / "parked.db")
+        store = EventSnapshotStore(tmp_path)
+        mgr = SceneEventManager(
+            repository=repo,
+            snapshot_store=store,
+            inertia_s=8.0,
+            stationary_vehicle_s=20.0,
+            max_episode_duration_s=120.0,
+        )
+        car_det = DetectionEvent(
+            camera_id="Cam_Carraio",
+            timestamp=2000.0,
+            class_label="car",
+            confidence=0.90,
+            bbox=BoundingBox2D(x_min=0.4, y_min=0.2, x_max=0.9, y_max=0.9),
+        )
+        parked_tr = _make_track(101, x=5.0, z=8.0, class_label="car", ts=2000.0).model_copy(
+            update={"state": SpatialPoint3D(x=5.0, y=0.0, z=8.0, vx=0.0, vy=0.0, vz=0.0, camera_sources=["Cam_Carraio"])}
+        )
+        ev1 = await mgr.on_detection_batch([car_det], [parked_tr], {0: 101}, 2000.0)
+        assert ev1 is not None and len(ev1.subjects) == 1
+
+        # After 25s stationary, car becomes background-parked -> does NOT extend ev1.ended_at forever
+        parked_tr_later = parked_tr.model_copy(update={"last_seen": 2025.0})
+        car_det_later = car_det.model_copy(update={"timestamp": 2025.0})
+        await mgr.on_detection_batch([car_det_later], [parked_tr_later], {0: 101}, 2025.0)
+        assert mgr.get_active_event() is None  # closed due to inertia without foreground activity
+
+        # Another detection of that already-parked car does NOT open a new episode
+        ev2 = await mgr.on_detection_batch(
+            [car_det.model_copy(update={"timestamp": 2040.0})],
+            [parked_tr.model_copy(update={"track_id": 102, "last_seen": 2040.0})],
+            {0: 102},
+            2040.0,
+        )
+        assert ev2 is None
+
+        # When a real foreground car enters & flickers across non-simultaneous track IDs, subjects stay consolidated to 1
+        fg_det = car_det.model_copy(update={"timestamp": 2100.0})
+        fg1 = _make_track(201, x=15.0, z=12.0, class_label="car", ts=2100.0)
+        fg_ev = await mgr.on_detection_batch([fg_det], [fg1], {0: 201}, 2100.0)
+        assert fg_ev is not None and len(fg_ev.subjects) == 1
+        fg2 = _make_track(202, x=15.4, z=12.3, class_label="car", ts=2104.0)
+        fg_ev2 = await mgr.on_detection_batch([fg_det.model_copy(update={"timestamp": 2104.0})], [fg2], {0: 202}, 2104.0)
+        assert fg_ev2 is not None and len(fg_ev2.subjects) == 1
+        assert 202 in fg_ev2.subjects[0].merged_track_ids
+
+        await mgr.close()
+        repo.close()
+
+    asyncio.run(_run())
+
+
+def test_person_cover_photo_strict_priority_and_alpr_protection(tmp_path: Path) -> None:
+    """Frames with people must strictly outscore giant parked-car frames, upgrade over rate limits, and never be overwritten by ALPR."""
+    big_car_det = DetectionEvent(
+        camera_id="Cam_Carraio",
+        timestamp=3000.0,
+        class_label="car",
+        confidence=0.95,
+        bbox=BoundingBox2D(x_min=0.1, y_min=0.1, x_max=0.95, y_max=0.95),
+    )
+    small_person_det = DetectionEvent(
+        camera_id="Cam_Ingresso",
+        timestamp=3000.0,
+        class_label="person",
+        confidence=0.72,
+        bbox=BoundingBox2D(x_min=0.42, y_min=0.35, x_max=0.52, y_max=0.75),
+    )
+    two_people_dets = [
+        (small_person_det, 11),
+        (
+            DetectionEvent(
+                camera_id="Cam_Pano",
+                timestamp=3000.0,
+                class_label="person",
+                confidence=0.70,
+                bbox=BoundingBox2D(x_min=0.20, y_min=0.30, x_max=0.30, y_max=0.70),
+            ),
+            12,
+        ),
+    ]
+    car_score = SceneEventManager.compute_camera_frame_score("Cam_Carraio", False, [(big_car_det, 1)], biometric_quality=1.0, biometric_locked=True)
+    one_person_score = SceneEventManager.compute_camera_frame_score("Cam_Ingresso", False, [(small_person_det, 11)])
+    two_people_score = SceneEventManager.compute_camera_frame_score("Cam_Pano", True, two_people_dets)
+    assert car_score <= 50.0
+    assert 100.0 <= one_person_score < 200.0
+    assert 200.0 <= two_people_score < 300.0
+    assert two_people_score > one_person_score > car_score
+
+    jpeg_car = _encode_test_jpeg(640, 360)
+    img_person = np.full((360, 640, 3), 180, dtype=np.uint8)
+    ok_p, buf_p = cv2.imencode(".jpg", img_person)
+    assert ok_p
+    jpeg_person = buf_p.tobytes()
+
+    def _mock_go2rtc(request: httpx.Request) -> httpx.Response:
+        src = request.url.params.get("src", "")
+        if "ingresso" in src:
+            return httpx.Response(200, content=jpeg_person, headers={"content-type": "image/jpeg"})
+        return httpx.Response(200, content=jpeg_car, headers={"content-type": "image/jpeg"})
+
+    async def _run() -> None:
+        repo = SQLiteWALTrackRepository(tmp_path / "cover.db")
+        store = EventSnapshotStore(tmp_path)
+        mgr = SceneEventManager(
+            repository=repo,
+            snapshot_store=store,
+            http_transport=httpx.MockTransport(_mock_go2rtc),
+        )
+        car_tr = _make_track(50, x=5.0, z=8.0, class_label="car", camera_sources=["Cam_Carraio"], ts=3000.0)
+        ev = await mgr.on_detection_batch([big_car_det], [car_tr], {0: 50}, 3000.0, alarm_state="Acceso")
+        assert ev is not None
+        await asyncio.sleep(0.05)
+        assert ev.best_camera_id == "Cam_Carraio"
+        assert ev.best_frame_score <= 50.0
+
+        # Immediate person arrival within <1.8s rate limit MUST still upgrade cover from car to person
+        p_det = small_person_det.model_copy(update={"timestamp": 3000.5})
+        p_tr = _make_track(51, x=2.0, z=3.0, class_label="person", camera_sources=["Cam_Ingresso"], ts=3000.5)
+        ev2 = await mgr.on_detection_batch([big_car_det.model_copy(update={"timestamp": 3000.5}), p_det], [car_tr, p_tr], {0: 50, 1: 51}, 3000.5, alarm_state="Acceso")
+        assert ev2 is not None
+        await asyncio.sleep(0.05)
+        assert ev2.best_camera_id == "Cam_Ingresso"
+        assert ev2.best_frame_score >= 100.0
+        person_raw_path = store.resolve_snapshot_path(ev2.event_id, "raw", known_relpath=ev2.cover_raw_relpath)
+        person_raw_bytes = person_raw_path.read_bytes()
+
+        # ALPR biometric frame on Cam_Carraio (e.g. locked plate with huge crop score) MUST NOT overwrite person cover
+        alpr_frame = np.full((360, 640, 3), 25, dtype=np.uint8)
+        bio_car_ev = await mgr.on_biometric_frame(
+            track_id=50,
+            camera_id="Cam_Carraio",
+            timestamp=3001.2,
+            full_frame_bgr=alpr_frame,
+            subject_bbox_norm=(0.1, 0.1, 0.95, 0.95),
+            quality_score=0.98,
+            plate="HD858PK",
+            plate_whitelisted=True,
+            plate_owner="Papà",
+            biometric_status="locked",
+            biometric_locked=True,
+        )
+        assert bio_car_ev is not None
+        assert bio_car_ev.best_camera_id == "Cam_Ingresso"
+        assert bio_car_ev.best_frame_score >= 100.0
+        assert person_raw_path.read_bytes() == person_raw_bytes
+
+        # Also check ensure_event_snapshot upgrades a car cover if a person is now in the episode
+        car_only_ev = SceneEventRecord(
+            event_id="evt_3000000000000_upgr",
+            status="active",
+            started_at=3000.0,
+            ended_at=3001.0,
+            best_camera_id="Cam_Carraio",
+            cameras=["Cam_Carraio", "Cam_Ingresso"],
+            track_ids=[50, 51],
+            subjects=[
+                SceneSubjectRecord(track_id=50, class_label="car"),
+                SceneSubjectRecord(track_id=51, class_label="person"),
+            ],
+            best_frame_score=8.0,
+            cover_raw_relpath=ev2.cover_raw_relpath,
+            cover_ann_relpath=ev2.cover_ann_relpath,
+        )
+        repo.upsert_scene_event(car_only_ev.model_dump())
+        mgr._active_event = car_only_ev
+        upgraded = await mgr.ensure_event_snapshot(car_only_ev.event_id)
+        assert upgraded is not None
+        assert upgraded.best_camera_id == "Cam_Ingresso"
+        assert upgraded.best_frame_score >= 100.0
+
+        await mgr.close()
+        repo.close()
+
+    asyncio.run(_run())
+
+
+def test_alarm_three_states_and_no_forced_escalation(tmp_path: Path) -> None:
+    """Enforce sh3d.allarme 3-state semantics: Acceso+person->alert, Silenzioso+person->silent_alert, vehicle-only or Spento->not alert/silent_alert."""
+    async def _run() -> None:
+        repo = SQLiteWALTrackRepository(tmp_path / "alarm3.db")
+        store = EventSnapshotStore(tmp_path)
+        mgr = SceneEventManager(repository=repo, snapshot_store=store, inertia_s=10.0)
+
+        car_det = DetectionEvent(camera_id="Cam_Carraio", timestamp=4000.0, class_label="car", confidence=0.9, bbox=BoundingBox2D(x_min=0.2, y_min=0.2, x_max=0.6, y_max=0.7))
+        car_tr = _make_track(1, class_label="car", ts=4000.0)
+
+        # 1. Vehicle only even with Acceso must NOT be alert or silent_alert
+        ev_car_armed = await mgr.on_detection_batch([car_det], [car_tr], {0: 1}, 4000.0, alarm_state="Acceso")
+        assert ev_car_armed is not None and ev_car_armed.importance == "notable"
+        # Automation escalation cannot force 'alert' without person + Acceso
+        after_auto = await mgr.mark_automation_triggered(ev_car_armed.event_id, "r1", escalate_importance="alert")
+        assert after_auto is not None and after_auto.importance == "notable"
+
+        # Close episode and test Silenzioso + person (including known person!) -> silent_alert
+        await mgr.tick(4020.0)
+        p_det = DetectionEvent(camera_id="Cam_Ingresso", timestamp=4100.0, class_label="person", confidence=0.92, bbox=BoundingBox2D(x_min=0.3, y_min=0.2, x_max=0.5, y_max=0.8))
+        p_tr = _make_track(2, class_label="person", ts=4100.0)
+        ev_silent = await mgr.on_detection_batch([p_det], [p_tr], {0: 2}, 4100.0, alarm_state="Silenzioso")
+        assert ev_silent is not None and ev_silent.importance == "silent_alert"
+        ev_silent_known = await mgr.on_biometric_frame(
+            track_id=2, camera_id="Cam_Ingresso", timestamp=4101.0, identity="Nicola", identity_confidence=0.95, biometric_status="locked"
+        )
+        assert ev_silent_known is not None and ev_silent_known.importance == "silent_alert"
+        await mgr.mark_automation_triggered(ev_silent.event_id, "r_silent", escalate_importance="alert")
+        assert mgr.get_active_event().importance == "silent_alert"  # stays silent_alert under Silenzioso
+
+        # Close episode and test Acceso + person -> alert
+        await mgr.tick(4120.0)
+        p_tr3 = _make_track(3, class_label="person", ts=4200.0)
+        ev_armed = await mgr.on_detection_batch([p_det.model_copy(update={"timestamp": 4200.0})], [p_tr3], {0: 3}, 4200.0, alarm_state="Acceso")
+        assert ev_armed is not None and ev_armed.importance == "alert"
+
+        # Close and test Spento + unknown person -> notable (never alert/silent_alert)
+        await mgr.tick(4220.0)
+        p_tr4 = _make_track(4, class_label="person", ts=4300.0)
+        ev_off = await mgr.on_detection_batch([p_det.model_copy(update={"timestamp": 4300.0})], [p_tr4], {0: 4}, 4300.0, alarm_state="Spento")
+        assert ev_off is not None and ev_off.importance == "notable"
+
+        # Repository comma-separated query returns both alert & silent_alert
+        rows_alarms = repo.query_scene_events(importance="alert,silent_alert")
+        ids_alarms = {r["event_id"] for r in rows_alarms}
+        assert ev_silent.event_id in ids_alarms
+        assert ev_armed.event_id in ids_alarms
+        assert ev_car_armed.event_id not in ids_alarms
+        assert ev_off.event_id not in ids_alarms
+
+        await mgr.close()
+        repo.close()
+
+    asyncio.run(_run())

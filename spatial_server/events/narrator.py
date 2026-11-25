@@ -118,7 +118,7 @@ def build_scene_sentence_it(
     loc_suffix = f" {loc}" if loc else ""
 
     people = [s for s in subjects if s.class_label == "person"]
-    vehicles = [s for s in subjects if s.class_label in _VEHICLE_CLASSES]
+    vehicles = _deduplicate_vehicles([s for s in subjects if s.class_label in _VEHICLE_CLASSES])
     animals = [s for s in subjects if s.class_label == "dog"]
     bicycles = [s for s in subjects if s.class_label == "bicycle"]
 
@@ -194,6 +194,20 @@ def build_scene_sentence_it(
     return f"Movimento rilevato{loc_suffix}."
 
 
+def _deduplicate_vehicles(vehicles: list[SceneSubjectRecord]) -> list[SceneSubjectRecord]:
+    """Collapse duplicate vehicle records that share the same normalized non-empty plate."""
+    seen_plates: set[str] = set()
+    result: list[SceneSubjectRecord] = []
+    for v in vehicles:
+        plate = (v.plate or "").strip().upper()
+        if plate:
+            if plate in seen_plates:
+                continue
+            seen_plates.add(plate)
+        result.append(v)
+    return result
+
+
 def build_scene_title_it(
     subjects: list[SceneSubjectRecord],
     zone_names: Optional[Iterable[str]] = None,
@@ -203,7 +217,7 @@ def build_scene_title_it(
     parts: list[str] = []
 
     people = [s for s in subjects if s.class_label == "person"]
-    vehicles = [s for s in subjects if s.class_label in _VEHICLE_CLASSES]
+    vehicles = _deduplicate_vehicles([s for s in subjects if s.class_label in _VEHICLE_CLASSES])
     others = [s for s in subjects if s.class_label not in ("person", *_VEHICLE_CLASSES)]
 
     known_names: list[str] = []

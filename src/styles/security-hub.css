@@ -2292,6 +2292,10 @@
   border-color: rgba(244, 63, 94, 0.45);
 }
 
+.m3-scene-card.is-silent-alert {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
 .m3-scene-card-btn {
   appearance: none;
   border: 0;
@@ -2360,6 +2364,12 @@
   background: rgba(244, 63, 94, 0.88);
   border-color: rgba(254, 205, 211, 0.65);
   color: #ffffff;
+}
+
+.m3-scene-imp-pill.is-silent-alert {
+  background: rgba(217, 119, 6, 0.9);
+  border-color: rgba(253, 230, 138, 0.65);
+  color: #fffbeb;
 }
 
 .m3-scene-imp-pill.is-routine {

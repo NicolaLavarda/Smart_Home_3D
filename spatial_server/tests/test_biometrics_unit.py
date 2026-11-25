@@ -588,3 +588,52 @@ def test_real_local_onnx_models_smoke_if_present() -> None:
     assert plate_eval.plate == "AB123CD"
     assert plate_eval.plate_format == "IT_STD"
     assert plate_eval.confidence > 0.5
+
+
+def test_alpr_rejects_low_confidence_generic_noise() -> None:
+    wl = PlateWhitelistMatcher()
+    wl.upsert("HD858PK", "Papà")
+    consensus = TrackBiometricConsensusManager(
+        whitelist_matcher=wl,
+        alpr_consensus_k=1,
+        min_eval_interval_s=0.0,
+    )
+    crop = np.full((80, 220, 3), 120, dtype=np.uint8)
+    # Night IR ghost read formatted as short EU_GENERIC with weak OCR confidence
+    noisy_generic = PlateEvaluation(
+        plate="M4605",
+        plate_raw="M4605",
+        plate_format="EU_GENERIC",
+        confidence=0.48,
+        quality_score=0.65,
+        metrics=PlateQualityMetrics(det_score=0.8, plate_width_px=75, blur_laplacian=95, glare_ratio=0.0, mean_luma=110, passed=True),
+        crop_bgr=crop,
+    )
+    upd_noise = consensus.record_plate_evaluation(501, noisy_generic, camera_id="Cam_Carraio", timestamp=1000.0)
+    assert upd_noise is None or upd_noise.plate is None
+
+    # Weak IT_STD (< 0.55) also ignored
+    weak_std = PlateEvaluation(
+        plate="AB123CD",
+        plate_raw="AB123CD",
+        plate_format="IT_STD",
+        confidence=0.42,
+        quality_score=0.70,
+        metrics=PlateQualityMetrics(det_score=0.8, plate_width_px=80, blur_laplacian=95, glare_ratio=0.0, mean_luma=110, passed=True),
+        crop_bgr=crop,
+    )
+    upd_weak = consensus.record_plate_evaluation(502, weak_std, camera_id="Cam_Carraio", timestamp=1001.0)
+    assert upd_weak is None or upd_weak.plate is None
+
+    # Exact whitelist or strong high-confidence read still locks
+    strong_wl = PlateEvaluation(
+        plate="HD858PK",
+        plate_raw="HD858PK",
+        plate_format="IT_STD",
+        confidence=0.88,
+        quality_score=0.85,
+        metrics=PlateQualityMetrics(det_score=0.92, plate_width_px=95, blur_laplacian=130, glare_ratio=0.0, mean_luma=120, passed=True),
+        crop_bgr=crop,
+    )
+    upd_ok = consensus.record_plate_evaluation(503, strong_wl, camera_id="Cam_Carraio", timestamp=1002.0)
+    assert upd_ok is not None and upd_ok.plate == "HD858PK" and upd_ok.plate_whitelisted is True

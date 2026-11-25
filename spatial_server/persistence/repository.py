@@ -1276,8 +1276,14 @@ class SQLiteWALTrackRepository(ITrackRepository):
             sql += " AND started_at <= ?"
             params.append(float(t_end))
         if importance and importance.strip():
-            sql += " AND importance = ?"
-            params.append(importance.strip().lower())
+            imp_vals = [v.strip().lower() for v in importance.split(",") if v.strip()]
+            if len(imp_vals) == 1:
+                sql += " AND importance = ?"
+                params.append(imp_vals[0])
+            elif imp_vals:
+                placeholders = ",".join("?" for _ in imp_vals)
+                sql += f" AND importance IN ({placeholders})"
+                params.extend(imp_vals)
         if camera_id and camera_id.strip():
             sql += " AND cameras_json LIKE ?"
             params.append(f'%"{camera_id.strip()}"%')

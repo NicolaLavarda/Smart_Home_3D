@@ -2814,6 +2814,36 @@ export class SecurityFabHub {
     return { tStart: start, tEnd: start + 86399 };
   }
 
+  _resolveSceneEventBadge(ev) {
+    const rawImp = String(ev?.importance || 'notable').trim().toLowerCase();
+    const subjects = Array.isArray(ev?.subjects) ? ev.subjects : [];
+    const hasPerson = subjects.some((s) => s?.class_label === 'person');
+    const alarmNorm = String(ev?.alarm_state || '').trim().toLowerCase();
+    const isSilentState =
+      alarmNorm.includes('silenz') ||
+      alarmNorm.includes('silent') ||
+      alarmNorm.includes('home') ||
+      alarmNorm.includes('night') ||
+      alarmNorm.includes('perimeter');
+
+    if (rawImp === 'silent_alert') {
+      return { cls: 'is-silent-alert', label: 'Allarme Silenzioso', isAlarmLike: true };
+    }
+    if (rawImp === 'alert') {
+      if (alarmNorm && isSilentState && hasPerson) {
+        return { cls: 'is-silent-alert', label: 'Allarme Silenzioso', isAlarmLike: true };
+      }
+      if (!alarmNorm || hasPerson) {
+        return { cls: 'is-alert', label: 'Allarme', isAlarmLike: true };
+      }
+      return { cls: 'is-notable', label: 'Rilevato', isAlarmLike: false };
+    }
+    if (rawImp === 'routine') {
+      return { cls: 'is-routine', label: 'Famiglia', isAlarmLike: false };
+    }
+    return { cls: 'is-notable', label: 'Rilevato', isAlarmLike: false };
+  }
+
   _eventMatchesCurrentFilter(ev) {
     if (!ev || !ev.event_id) return false;
     const { tStart, tEnd } = this._getSelectedEventsDayRange();
@@ -2823,7 +2853,7 @@ export class SecurityFabHub {
 
     const cat = String(this.sceneEventsFilters?.category || '');
     if (!cat) return true;
-    if (cat === 'alert') return ev.importance === 'alert';
+    if (cat === 'alert') return this._resolveSceneEventBadge(ev).isAlarmLike;
     const subjects = Array.isArray(ev.subjects) ? ev.subjects : [];
     if (cat === 'person') return subjects.some((s) => s?.class_label === 'person');
     if (cat === 'vehicle') {
@@ -2872,7 +2902,7 @@ export class SecurityFabHub {
     const queryOpts = {
       tStart,
       tEnd,
-      importance: cat === 'alert' ? 'alert' : null,
+      importance: cat === 'alert' ? 'alert,silent_alert' : null,
       subjectClass: cat === 'person' ? 'person' : cat === 'vehicle' ? 'vehicle' : null,
       limit: 60,
     };
@@ -2942,10 +2972,42 @@ export class SecurityFabHub {
         const camShort = String(ev.best_camera_id || (ev.cameras?.[0] || '')).replace(/^Cam_/i, '');
         const zoneText = Array.isArray(ev.zones) && ev.zones.length > 0 ? ev.zones[0] : '';
         const metaLine = [camShort, zoneText].filter(Boolean).join(' · ') || 'Casa';
-        const impClass = ev.importance === 'alert' ? 'is-alert' : ev.importance === 'routine' ? 'is-routine' : 'is-notable';
-        const impLabel = ev.importance === 'alert' ? 'Allarme' : ev.importance === 'routine' ? 'Famiglia' : 'Rilevato';
+        const badge = this._resolveSceneEventBadge(ev);
+        const impClass = badge.cls;
+        const impLabel = badge.label;
 
-        const subjectsHtml = (Array.isArray(ev.subjects) ? ev.subjects : [])
+        const rawSubjects = Array.isArray(ev.subjects) ? ev.subjects : [];
+        const sortedSubjects = [...rawSubjects].sort((a, b) => {
+          const rank = (s) => (s?.class_label === 'person' ? 0 : s?.plate ? 1 : 2);
+          return rank(a) - rank(b);
+        });
+        const seenPlates = new Set();
+        const seenGenericClasses = new Set();
+        const dedupedSubjects = [];
+        for (const s of sortedSubjects) {
+          if (!s) continue;
+          const plateNorm = String(s.plate || '').trim().toUpperCase();
+          if (plateNorm) {
+            if (seenPlates.has(plateNorm)) continue;
+            seenPlates.add(plateNorm);
+          } else if (['car', 'truck', 'motorbike'].includes(String(s.class_label || ''))) {
+            const clsKey = String(s.class_label);
+            if (seenGenericClasses.has(clsKey)) continue;
+            seenGenericClasses.add(clsKey);
+          }
+          dedupedSubjects.push(s);
+        }
+
+        const _objectLabelIt = (cls) => {
+          if (cls === 'car') return 'Veicolo';
+          if (cls === 'truck') return 'Furgone';
+          if (cls === 'motorbike') return 'Moto';
+          if (cls === 'bicycle') return 'Bicicletta';
+          if (cls === 'dog') return 'Animale';
+          return cls || 'Oggetto';
+        };
+
+        const subjectsHtml = dedupedSubjects
           .slice(0, 3)
           .map((s) => {
             if (s.plate) {
@@ -2956,7 +3018,7 @@ export class SecurityFabHub {
               const isKnown = Boolean(s.identity && !['sconosciuto', 'unknown', 'none', 'pending'].includes(String(s.identity).toLowerCase()));
               return `<span class="m3-scene-subj-pill ${isKnown ? 'is-known' : 'is-unknown'}">${escapeHtml(isKnown ? s.identity : 'Sconosciuto')}</span>`;
             }
-            return `<span class="m3-scene-subj-pill">${escapeHtml(s.class_label || 'Oggetto')}</span>`;
+            return `<span class="m3-scene-subj-pill">${escapeHtml(_objectLabelIt(s.class_label))}</span>`;
           })
           .join('');
 
