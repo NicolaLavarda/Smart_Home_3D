@@ -294,29 +294,35 @@ File: [models.py](../../spatial_server/events/models.py), [manager.py](../../spa
 
 ---
 
-### 3.8 `automations` — Motore Spaziale 2.5D, Cinematica, Astronomia e Azioni
+### 3.8 `automations` — Motore Spaziale 2.5D, Pre-Trigger, Cinematica, Astronomia e Azioni
 
-File: [models.py](../../spatial_server/automations/models.py), [geometry.py](../../spatial_server/automations/geometry.py), [kinematics.py](../../spatial_server/automations/kinematics.py), [astronomy.py](../../spatial_server/automations/astronomy.py), [evaluators.py](../../spatial_server/automations/evaluators.py), [engine.py](../../spatial_server/automations/engine.py).
+File: [models.py](../../spatial_server/automations/models.py), [geometry.py](../../spatial_server/automations/geometry.py), [kinematics.py](../../spatial_server/automations/kinematics.py), [astronomy.py](../../spatial_server/automations/astronomy.py), [evaluators.py](../../spatial_server/automations/evaluators.py), [correlator.py](../../spatial_server/automations/correlator.py), [actions.py](../../spatial_server/automations/actions.py), [engine.py](../../spatial_server/automations/engine.py).
 
 - **Geometria 2.5D (`SpatialGeometryEngine`):**
   - **Aree poligonali (`geometry_type="polygon"`):** test point-in-polygon ray-casting sul piano XZ + intervallo quota `[y_min, y_max]` + **isteresi spaziale** (`hysteresis_m`, default `0.12m`) quando una traccia è già dentro, evitando rimbalzi sul confine.
   - **Perimetri / Tripwire orientati (`geometry_type="perimeter"` o bordo poligono):** intersezione esatta tra il segmento di spostamento `prev_xyz → curr_xyz` e ciascun segmento `A → B` della polilinea; calcola la normale unitaria `(-dz, +dx) / ||AB||` (invertibile con `normal_flipped`) per distinguere il verso di attraversamento `a_to_b` vs `b_to_a`.
-- **Buffer Cinematico (`TrackKinematicHistoryBuffer`):** mantiene fino a `1200` campioni (`120s`) per traccia, calcola permanenze continue nelle zone (`ZonePresenceState`), transizioni `Area A → Area B` (`ZoneTransitionEvent`), e metriche su finestra mobile (`WindowKinematicMetrics`: velocità media ponderata `0.55 * net_speed + 0.45 * avg_kalman_speed`, azimut medio in `[0°, 360°)` con `0°=+X Est, 90°=+Z Sud`, e `directional_consistency` in `[0, 1]`).
+- **Buffer Cinematico (`TrackKinematicHistoryBuffer`):** mantiene fino a `1200` campioni (`120s`) per traccia, calcola permanenze continue nelle zone (`ZonePresenceState`), transizioni `Area A → Area B` (`ZoneTransitionEvent`), visite recenti (`was_track_in_zone_recently`), e metriche su finestra mobile (`WindowKinematicMetrics`: `mean_speed_mps`, `peak_speed_mps` su sotto-finestra scorrevole anti-jitter, `min_speed_mps`, `current_speed_mps`, azimut medio in `[0°, 360°)` con `0°=+X Est, 90°=+Z Sud`, e `directional_consistency` in `[0, 1]`).
 - **Orologio Astronomico (`AstronomicalClock`):** calcolo pure-Python NOAA (zenit `90.833°` per rifrazione atmosferica) su `HOME_LATITUDE` / `HOME_LONGITUDE` (default `45.55° N, 11.55° E`).
-- **Trigger (`TriggerRegistry`, Strategy Pattern — 8 evaluator):**
-  1. `zone_presence` (`enter`, `exit`, `dwell` con `min_dwell_s`)
+- **Pre-Trigger Temporali e Sequenze (`RuleSequenceCoordinator` & `CorrelationPolicy`):**
+  - Ogni regola supporta una lista ordinata di `PreTriggerStageSpec` (`pre_triggers`) con finestra d'attesa `[min_delay_s, max_wait_s]`, modalità interna `any` (OR) / `all` (AND entro `stage_window_s`), guardia opzionale `stage.condition`, `refresh_on_rearm`, `consume_on_fire` e scope di correlazione (`same_subject`, `same_track`, `same_scene_event`, `any`).
+  - `same_subject` garantisce l'isolamento multi-veicolo (due tracce attive contemporaneamente non vengono mai correlate tra loro) consentendo al contempo l'handoff in caso di occlusione dentro lo stesso `SceneEvent`.
+  - I trigger principali supportano `trigger_logic="or"` oppure `"and_within"` (tutti i trigger principali abilitati entro `trigger_window_s` in qualsiasi ordine).
+  - Stato live armato esposto via `GET /api/v1/automations/armed` + WS `automation_pretrigger_updated`, e ring-buffer diagnostico in memoria via `GET /api/v1/automations/rules/{rule_id}/diagnostics`.
+- **Trigger (`TriggerRegistry`, Strategy Pattern — 9 evaluator):**
+  1. `zone_presence` (`enter`, `present`, `exit`, `dwell` con `min_dwell_s`)
   2. `perimeter_crossing` (`a_to_b`, `b_to_a`, `both`)
   3. `zone_transition` (`from_zone_id → to_zone_id` con `max_transit_s` e bounds velocità)
   4. `kinematic_vector` (`target_azimuth_deg ± azimuth_tolerance_deg`, `min/max_speed_mps`, `min_consistency`, `min_duration_s`)
   5. `time_schedule` (`fixed_time`, `sunrise`, `sunset` con `offset_minutes`, `interval`, filtro `days_of_week`)
   6. `entity_state_change` (su entità virtuali `sh3d.*` o entità HA specchiate, con `from_state`, `to_state` e `for_duration_s` hold timer)
-  7. `biometric_detection` (scatta su `on_biometric_update` filtrando per `modality`, `camera_id` e `SubjectFilterSpec`)
+  7. `biometric_detection` (scatta su `on_biometric_update` filtrando per `modality`, `camera_id`, `zone_id` opzionale, `require_locked` e `SubjectFilterSpec`)
   8. `proximity_3d` (distanza euclidea XZ `<= radius_m` da `(target_x, target_z)` per `min_dwell_s`)
-- **Condizioni (`ConditionEvaluator`) & Filtri (`SubjectFilterEvaluator`):** AST booleano ricorsivo (`and`, `or`, `not`, `xor`) con foglie `entity_state`, `time_window` (incluso overnight es. `22:00 → 06:30` e `sun_state`), `zone_occupancy` e `track_kinematics`.
-- **Late Biometric Binding (`_DeferredBiometricCheck`):** se un trigger spaziale filtra per `face_mode` o `plate_mode` (es. `known`/`unknown`/`whitelisted`), trattiene la valutazione fino a `biometric_grace_s` (`1.2s` default) finché la biometria non si risolve (`locked`/`unknown`) o la finestra di grazia non scade.
-- **Esecuzione Azioni (`AutomationEngineService`):**
-  - Modalità di concorrenza per regola: `single`, `restart`, `parallel`, `queued` + `cooldown_s` (default `3.0s`).
-  - Azioni supportate: `set_virtual_entity`, `call_ha_service`, `send_notification`, `ui_alert`, `delay` (cap `3600s`), `if_then_else` ricorsivo, `webhook` HTTP.
+  9. `scene_event` (ciclo di vita `SceneEventManager`: `started`, `importance_escalated`, `closed`)
+- **Condizioni (`ConditionRegistry` + `ConditionEvaluator`) & Filtri (`SubjectFilterEvaluator`):** AST booleano ricorsivo (`and`, `or`, `not`, `xor`) con 7 strategie foglia registrate: `entity_state`, `time_window` (incluso overnight e `sun_state`), `zone_occupancy`, `track_kinematics` (`evaluation_mode` tra `mean`, `peak_in_window`, `min_in_window`, `current` su `window_s` fino a `120s`), `subject_filter`, `scene_event` e `recent_zone_visit`.
+- **Late Biometric Binding (`DeferredBiometricManager`):** ancora la finestra di grazia `biometric_grace_s` (fino a `60s`) al momento del trigger (non a `track_first_seen`), con deduplicazione per `(rule_id, stage_key, trigger_id, track_id)`, deep-copy dello stato shadow e distinzione tra filtri positivi (attesa fino a match o `biometric_locked`/`expires_at`) e filtri negativi.
+- **Esecuzione Azioni (`ActionRegistry` + `AutomationEngineService`):**
+  - Modalità di concorrenza per regola: `single`, `restart`, `parallel`, `queued` + `cooldown_s` (esecuzione non bloccante in background quando l'albero azioni contiene `delay`).
+  - Azioni registrate in `ActionRegistry`: `set_virtual_entity`, `call_ha_service`, `send_notification`, `ui_alert`, `delay` (cap `3600s`), `if_then_else` ricorsivo, `webhook` HTTP.
   - **`send_notification` bundle:** genera testo naturale italiano (`auto_scene`) o template `{{...}}` (`trigger.*`, `track.*`, `event.*`, `scene.*`, o qualsiasi `entity_id`), allega URL firmato HMAC, invia push iOS/Android (`tag` per deduplica, `priority=silent|normal|critical` con override DND su iOS/Android), toast WebOS TV (opzionalmente `tv_only_when_on`), TTS italiano + visualizzazione temporizzata (`play_media` dopo `2.5s`, poi `turn_off` dopo `display_duration_s`) su Nest Hub, pubblicazione JPEG su MQTT e **aggiornamento silenzioso** (`alert_once=True`) della notifica mobile se la biometria si risolve entro `25s`.
 
 ---

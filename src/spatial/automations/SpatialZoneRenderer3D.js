@@ -327,7 +327,9 @@ export class SpatialZoneRenderer3D {
 
   showDirectionCone({ azimuthDeg = 0, toleranceDeg = 35, originXZ = null, zoneId = null } = {}) {
     this._clearGroup(this.directionConeGroup);
-    if (!Number.isFinite(Number(azimuthDeg))) return;
+    if (azimuthDeg === null || azimuthDeg === undefined || azimuthDeg === '' || !Number.isFinite(Number(azimuthDeg))) {
+      return;
+    }
 
     let cx = 0;
     let cz = 0;

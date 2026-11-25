@@ -911,7 +911,10 @@ class SpatialPipelineService:
                         zones_by_track[tr.track_id] = matched_z
             alarm_ve = self.automation_engine.virtual_entities.get("sh3d.allarme")
             alarm_state = str(alarm_ve.state) if alarm_ve is not None else None
-            await self.scene_event_manager.on_detection_batch(
+            prev_scene_ev = self.scene_event_manager.get_active_event()
+            prev_scene_id = prev_scene_ev.event_id if prev_scene_ev is not None else None
+            prev_scene_imp = prev_scene_ev.importance if prev_scene_ev is not None else None
+            curr_scene_ev = await self.scene_event_manager.on_detection_batch(
                 events,
                 active_tracks,
                 obs_assignments,
@@ -919,6 +922,11 @@ class SpatialPipelineService:
                 zones_by_track=zones_by_track,
                 alarm_state=alarm_state,
             )
+            if curr_scene_ev is not None:
+                if curr_scene_ev.event_id != prev_scene_id:
+                    await self.automation_engine.on_scene_event_lifecycle("started", curr_scene_ev, now_ts)
+                elif prev_scene_imp != "alert" and curr_scene_ev.importance == "alert":
+                    await self.automation_engine.on_scene_event_lifecycle("importance_escalated", curr_scene_ev, now_ts)
         except Exception as exc:
             logger.warning("SceneEvent aggregation warning on detection batch: %s", exc)
         try:
@@ -1279,10 +1287,13 @@ class SpatialPipelineService:
                 self._pending_persist.extend(persistable)
 
         await self.broadcast_frame(active_tracks, update.timestamp)
+        bio_ev = None
+        prev_scene_ev = self.scene_event_manager.get_active_event()
+        prev_scene_imp = prev_scene_ev.importance if prev_scene_ev is not None else None
         if update.biometric_status in ("locked", "unknown") or update.full_frame_bgr is not None:
             try:
-                await self.scene_event_manager.on_biometric_frame(
-                    track_id=update.track_id,
+                bio_ev = await self.scene_event_manager.on_biometric_frame(
+                    track_id=updated_track.track_id,
                     camera_id=update.camera_id,
                     timestamp=update.timestamp,
                     full_frame_bgr=update.full_frame_bgr,
@@ -1300,17 +1311,30 @@ class SpatialPipelineService:
                 )
             except Exception as exc:
                 logger.warning("SceneEvent biometric update warning: %s", exc)
+        if bio_ev is not None and prev_scene_imp != "alert" and bio_ev.importance == "alert":
+            try:
+                await self.automation_engine.on_scene_event_lifecycle(
+                    "importance_escalated",
+                    bio_ev,
+                    update.timestamp,
+                )
+            except Exception as exc:
+                logger.warning("Automation scene escalation warning: %s", exc)
         if update.biometric_status in ("locked", "unknown"):
             await self.broadcast_biometric_event(update, event_id=event_id)
             try:
                 await self.automation_engine.on_biometric_update(
                     {
-                        "track_id": update.track_id,
+                        "track_id": updated_track.track_id,
+                        "previous_track_id": update.track_id,
                         "modality": update.modality,
                         "camera_id": update.camera_id,
-                        "identity": update.identity,
-                        "plate": update.plate,
-                        "plate_whitelisted": update.plate_whitelisted,
+                        "identity": updated_track.identity,
+                        "plate": updated_track.plate,
+                        "plate_whitelisted": updated_track.plate_whitelisted,
+                        "plate_owner": updated_track.plate_owner,
+                        "biometric_locked": updated_track.biometric_locked,
+                        "biometric_status": updated_track.biometric_status,
                     },
                     active_tracks,
                     update.timestamp,
@@ -1378,7 +1402,10 @@ class SpatialPipelineService:
                 now_mono = time.monotonic()
                 if now_mono - last_event_tick >= 1.0:
                     last_event_tick = now_mono
-                    await self.scene_event_manager.tick(time.time())
+                    now_tick = time.time()
+                    closed_ev = await self.scene_event_manager.tick(now_tick)
+                    if closed_ev is not None:
+                        await self.automation_engine.on_scene_event_lifecycle("closed", closed_ev, now_tick)
                 if now_mono - last_prune > 3600:
                     loop = asyncio.get_running_loop()
                     cutoff_tracks = time.time() - self.config.db_retention_days * 86400
@@ -2579,12 +2606,40 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
             "zones": [z.model_dump() for z in eng.list_zones()],
             "virtual_entities": [e.model_dump() for e in eng.list_virtual_entities()],
             "rules": [r.model_dump() for r in eng.list_rules()],
+            "armed_states": eng.get_armed_states(),
             "logs": service.repository.query_automation_logs(limit=60),
             "sun": eng.astronomical_clock.get_sun_summary(time.time()),
             "identities": service.get_biometric_gallery_summary(),
             "plates": service.repository.list_plate_whitelist(),
             "cameras": list(service.optical_models.keys()),
             "ha_discovery": service.ha_bridge.get_discovery_summary(),
+        }
+
+    @app.get("/api/v1/automations/armed")
+    async def get_automation_armed_states(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "armed_states": service.automation_engine.get_armed_states(),
+        }
+
+    @app.get("/api/v1/automations/rules/{rule_id}/diagnostics")
+    async def get_automation_rule_diagnostics(
+        rule_id: str,
+        response: Response,
+        limit: int = Query(default=30, ge=1, le=100),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        if rule_id not in service.automation_engine.rules:
+            raise HTTPException(status_code=404, detail=f"Automazione '{rule_id}' non trovata")
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "rule_id": rule_id,
+            "diagnostics": service.automation_engine.get_rule_diagnostics(rule_id, limit=limit),
         }
 
     @app.get("/api/v1/automations/ha-discovery")

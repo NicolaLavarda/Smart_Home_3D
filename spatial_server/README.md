@@ -164,12 +164,14 @@ In produzione (`SH3D_DEV_MODE=false`, `SPATIAL_AUTH_REQUIRED=true`), il servizio
 | [events/signing.py](./events/signing.py) | `SignedMediaTokenService` (URL HMAC-SHA256 a scadenza per notifiche mobile/display) |
 | **Automations** | |
 | [automations/__init__.py](./automations/__init__.py) | Export motore automazioni |
-| [automations/models.py](./automations/models.py) | `Point2D`, `SpatialZoneDefinition`, `VirtualEntityDefinition`, `SubjectFilterSpec`, `TriggerSpec`, `ConditionSpec`, `ActionSpec`, `AutomationRuleDefinition`, `AutomationExecutionLog` |
+| [automations/models.py](./automations/models.py) | `Point2D`, `SpatialZoneDefinition`, `VirtualEntityDefinition`, `SubjectFilterSpec`, `PreTriggerStageSpec`, `TriggerSpec`, `ConditionSpec`, `ActionSpec`, `AutomationRuleDefinition`, `ArmedPreTriggerSnapshot`, `RuleDiagnosticEntry`, `AutomationExecutionLog` |
 | [automations/geometry.py](./automations/geometry.py) | `SpatialGeometryEngine`, `PerimeterCrossingEvent` (ray-casting 2D/2.5D con isteresi + intersezione segmenti orientati) |
-| [automations/kinematics.py](./automations/kinematics.py) | `TrackKinematicHistoryBuffer`, `KinematicSample`, `ZonePresenceState`, `ZoneTransitionEvent`, `WindowKinematicMetrics`, `TrackStepEvents` |
+| [automations/kinematics.py](./automations/kinematics.py) | `TrackKinematicHistoryBuffer`, `KinematicSample`, `ZonePresenceState`, `ZoneTransitionEvent`, `WindowKinematicMetrics` (con lookback `peak_speed_mps`), `TrackStepEvents` |
 | [automations/astronomy.py](./automations/astronomy.py) | `AstronomicalClock` (equazioni solari NOAA alba/tramonto) |
-| [automations/evaluators.py](./automations/evaluators.py) | `SubjectFilterEvaluator`, `TriggerRegistry` (8 evaluator), `ConditionEvaluator` (AST booleano) |
-| [automations/engine.py](./automations/engine.py) | `AutomationEngineService` (late biometric binding, esecutore azioni, notifiche bundle, template `{{...}}`) |
+| [automations/evaluators.py](./automations/evaluators.py) | `SubjectFilterEvaluator`, `TriggerRegistry` (9 evaluator), `ConditionRegistry` & `ConditionEvaluator` (AST booleano + 7 strategie foglia) |
+| [automations/correlator.py](./automations/correlator.py) | `RuleSequenceCoordinator`, `CorrelationPolicy`, `ArmedStageToken`, `CorrelatedRuleMatch` (pre-trigger temporali e `and_within`) |
+| [automations/actions.py](./automations/actions.py) | `ActionRegistry`, `BaseActionExecutor`, `action_tree_contains_delay` |
+| [automations/engine.py](./automations/engine.py) | `AutomationEngineService`, `DeferredBiometricManager` (late biometric binding, esecutore azioni, notifiche bundle, template `{{...}}`) |
 | **Recordings (NVR)** | |
 | [recordings/__init__.py](./recordings/__init__.py) | Export sottosistema NVR |
 | [recordings/interfaces.py](./recordings/interfaces.py) | `RecordingSegmentRecord`, `PlaybackResolutionRecord`, `EncodedPacket`, `StreamMetadata`, `GopChunk`, `SegmentWriteResult`, `IMediaPacketSource`, `IMediaSegmentWriter`, `INvrSegmentIndex`, `IVideoArchiveRepository`, `IDualTierRecorderCoordinator` |
@@ -272,7 +274,9 @@ Legenda RBAC:
 
 | Metodo | Path | Auth / RBAC | Scopo e dettagli |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/v1/automations/bootstrap` | Utente | Stato completo per Automation Studio: `zones`, `virtual_entities`, `rules`, ultimi 60 `logs`, `sun` (alba/tramonto NOAA), `identities`, `plates`, `cameras`, `ha_discovery`. |
+| `GET` | `/api/v1/automations/bootstrap` | Utente | Stato completo per Automation Studio: `zones`, `virtual_entities`, `rules`, `armed_states`, ultimi 60 `logs`, `sun`, `identities`, `plates`, `cameras`, `ha_discovery`. |
+| `GET` | `/api/v1/automations/armed` | Utente | Stato live dei pre-trigger attualmente armati (`armed_states`). |
+| `GET` | `/api/v1/automations/rules/{rule_id}/diagnostics` | Utente | Ring-buffer diagnostico in memoria per debug della regola (`404` se inesistente). |
 | `GET` | `/api/v1/automations/ha-discovery` | Utente | Riepilogo entità `notify.*`, `media_player.*`, `tts.*`, `switch/light/lock/cover/script/button.*` scoperte dal bridge HA. |
 | `GET` | `/api/v1/automations/zones` | Utente | Elenco zone poligonali 2.5D e perimetri orientati. |
 | `PUT` | `/api/v1/automations/zones` | **Admin** | Crea o aggiorna `SpatialZoneDefinition` e trasmette `automation_zones_updated`. |

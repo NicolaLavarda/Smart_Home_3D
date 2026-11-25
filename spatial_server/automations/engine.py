@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+import copy
 from dataclasses import dataclass
 import json
 import logging
@@ -15,7 +17,9 @@ from spatial_server.config import SpatialServerConfig, _normalize_ha_url
 from spatial_server.domain.models import TrackedEntity3D
 from spatial_server.events.narrator import build_scene_sentence_it, build_scene_title_it
 from spatial_server.persistence.interfaces import ITrackRepository
+from .actions import ActionRegistry, action_tree_contains_delay
 from .astronomy import AstronomicalClock
+from .correlator import CorrelatedRuleMatch, RuleSequenceCoordinator
 from .evaluators import (
     ConditionEvaluator,
     EntityStateSnapshot,
@@ -29,6 +33,8 @@ from .models import (
     ActionSpec,
     AutomationExecutionLog,
     AutomationRuleDefinition,
+    DiagnosticEventLiteral,
+    RuleDiagnosticEntry,
     SpatialZoneDefinition,
     TriggerSpec,
     VirtualEntityDefinition,
@@ -42,11 +48,234 @@ class _DeferredBiometricCheck:
     """Queued spatial/perimeter event waiting briefly for biometric worker verdict."""
 
     rule_id: str
+    stage_key: str  # "main" or f"pre:{stage_id}"
     trigger_spec: TriggerSpec
     activation: TriggerActivationEvent
     track_id: int
     created_at: float
     expires_at: float
+    is_positive: bool = False
+
+
+class DeferredBiometricManager:
+    """
+    Manages deduplicated late-biometric waiting checks (`biometric_grace_s`) anchored
+    to the trigger activation timestamp rather than track creation time.
+    """
+
+    def __init__(self) -> None:
+        self._checks: list[_DeferredBiometricCheck] = []
+
+    def has_key(self, rule_id: str, stage_key: str, trigger_id: str, track_id: int) -> bool:
+        return any(
+            c.rule_id == rule_id
+            and c.stage_key == stage_key
+            and c.trigger_spec.trigger_id == trigger_id
+            and c.track_id == track_id
+            for c in self._checks
+        )
+
+    def clear_rule(self, rule_id: str) -> None:
+        self._checks = [c for c in self._checks if c.rule_id != rule_id]
+
+    def enqueue_positive_candidates(
+        self,
+        rule: AutomationRuleDefinition,
+        stage_key: str,
+        trig_spec: TriggerSpec,
+        evaluator: Any,
+        ctx: EvaluationContext,
+        rt_state: dict[str, Any],
+        *,
+        scene_event_id: Optional[str],
+    ) -> list[_DeferredBiometricCheck]:
+        if trig_spec.subject_filter.biometric_grace_s <= 0.0:
+            return []
+        if not SubjectFilterEvaluator.has_positive_biometric_filter(trig_spec.subject_filter):
+            return []
+
+        relaxed_filter = trig_spec.subject_filter.model_copy(
+            update={"face_mode": "any", "plate_mode": "any"}
+        )
+        relaxed_spec = trig_spec.model_copy(update={"subject_filter": relaxed_filter})
+        # Deep copy runtime_state so shadow evaluation never mutates dwell/latch sets!
+        shadow_rt = copy.deepcopy(rt_state)
+        candidate_events = evaluator.evaluate(rule.rule_id, relaxed_spec, ctx, shadow_rt)
+
+        added: list[_DeferredBiometricCheck] = []
+        for cand in candidate_events:
+            if cand.track is None:
+                continue
+            tid = cand.track.track_id
+            if SubjectFilterEvaluator.matches(
+                cand.track,
+                trig_spec.subject_filter,
+                known_identities_lower=ctx.known_identities_lower,
+                whitelisted_plates_upper=ctx.whitelisted_plates_upper,
+            ):
+                continue
+            if not SubjectFilterEvaluator.should_defer_for_biometrics(
+                cand.track,
+                trig_spec.subject_filter,
+                ctx.now_ts,
+                ctx.now_ts,
+                for_positive_candidate=True,
+            ):
+                continue
+            if self.has_key(rule.rule_id, stage_key, trig_spec.trigger_id, tid):
+                continue
+
+            kin = cand.kinematics or ctx.kinematics_buffer.compute_window_kinematics(
+                tid,
+                window_s=10.0,
+                now_ts=ctx.now_ts,
+            )
+            enriched_cand = TriggerActivationEvent(
+                trigger_id=cand.trigger_id,
+                trigger_type=cand.trigger_type,
+                timestamp=cand.timestamp,
+                summary=cand.summary,
+                track=cand.track,
+                zone_id=cand.zone_id,
+                from_zone_id=cand.from_zone_id,
+                to_zone_id=cand.to_zone_id,
+                entity_id=cand.entity_id,
+                old_state=cand.old_state,
+                new_state=cand.new_state,
+                kinematics=kin,
+                scene_event_id=cand.scene_event_id or scene_event_id,
+                extra=dict(cand.extra),
+            )
+            item = _DeferredBiometricCheck(
+                rule_id=rule.rule_id,
+                stage_key=stage_key,
+                trigger_spec=trig_spec,
+                activation=enriched_cand,
+                track_id=tid,
+                created_at=ctx.now_ts,
+                expires_at=ctx.now_ts + trig_spec.subject_filter.biometric_grace_s,
+                is_positive=True,
+            )
+            self._checks.append(item)
+            added.append(item)
+        return added
+
+    def enqueue_negative_defer(
+        self,
+        rule: AutomationRuleDefinition,
+        stage_key: str,
+        trig_spec: TriggerSpec,
+        act_ev: TriggerActivationEvent,
+        ctx: EvaluationContext,
+    ) -> Optional[_DeferredBiometricCheck]:
+        if act_ev.track is None:
+            return None
+        if not SubjectFilterEvaluator.should_defer_for_biometrics(
+            act_ev.track,
+            trig_spec.subject_filter,
+            ctx.now_ts,
+            ctx.now_ts,
+            for_positive_candidate=False,
+        ):
+            return None
+        tid = act_ev.track.track_id
+        if self.has_key(rule.rule_id, stage_key, trig_spec.trigger_id, tid):
+            return None
+        item = _DeferredBiometricCheck(
+            rule_id=rule.rule_id,
+            stage_key=stage_key,
+            trigger_spec=trig_spec,
+            activation=act_ev,
+            track_id=tid,
+            created_at=ctx.now_ts,
+            expires_at=ctx.now_ts + trig_spec.subject_filter.biometric_grace_s,
+            is_positive=False,
+        )
+        self._checks.append(item)
+        return item
+
+    def pop_ready(
+        self,
+        rules: dict[str, AutomationRuleDefinition],
+        ctx: EvaluationContext,
+    ) -> list[tuple[AutomationRuleDefinition, str, TriggerSpec, TriggerActivationEvent]]:
+        if not self._checks:
+            return []
+
+        active_by_id = {t.track_id: t for t in ctx.active_tracks}
+        remaining: list[_DeferredBiometricCheck] = []
+        ready: list[tuple[AutomationRuleDefinition, str, TriggerSpec, TriggerActivationEvent]] = []
+
+        for item in self._checks:
+            rule = rules.get(item.rule_id)
+            if rule is None or not rule.enabled:
+                continue
+
+            tr = (
+                active_by_id.get(item.track_id)
+                or ctx.kinematics_buffer.get_active_track(item.track_id)
+                or item.activation.track
+            )
+            if tr is None:
+                continue
+
+            is_expired = ctx.now_ts >= item.expires_at
+            matched = SubjectFilterEvaluator.matches(
+                tr,
+                item.trigger_spec.subject_filter,
+                known_identities_lower=ctx.known_identities_lower,
+                whitelisted_plates_upper=ctx.whitelisted_plates_upper,
+            )
+
+            if item.is_positive:
+                if matched:
+                    updated_act = TriggerActivationEvent(
+                        trigger_id=item.activation.trigger_id,
+                        trigger_type=item.activation.trigger_type,
+                        timestamp=ctx.now_ts,
+                        summary=item.activation.summary,
+                        track=tr,
+                        zone_id=item.activation.zone_id,
+                        from_zone_id=item.activation.from_zone_id,
+                        to_zone_id=item.activation.to_zone_id,
+                        kinematics=item.activation.kinematics,
+                        scene_event_id=item.activation.scene_event_id,
+                        extra={**item.activation.extra, "late_biometric_bound": True},
+                    )
+                    ready.append((rule, item.stage_key, item.trigger_spec, updated_act))
+                elif tr.biometric_locked or is_expired:
+                    # Locked to non-matching identity/plate or grace window elapsed -> drop
+                    continue
+                else:
+                    remaining.append(item)
+            else:
+                is_resolved = (
+                    tr.biometric_locked
+                    or tr.biometric_status in ("locked", "unknown")
+                    or bool(tr.identity)
+                    or bool(tr.plate)
+                )
+                if not is_resolved and not is_expired:
+                    remaining.append(item)
+                    continue
+                if matched:
+                    updated_act = TriggerActivationEvent(
+                        trigger_id=item.activation.trigger_id,
+                        trigger_type=item.activation.trigger_type,
+                        timestamp=ctx.now_ts,
+                        summary=item.activation.summary,
+                        track=tr,
+                        zone_id=item.activation.zone_id,
+                        from_zone_id=item.activation.from_zone_id,
+                        to_zone_id=item.activation.to_zone_id,
+                        kinematics=item.activation.kinematics,
+                        scene_event_id=item.activation.scene_event_id,
+                        extra={**item.activation.extra, "late_biometric_bound": True},
+                    )
+                    ready.append((rule, item.stage_key, item.trigger_spec, updated_act))
+
+        self._checks = remaining
+        return ready
 
 
 class AutomationEngineService:
@@ -95,12 +324,16 @@ class AutomationEngineService:
 
         # Per-(rule_id, trigger_id) stateful evaluator memory
         self._trigger_runtime_state: dict[tuple[str, str], dict[str, Any]] = {}
+        self.sequence_coordinator = RuleSequenceCoordinator()
+        self._deferred_biometrics = DeferredBiometricManager()
+        self._diagnostics: dict[str, deque[RuleDiagnosticEntry]] = {}
         self._running_rule_tasks: dict[str, set[asyncio.Task[None]]] = {}
+        self._queued_rule_runs: dict[str, deque[tuple[AutomationRuleDefinition, TriggerActivationEvent, EvaluationContext]]] = {}
         self._active_display_tasks: set[asyncio.Task[None]] = set()
         self._pending_notif_updates: dict[str, dict[str, Any]] = {}
-        self._deferred_biometric_checks: list[_DeferredBiometricCheck] = []
         self._track_first_seen: dict[int, float] = {}
         self._pending_entity_changes: list[tuple[str, Optional[str], str]] = []
+        self._last_pretrigger_broadcast_mono: float = 0.0
         self._clock_task: Optional[asyncio.Task[None]] = None
         self._lock = asyncio.Lock()
 
@@ -314,22 +547,79 @@ class AutomationEngineService:
         # Clear cached runtime state for this rule so updated parameters take effect cleanly
         for key in [k for k in self._trigger_runtime_state if k[0] == rule.rule_id]:
             self._trigger_runtime_state.pop(key, None)
+        self._deferred_biometrics.clear_rule(rule.rule_id)
+        had_armed = self.sequence_coordinator.reset_rule(rule.rule_id)
 
         self.repository.upsert_automation_rule(rule.model_dump())
         await self._broadcast({"type": "automation_rules_updated", "rules": [r.model_dump() for r in self.list_rules()]})
+        if had_armed:
+            await self._broadcast_pretrigger_state(time.time(), force=True)
         return rule
 
     async def delete_rule(self, rule_id: str) -> bool:
         removed = self.rules.pop(rule_id, None) is not None
         for key in [k for k in self._trigger_runtime_state if k[0] == rule_id]:
             self._trigger_runtime_state.pop(key, None)
+        self._deferred_biometrics.clear_rule(rule_id)
+        had_armed = self.sequence_coordinator.reset_rule(rule_id)
+        self._diagnostics.pop(rule_id, None)
+        self._queued_rule_runs.pop(rule_id, None)
         db_removed = self.repository.delete_automation_rule(rule_id)
         if removed or db_removed:
             await self._broadcast({"type": "automation_rules_updated", "rules": [r.model_dump() for r in self.list_rules()]})
+            if had_armed:
+                await self._broadcast_pretrigger_state(time.time(), force=True)
         return removed or db_removed
 
     def list_rules(self) -> list[AutomationRuleDefinition]:
         return sorted(self.rules.values(), key=lambda r: r.name.lower())
+
+    def get_armed_states(self, now_ts: Optional[float] = None) -> list[dict[str, Any]]:
+        ts = float(now_ts if now_ts is not None else time.time())
+        self.sequence_coordinator.prune_expired(ts)
+        return [s.model_dump() for s in self.sequence_coordinator.get_armed_snapshots(self.rules, ts)]
+
+    def get_rule_diagnostics(self, rule_id: str, limit: int = 30) -> list[dict[str, Any]]:
+        buf = self._diagnostics.get(rule_id)
+        if not buf:
+            return []
+        items = list(buf)[-max(1, min(limit, 100)) :]
+        items.reverse()
+        return [item.model_dump() for item in items]
+
+    def _record_diagnostic(
+        self,
+        rule_id: str,
+        event: DiagnosticEventLiteral,
+        summary: str,
+        *,
+        timestamp: Optional[float] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> None:
+        buf = self._diagnostics.setdefault(rule_id, deque(maxlen=40))
+        buf.append(
+            RuleDiagnosticEntry(
+                timestamp=round(float(timestamp if timestamp is not None else time.time()), 3),
+                rule_id=rule_id,
+                event=event,
+                summary=summary,
+                details=dict(details or {}),
+            )
+        )
+
+    async def _broadcast_pretrigger_state(self, now_ts: float, *, force: bool = False) -> None:
+        now_mono = time.monotonic()
+        if not force and (now_mono - self._last_pretrigger_broadcast_mono) < 2.0:
+            return
+        self._last_pretrigger_broadcast_mono = now_mono
+        snaps = self.sequence_coordinator.get_armed_snapshots(self.rules, now_ts)
+        await self._broadcast(
+            {
+                "type": "automation_pretrigger_updated",
+                "armed_states": [s.model_dump() for s in snaps],
+                "timestamp": round(now_ts, 3),
+            }
+        )
 
     async def sync_ha_states_batch(
         self,
@@ -448,6 +738,37 @@ class AutomationEngineService:
         deferred_logs = await self._check_deferred_biometric_triggers(ctx)
         return logs + deferred_logs
 
+    async def on_scene_event_lifecycle(
+        self,
+        event_kind: str,
+        scene_event: Any,
+        now_ts: Optional[float] = None,
+    ) -> list[AutomationExecutionLog]:
+        """Hook invoked when SceneEventManager starts, escalates, or closes an episode."""
+        has_scene_rule = any(
+            r.enabled
+            and (
+                any(t.enabled and t.type == "scene_event" for t in r.triggers)
+                or any(
+                    stg.enabled and any(t.enabled and t.type == "scene_event" for t in stg.triggers)
+                    for stg in r.pre_triggers
+                )
+            )
+            for r in self.rules.values()
+        )
+        if not has_scene_rule:
+            return []
+
+        ts = float(now_ts if now_ts is not None else time.time())
+        ctx = self._build_evaluation_context(
+            ts,
+            active_tracks=list(self.kinematics_buffer._latest_tracks.values()),
+            step_events_by_track={},
+            scene_event=scene_event,
+            scene_lifecycle_events=[(event_kind, scene_event)],
+        )
+        return await self._evaluate_all_rules(ctx)
+
     def _build_evaluation_context(
         self,
         now_ts: float,
@@ -456,7 +777,15 @@ class AutomationEngineService:
         step_events_by_track: dict[int, TrackStepEvents],
         entity_changes: Optional[list[tuple[str, Optional[str], str]]] = None,
         biometric_updates: Optional[list[dict[str, Any]]] = None,
+        scene_event: Any = None,
+        scene_lifecycle_events: Optional[list[tuple[str, Any]]] = None,
     ) -> EvaluationContext:
+        eff_scene_ev = scene_event
+        if eff_scene_ev is None and self.scene_event_manager is not None:
+            try:
+                eff_scene_ev = self.scene_event_manager.get_active_event()
+            except Exception:
+                eff_scene_ev = None
         return EvaluationContext(
             now_ts=now_ts,
             kinematics_buffer=self.kinematics_buffer,
@@ -470,146 +799,237 @@ class AutomationEngineService:
             step_events_by_track=step_events_by_track,
             entity_changes=list(entity_changes or []),
             biometric_updates=list(biometric_updates or []),
+            scene_event=eff_scene_ev,
+            scene_lifecycle_events=list(scene_lifecycle_events or []),
         )
+
+    def _active_scene_event_id(self, ctx: EvaluationContext) -> Optional[str]:
+        if ctx.scene_event is not None:
+            return getattr(ctx.scene_event, "event_id", None)
+        return None
+
+    def _evaluate_trigger_list(
+        self,
+        rule: AutomationRuleDefinition,
+        stage_key: str,
+        triggers: list[TriggerSpec],
+        ctx: EvaluationContext,
+        *,
+        scene_event_id: Optional[str],
+    ) -> dict[str, list[TriggerActivationEvent]]:
+        activations_by_id: dict[str, list[TriggerActivationEvent]] = {}
+        for trig_spec in triggers:
+            if not trig_spec.enabled:
+                continue
+            evaluator = TriggerRegistry.get(trig_spec.type)
+            if evaluator is None:
+                continue
+
+            rt_key = (rule.rule_id, f"{stage_key}:{trig_spec.trigger_id}")
+            rt_state = self._trigger_runtime_state.setdefault(rt_key, {})
+
+            if ctx.step_events_by_track and trig_spec.subject_filter.biometric_grace_s > 0.0:
+                added_pos = self._deferred_biometrics.enqueue_positive_candidates(
+                    rule,
+                    stage_key,
+                    trig_spec,
+                    evaluator,
+                    ctx,
+                    rt_state,
+                    scene_event_id=scene_event_id,
+                )
+                for item in added_pos:
+                    self._record_diagnostic(
+                        rule.rule_id,
+                        "deferred_biometrics",
+                        f"Attesa biometria ({trig_spec.subject_filter.biometric_grace_s:.1f}s) per traccia #{item.track_id}",
+                        timestamp=ctx.now_ts,
+                    )
+
+            raw_activations = evaluator.evaluate(rule.rule_id, trig_spec, ctx, rt_state)
+            ready_list: list[TriggerActivationEvent] = []
+            for act_ev in raw_activations:
+                if act_ev.track is not None and self._deferred_biometrics.enqueue_negative_defer(
+                    rule,
+                    stage_key,
+                    trig_spec,
+                    act_ev,
+                    ctx,
+                ):
+                    self._record_diagnostic(
+                        rule.rule_id,
+                        "deferred_biometrics",
+                        f"Grazia biometria ({trig_spec.subject_filter.biometric_grace_s:.1f}s) per traccia #{act_ev.track.track_id}",
+                        timestamp=ctx.now_ts,
+                    )
+                    continue
+                if act_ev.scene_event_id is None and scene_event_id is not None:
+                    act_ev = TriggerActivationEvent(
+                        trigger_id=act_ev.trigger_id,
+                        trigger_type=act_ev.trigger_type,
+                        timestamp=act_ev.timestamp,
+                        summary=act_ev.summary,
+                        track=act_ev.track,
+                        zone_id=act_ev.zone_id,
+                        from_zone_id=act_ev.from_zone_id,
+                        to_zone_id=act_ev.to_zone_id,
+                        entity_id=act_ev.entity_id,
+                        old_state=act_ev.old_state,
+                        new_state=act_ev.new_state,
+                        kinematics=act_ev.kinematics,
+                        scene_event_id=scene_event_id,
+                        extra=act_ev.extra,
+                    )
+                ready_list.append(act_ev)
+
+            if ready_list:
+                activations_by_id[trig_spec.trigger_id] = ready_list
+        return activations_by_id
 
     async def _evaluate_all_rules(self, ctx: EvaluationContext) -> list[AutomationExecutionLog]:
         executed_logs: list[AutomationExecutionLog] = []
+        scene_event_id = self._active_scene_event_id(ctx)
+
+        expired_tokens = self.sequence_coordinator.prune_expired(ctx.now_ts)
+        if expired_tokens:
+            for exp_tok in expired_tokens:
+                self._record_diagnostic(
+                    exp_tok.rule_id,
+                    "pre_trigger_expired",
+                    f"Pre-trigger '{exp_tok.stage_name}' scaduto senza conferma",
+                    timestamp=ctx.now_ts,
+                    details={"stage_id": exp_tok.stage_id, "track_id": exp_tok.track_id},
+                )
+            await self._broadcast_pretrigger_state(ctx.now_ts, force=True)
+
+        pre_ctx = EvaluationContext(
+            now_ts=ctx.now_ts,
+            kinematics_buffer=ctx.kinematics_buffer,
+            zones=ctx.zones,
+            virtual_entities=ctx.virtual_entities,
+            ha_states=ctx.ha_states,
+            astronomical_clock=ctx.astronomical_clock,
+            known_identities_lower=ctx.known_identities_lower,
+            whitelisted_plates_upper=ctx.whitelisted_plates_upper,
+            active_tracks=ctx.active_tracks,
+            step_events_by_track=ctx.step_events_by_track,
+            entity_changes=ctx.entity_changes,
+            biometric_updates=ctx.biometric_updates,
+            scene_event=ctx.scene_event,
+            scene_lifecycle_events=ctx.scene_lifecycle_events,
+            is_pre_trigger_eval=True,
+        )
 
         for rule in list(self.rules.values()):
             if not rule.enabled:
                 continue
 
-            for trig_spec in rule.triggers:
-                if not trig_spec.enabled:
+            # Phase A: Evaluate Pre-Trigger Stages sequentially
+            enabled_prev_stage: Optional[tuple[int, Any]] = None
+            for stage_idx, stage in enumerate(rule.pre_triggers):
+                if not stage.enabled or not any(t.enabled for t in stage.triggers):
                     continue
-                evaluator = TriggerRegistry.get(trig_spec.type)
-                if evaluator is None:
-                    continue
-
-                rt_key = (rule.rule_id, trig_spec.trigger_id)
-                rt_state = self._trigger_runtime_state.setdefault(rt_key, {})
-
-                # Check if any track in step_events should be deferred for biometric grace window
-                if ctx.step_events_by_track and trig_spec.subject_filter.biometric_grace_s > 0.0:
-                    self._enqueue_deferred_if_biometrics_pending(rule, trig_spec, evaluator, ctx, rt_state)
-
-                activations = evaluator.evaluate(rule.rule_id, trig_spec, ctx, rt_state)
-                for act_ev in activations:
-                    # If track is still inside biometric grace period for an unknown/exclude check, defer!
-                    if act_ev.track is not None and SubjectFilterEvaluator.should_defer_for_biometrics(
-                        act_ev.track,
-                        trig_spec.subject_filter,
-                        ctx.now_ts,
-                        self._track_first_seen.get(act_ev.track.track_id, ctx.now_ts),
-                    ):
-                        self._deferred_biometric_checks.append(
-                            _DeferredBiometricCheck(
-                                rule_id=rule.rule_id,
-                                trigger_spec=trig_spec,
-                                activation=act_ev,
-                                track_id=act_ev.track.track_id,
-                                created_at=ctx.now_ts,
-                                expires_at=ctx.now_ts + trig_spec.subject_filter.biometric_grace_s,
-                            )
+                stage_key = f"pre:{stage.stage_id}"
+                pre_acts = self._evaluate_trigger_list(
+                    rule,
+                    stage_key,
+                    stage.triggers,
+                    pre_ctx,
+                    scene_event_id=scene_event_id,
+                )
+                if pre_acts:
+                    changes = self.sequence_coordinator.record_pre_trigger_activations(
+                        rule,
+                        stage_idx,
+                        stage,
+                        enabled_prev_stage,
+                        pre_acts,
+                        pre_ctx,
+                        scene_event_id=scene_event_id,
+                    )
+                    for change_kind, tok in changes:
+                        self._record_diagnostic(
+                            rule.rule_id,
+                            "pre_trigger_armed" if change_kind == "armed" else "pre_trigger_refreshed",
+                            f"Pre-trigger '{tok.stage_name}' {'armato' if change_kind == 'armed' else 'rinnovato'} ({stage.max_wait_s:.0f}s): {tok.activation.summary}",
+                            timestamp=ctx.now_ts,
+                            details={"stage_id": tok.stage_id, "track_id": tok.track_id},
                         )
-                        continue
+                    if changes:
+                        has_new_arm = any(ck == "armed" for ck, _ in changes)
+                        await self._broadcast_pretrigger_state(ctx.now_ts, force=has_new_arm)
+                enabled_prev_stage = (stage_idx, stage)
 
-                    log_entry = await self._process_trigger_activation(rule, act_ev, ctx)
-                    if log_entry is not None:
-                        executed_logs.append(log_entry)
+            # Phase B: Evaluate Main Triggers & Correlate with Armed Pre-Triggers
+            main_acts = self._evaluate_trigger_list(
+                rule,
+                "main",
+                rule.triggers,
+                ctx,
+                scene_event_id=scene_event_id,
+            )
+            if not main_acts:
+                continue
+
+            matches = self.sequence_coordinator.resolve_main_activations(
+                rule,
+                main_acts,
+                ctx,
+                scene_event_id=scene_event_id,
+            )
+            for match in matches:
+                log_entry = await self._process_correlated_match(rule, match, ctx)
+                if log_entry is not None:
+                    executed_logs.append(log_entry)
 
         return executed_logs
 
-    def _enqueue_deferred_if_biometrics_pending(
-        self,
-        rule: AutomationRuleDefinition,
-        trig_spec: TriggerSpec,
-        evaluator: Any,
-        ctx: EvaluationContext,
-        rt_state: dict[str, Any],
-    ) -> None:
-        """
-        If a spatial trigger requires `known` or `include` identity, and a track just crossed
-        a perimeter or entered a zone while biometrics is still `pending`, evaluate geometry
-        without identity filter and hold the event for up to `biometric_grace_s`.
-        """
-        if trig_spec.subject_filter.face_mode not in ("known", "include") and trig_spec.subject_filter.plate_mode not in ("whitelisted", "include"):
-            return
-
-        relaxed_filter = trig_spec.subject_filter.model_copy(
-            update={"face_mode": "any", "plate_mode": "any"}
-        )
-        relaxed_spec = trig_spec.model_copy(update={"subject_filter": relaxed_filter})
-        shadow_rt = dict(rt_state)
-        candidate_events = evaluator.evaluate(rule.rule_id, relaxed_spec, ctx, shadow_rt)
-        for cand in candidate_events:
-            if cand.track is None:
-                continue
-            tid = cand.track.track_id
-            first_ts = self._track_first_seen.get(tid, ctx.now_ts)
-            if SubjectFilterEvaluator.should_defer_for_biometrics(
-                cand.track,
-                trig_spec.subject_filter,
-                ctx.now_ts,
-                first_ts,
-            ):
-                self._deferred_biometric_checks.append(
-                    _DeferredBiometricCheck(
-                        rule_id=rule.rule_id,
-                        trigger_spec=trig_spec,
-                        activation=cand,
-                        track_id=tid,
-                        created_at=ctx.now_ts,
-                        expires_at=ctx.now_ts + trig_spec.subject_filter.biometric_grace_s,
-                    )
-                )
-
     async def _check_deferred_biometric_triggers(self, ctx: EvaluationContext) -> list[AutomationExecutionLog]:
-        if not self._deferred_biometric_checks:
+        ready_items = self._deferred_biometrics.pop_ready(self.rules, ctx)
+        if not ready_items:
             return []
 
-        remaining: list[_DeferredBiometricCheck] = []
+        scene_event_id = self._active_scene_event_id(ctx)
+        grouped: dict[tuple[str, str], tuple[AutomationRuleDefinition, dict[str, list[TriggerActivationEvent]]]] = {}
+        for rule, stage_key, trig_spec, updated_act in ready_items:
+            grp_key = (rule.rule_id, stage_key)
+            if grp_key not in grouped:
+                grouped[grp_key] = (rule, {})
+            grouped[grp_key][1].setdefault(trig_spec.trigger_id, []).append(updated_act)
+
         logs: list[AutomationExecutionLog] = []
-
-        for item in self._deferred_biometric_checks:
-            rule = self.rules.get(item.rule_id)
-            if rule is None or not rule.enabled:
-                continue
-
-            tr = self.kinematics_buffer.get_active_track(item.track_id) or item.activation.track
-            if tr is None:
-                continue
-
-            is_resolved = tr.biometric_locked or tr.biometric_status in ("locked", "unknown") or bool(tr.identity) or bool(tr.plate)
-            is_expired = ctx.now_ts >= item.expires_at
-
-            if not is_resolved and not is_expired:
-                remaining.append(item)
-                continue
-
-            if SubjectFilterEvaluator.matches(
-                tr,
-                item.trigger_spec.subject_filter,
-                known_identities_lower=ctx.known_identities_lower,
-                whitelisted_plates_upper=ctx.whitelisted_plates_upper,
-            ):
-                updated_act = TriggerActivationEvent(
-                    trigger_id=item.activation.trigger_id,
-                    trigger_type=item.activation.trigger_type,
-                    timestamp=ctx.now_ts,
-                    summary=item.activation.summary,
-                    track=tr,
-                    zone_id=item.activation.zone_id,
-                    from_zone_id=item.activation.from_zone_id,
-                    to_zone_id=item.activation.to_zone_id,
-                    kinematics=item.activation.kinematics,
-                    extra={**item.activation.extra, "late_biometric_bound": True},
+        for (rule_id, stage_key), (rule, acts_by_id) in grouped.items():
+            if stage_key.startswith("pre:"):
+                target_sid = stage_key[4:]
+                enabled_prev_stage = None
+                for idx, stg in enumerate(rule.pre_triggers):
+                    if not stg.enabled or not any(t.enabled for t in stg.triggers):
+                        continue
+                    if stg.stage_id == target_sid:
+                        changes = self.sequence_coordinator.record_pre_trigger_activations(
+                            rule,
+                            idx,
+                            stg,
+                            enabled_prev_stage,
+                            acts_by_id,
+                            ctx,
+                            scene_event_id=scene_event_id,
+                        )
+                        if changes:
+                            await self._broadcast_pretrigger_state(ctx.now_ts, force=True)
+                        break
+                    enabled_prev_stage = (idx, stg)
+            else:
+                matches = self.sequence_coordinator.resolve_main_activations(
+                    rule,
+                    acts_by_id,
+                    ctx,
+                    scene_event_id=scene_event_id,
                 )
-                log_entry = await self._process_trigger_activation(rule, updated_act, ctx)
-                if log_entry is not None:
-                    logs.append(log_entry)
-
-        self._deferred_biometric_checks = remaining
+                for match in matches:
+                    log_entry = await self._process_correlated_match(rule, match, ctx)
+                    if log_entry is not None:
+                        logs.append(log_entry)
         return logs
 
     async def _process_trigger_activation(
@@ -620,10 +1040,33 @@ class AutomationEngineService:
         *,
         bypass_cooldown: bool = False,
     ) -> Optional[AutomationExecutionLog]:
+        return await self._process_correlated_match(
+            rule,
+            CorrelatedRuleMatch(activation=activation),
+            ctx,
+            bypass_cooldown=bypass_cooldown,
+        )
+
+    async def _process_correlated_match(
+        self,
+        rule: AutomationRuleDefinition,
+        match: CorrelatedRuleMatch,
+        ctx: EvaluationContext,
+        *,
+        bypass_cooldown: bool = False,
+    ) -> Optional[AutomationExecutionLog]:
+        activation = match.activation
+
         # 1. Check Cooldown
         if not bypass_cooldown and rule.cooldown_s > 0.0 and rule.last_triggered_at is not None:
             elapsed = ctx.now_ts - rule.last_triggered_at
             if 0.0 <= elapsed < rule.cooldown_s:
+                self._record_diagnostic(
+                    rule.rule_id,
+                    "cooldown_skipped",
+                    f"Saltata per cooldown ({elapsed:.1f}s < {rule.cooldown_s:.1f}s)",
+                    timestamp=ctx.now_ts,
+                )
                 return None
 
         # 2. Evaluate Boolean Condition AST
@@ -637,11 +1080,35 @@ class AutomationEngineService:
             known_identities_lower=ctx.known_identities_lower,
             whitelisted_plates_upper=ctx.whitelisted_plates_upper,
             active_tracks=ctx.active_tracks,
+            scene_event=ctx.scene_event,
             trigger_event=activation,
         )
 
         condition_ok = ConditionEvaluator.evaluate(rule.condition, eval_ctx)
         if not condition_ok:
+            self._record_diagnostic(
+                rule.rule_id,
+                "condition_blocked",
+                f"Condizione non soddisfatta per: {activation.summary}",
+                timestamp=ctx.now_ts,
+                details=dict(activation.extra),
+            )
+            if rule.log_blocked_evaluations:
+                tr = activation.track
+                blocked_log = AutomationExecutionLog(
+                    rule_id=rule.rule_id,
+                    rule_name=rule.name,
+                    timestamp=round(ctx.now_ts, 3),
+                    trigger_type=activation.trigger_type,
+                    trigger_summary=activation.summary,
+                    track_id=tr.track_id if tr is not None else None,
+                    identity=tr.identity if tr is not None else None,
+                    plate=tr.plate if tr is not None else None,
+                    status="condition_blocked",
+                    actions_executed=[],
+                    details=dict(activation.extra),
+                )
+                blocked_log.id = self.repository.record_automation_log(blocked_log.model_dump())
             return None
 
         # 3. Manage Execution Mode concurrency ('single', 'restart', 'parallel', 'queued')
@@ -649,35 +1116,83 @@ class AutomationEngineService:
         active_tasks = {t for t in running_tasks if not t.done()}
         self._running_rule_tasks[rule.rule_id] = active_tasks
 
+        has_async_delay = action_tree_contains_delay(rule.actions)
         if rule.execution_mode == "single" and active_tasks:
             return None
         if rule.execution_mode == "restart" and active_tasks:
             for t in active_tasks:
                 t.cancel()
             active_tasks.clear()
+        if rule.execution_mode == "queued" and active_tasks and has_async_delay:
+            committed = self.sequence_coordinator.commit_match(rule, match)
+            if committed:
+                await self._broadcast_pretrigger_state(ctx.now_ts, force=True)
+            self._queued_rule_runs.setdefault(rule.rule_id, deque(maxlen=16)).append(
+                (rule, activation, eval_ctx)
+            )
+            return None
+
+        committed = self.sequence_coordinator.commit_match(rule, match)
+        if committed:
+            await self._broadcast_pretrigger_state(ctx.now_ts, force=True)
 
         rule.last_triggered_at = round(ctx.now_ts, 3)
         rule.trigger_count += 1
         self.repository.upsert_automation_rule(rule.model_dump())
 
+        if self.scene_event_manager is not None and eval_ctx.scene_event is not None:
+            try:
+                await self.scene_event_manager.mark_automation_triggered(
+                    eval_ctx.scene_event.event_id,
+                    rule.rule_id,
+                )
+            except Exception:
+                pass
+
+        if has_async_delay:
+            task = asyncio.create_task(
+                self._run_rule_actions_and_log_task(rule, activation, eval_ctx),
+                name=f"auto-rule-{rule.rule_id}",
+            )
+            active_tasks.add(task)
+            task.add_done_callback(active_tasks.discard)
+            return None
+
+        return await self._finalize_rule_execution(rule, activation, eval_ctx)
+
+    async def _finalize_rule_execution(
+        self,
+        rule: AutomationRuleDefinition,
+        activation: TriggerActivationEvent,
+        eval_ctx: EvaluationContext,
+    ) -> AutomationExecutionLog:
         actions_results = await self._execute_actions_list(rule, rule.actions, eval_ctx)
+        has_err = any(not bool(r.get("ok", True)) for r in actions_results)
 
         tr = activation.track
         log_model = AutomationExecutionLog(
             rule_id=rule.rule_id,
             rule_name=rule.name,
-            timestamp=round(ctx.now_ts, 3),
+            timestamp=round(eval_ctx.now_ts, 3),
             trigger_type=activation.trigger_type,
             trigger_summary=activation.summary,
             track_id=tr.track_id if tr is not None else None,
             identity=tr.identity if tr is not None else None,
             plate=tr.plate if tr is not None else None,
-            status="executed",
+            status="error" if (has_err and all(not bool(r.get("ok", True)) for r in actions_results)) else "executed",
             actions_executed=actions_results,
             details=dict(activation.extra),
         )
         log_id = self.repository.record_automation_log(log_model.model_dump())
         log_model.id = log_id
+
+        self._record_diagnostic(
+            rule.rule_id,
+            "error" if log_model.status == "error" else "executed",
+            activation.summary,
+            timestamp=eval_ctx.now_ts,
+            details=dict(activation.extra),
+        )
 
         await self._broadcast(
             {
@@ -689,6 +1204,34 @@ class AutomationEngineService:
             }
         )
         return log_model
+
+    async def _run_rule_actions_and_log_task(
+        self,
+        rule: AutomationRuleDefinition,
+        activation: TriggerActivationEvent,
+        eval_ctx: EvaluationContext,
+    ) -> None:
+        try:
+            await self._finalize_rule_execution(rule, activation, eval_ctx)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Background rule task failed (%s): %s", rule.rule_id, exc)
+            self._record_diagnostic(rule.rule_id, "error", str(exc), timestamp=time.time())
+        finally:
+            q = self._queued_rule_runs.get(rule.rule_id)
+            if q:
+                nxt_rule, nxt_act, nxt_ctx = q.popleft()
+                nxt_rule.last_triggered_at = round(time.time(), 3)
+                nxt_rule.trigger_count += 1
+                self.repository.upsert_automation_rule(nxt_rule.model_dump())
+                nxt_task = asyncio.create_task(
+                    self._run_rule_actions_and_log_task(nxt_rule, nxt_act, nxt_ctx),
+                    name=f"auto-rule-{nxt_rule.rule_id}",
+                )
+                task_set = self._running_rule_tasks.setdefault(nxt_rule.rule_id, set())
+                task_set.add(nxt_task)
+                nxt_task.add_done_callback(task_set.discard)
 
     async def trigger_rule_manually(self, rule_id: str) -> AutomationExecutionLog:
         """Manually execute an automation rule's actions (or test its condition) from the UI."""
@@ -759,153 +1302,14 @@ class AutomationEngineService:
         ctx: EvaluationContext,
     ) -> dict[str, Any]:
         atype = action.type
-        params = action.params
-
+        executor = ActionRegistry.get(atype)
+        if executor is None:
+            return {"type": atype, "ok": False, "error": f"Tipo azione sconosciuto: {atype}"}
         try:
-            if atype == "set_virtual_entity":
-                entity_id = str(params.get("entity_id") or "").strip()
-                operation = str(params.get("operation") or "set").strip().lower()
-                raw_val = params.get("state", params.get("value", "on"))
-                rendered_val = self._render_template(str(raw_val), ctx) if raw_val is not None else None
-                updated_ve = await self.set_virtual_entity_state(
-                    entity_id,
-                    rendered_val,
-                    operation=operation,
-                    trigger_automations=True,
-                )
-                return {
-                    "type": atype,
-                    "entity_id": updated_ve.entity_id,
-                    "state": updated_ve.state,
-                    "operation": operation,
-                    "ok": True,
-                }
-
-            if atype == "call_ha_service":
-                full_service = str(params.get("service") or "").strip()
-                domain = str(params.get("domain") or "").strip()
-                if "." in full_service and not domain:
-                    domain, service_name = full_service.split(".", 1)
-                else:
-                    service_name = full_service or "turn_on"
-                    domain = domain or "homeassistant"
-
-                entity_id = str(params.get("entity_id") or "").strip()
-                raw_data = params.get("service_data") if isinstance(params.get("service_data"), dict) else {}
-                rendered_data = self._render_value(raw_data, ctx)
-                if not isinstance(rendered_data, dict):
-                    rendered_data = {}
-                if entity_id:
-                    rendered_data["entity_id"] = entity_id
-
-                ha_ok, ha_note = await self._call_home_assistant_service(domain, service_name, rendered_data)
-                return {
-                    "type": atype,
-                    "service": f"{domain}.{service_name}",
-                    "entity_id": entity_id,
-                    "service_data": rendered_data,
-                    "ok": ha_ok,
-                    "note": ha_note,
-                }
-
-            if atype == "send_notification":
-                return await self._execute_send_notification(rule, action, ctx)
-
-            if atype == "ui_alert":
-                title = self._render_template(str(params.get("title") or rule.name), ctx)
-                message = self._render_template(
-                    str(params.get("message") or (ctx.trigger_event.summary if ctx.trigger_event else "")),
-                    ctx,
-                )
-                severity = str(params.get("severity") or "warning")  # "info" | "warning" | "critical"
-                sound = bool(params.get("sound", severity == "critical"))
-                highlight_zone_id = str(params.get("zone_id") or (ctx.trigger_event.zone_id if ctx.trigger_event else "") or "")
-                focus_camera_id = str(params.get("camera_id") or "")
-                if self.scene_event_manager is not None:
-                    scene_ctx = self.scene_event_manager.get_active_scene_context(
-                        zone_id=highlight_zone_id or None,
-                        track=ctx.trigger_event.track if ctx.trigger_event else None,
-                    )
-                    ev_obj = scene_ctx.get("event")
-                    if ev_obj is not None:
-                        await self.scene_event_manager.mark_automation_triggered(
-                            ev_obj.event_id,
-                            rule.rule_id,
-                            escalate_importance="alert" if severity == "critical" else None,
-                        )
-                await self._broadcast(
-                    {
-                        "type": "automation_ui_alert",
-                        "rule_id": rule.rule_id,
-                        "rule_name": rule.name,
-                        "timestamp": time.time(),
-                        "title": title,
-                        "message": message,
-                        "severity": severity,
-                        "sound": sound,
-                        "zone_id": highlight_zone_id or None,
-                        "camera_id": focus_camera_id or None,
-                        "track_id": ctx.trigger_event.track.track_id if (ctx.trigger_event and ctx.trigger_event.track) else None,
-                    }
-                )
-                return {
-                    "type": atype,
-                    "title": title,
-                    "message": message,
-                    "severity": severity,
-                    "ok": True,
-                }
-
-            if atype == "delay":
-                delay_s = max(0.0, min(float(params.get("seconds") or 1.0), 3600.0))
-                if delay_s > 0.0:
-                    await asyncio.sleep(delay_s)
-                ctx.now_ts = time.time()
-                return {"type": atype, "seconds": delay_s, "ok": True}
-
-            if atype == "if_then_else":
-                branch_cond = ConditionEvaluator.evaluate(action.if_condition, ctx)
-                chosen_actions = action.then_actions if branch_cond else action.else_actions
-                sub_results = await self._execute_actions_list(rule, chosen_actions, ctx)
-                return {
-                    "type": atype,
-                    "condition_matched": branch_cond,
-                    "branch": "then" if branch_cond else "else",
-                    "sub_actions": sub_results,
-                    "ok": True,
-                }
-
-            if atype == "webhook":
-                url = str(params.get("url") or "").strip()
-                if not url.lower().startswith(("http://", "https://")):
-                    return {"type": atype, "ok": False, "error": "URL webhook non valido"}
-                method = str(params.get("method") or "POST").upper()
-                body_payload = {
-                    "rule_id": rule.rule_id,
-                    "rule_name": rule.name,
-                    "timestamp": ctx.now_ts,
-                    "trigger": ctx.trigger_event.summary if ctx.trigger_event else "manual",
-                }
-                loop = asyncio.get_running_loop()
-
-                def _send_webhook() -> int:
-                    req = urllib.request.Request(
-                        url,
-                        data=json.dumps(body_payload).encode("utf-8"),
-                        headers={"Content-Type": "application/json"},
-                        method=method,
-                    )
-                    with urllib.request.urlopen(req, timeout=4.0) as resp:
-                        return int(resp.status)
-
-                status_code = await loop.run_in_executor(None, _send_webhook)
-                return {"type": atype, "url": url, "status_code": status_code, "ok": 200 <= status_code < 400}
-
+            return await executor.execute(self, rule, action, ctx)
         except Exception as exc:
             logger.warning("Action %s in rule %s failed: %s", atype, rule.rule_id, exc)
             return {"type": atype, "ok": False, "error": str(exc)}
-
-        return {"type": atype, "ok": False, "error": f"Tipo azione sconosciuto: {atype}"}
 
     async def _execute_send_notification(
         self,
@@ -1497,14 +1901,19 @@ class AutomationEngineService:
             "track.plate": (tr.plate or "") if tr else "",
             "track.speed_mps": f"{kin.mean_speed_mps:.2f}" if kin else "0.00",
             "track.speed_kmh": f"{kin.mean_speed_kmh:.1f}" if kin else "0.0",
+            "track.peak_speed_mps": f"{kin.peak_speed_mps:.2f}" if kin else "0.00",
+            "track.peak_speed_kmh": f"{kin.peak_speed_kmh:.1f}" if kin else "0.0",
             "track.azimuth_deg": f"{kin.mean_azimuth_deg:.0f}" if (kin and kin.mean_azimuth_deg is not None) else "",
             "track.crop_url": f"/api/v1/biometrics/crops/{tr.best_crop_id}" if (tr and tr.best_crop_id) else "",
             "event.id": event_id,
             "event.url": event_url,
             "scene.sentence": scene_sentence,
+            "scene.summary": scene_sentence,
             "scene.title": scene_title,
             "scene.camera_id": scene_cam,
             "scene.zones": scene_zones,
+            "pre_trigger.summary": str((ev.extra or {}).get("pre_trigger_summary") or "") if ev else "",
+            "sequence.elapsed_s": str((ev.extra or {}).get("sequence_elapsed_s") or "0") if ev else "0",
         }
 
         def _repl(match: re.Match[str]) -> str:

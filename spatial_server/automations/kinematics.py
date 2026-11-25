@@ -67,6 +67,12 @@ class WindowKinematicMetrics:
     mean_azimuth_deg: Optional[float]
     directional_consistency: float
     displacement_m: float
+    peak_speed_mps: float = 0.0
+    peak_speed_kmh: float = 0.0
+    peak_speed_ts: Optional[float] = None
+    peak_azimuth_deg: Optional[float] = None
+    min_speed_mps: float = 0.0
+    current_speed_mps: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -123,6 +129,41 @@ class TrackKinematicHistoryBuffer:
         if not zmap or zone_id not in zmap:
             return 0.0
         return zmap[zone_id].dwell_seconds
+
+    def get_track_active_zone_ids(self, track_id: int) -> set[str]:
+        zmap = self._active_zones.get(track_id)
+        return set(zmap.keys()) if zmap else set()
+
+    def was_track_in_zone_recently(
+        self,
+        track_id: int,
+        zone_id: str,
+        now_ts: float,
+        *,
+        within_s: float = 10.0,
+        min_dwell_s: float = 0.0,
+    ) -> bool:
+        """
+        Return True if `track_id` is currently inside `zone_id` (with `dwell >= min_dwell_s`)
+        or exited `zone_id` within the last `within_s` seconds (with `dwell >= min_dwell_s`).
+        """
+        if not zone_id:
+            return False
+        zmap = self._active_zones.get(track_id)
+        if zmap and zone_id in zmap:
+            if zmap[zone_id].dwell_seconds >= min_dwell_s:
+                return True
+        visits = self._completed_zone_visits.get(track_id)
+        if not visits:
+            return False
+        win = max(0.0, float(within_s))
+        for visit in reversed(visits):
+            if visit.zone_id != zone_id:
+                continue
+            ref_exit = visit.exited_at if visit.exited_at is not None else visit.last_seen_at
+            if (now_ts - ref_exit) <= win and visit.dwell_seconds >= min_dwell_s:
+                return True
+        return False
 
     def update_tracks(
         self,
@@ -282,11 +323,12 @@ class TrackKinematicHistoryBuffer:
         window_s: float = 2.0,
         now_ts: Optional[float] = None,
         *,
+        sub_window_s: float = 1.0,
         include_extra_point: Optional[tuple[float, float, float, float, float, float, float]] = None,
     ) -> Optional[WindowKinematicMetrics]:
         """
-        Compute mean speed, net speed, mean heading azimuth (degrees), and directional
-        consistency for `track_id` over the last `window_s` seconds.
+        Compute mean speed, net speed, peak/min/current speed, mean heading azimuth (degrees),
+        and directional consistency for `track_id` over the last `window_s` seconds.
         """
         buf = self._samples.get(track_id)
         if not buf and include_extra_point is None:
@@ -357,6 +399,70 @@ class TrackKinematicHistoryBuffer:
             mean_azimuth_deg = None
             consistency = 0.0
 
+        # Sliding anti-jitter sub-window peak & min speed across the lookback window
+        eff_sub = min(max(0.35, float(sub_window_s)), max(0.35, eff_win))
+        peak_speed_mps = 0.0
+        min_speed_mps = float("inf")
+        peak_speed_ts: Optional[float] = None
+        peak_azimuth_deg: Optional[float] = mean_azimuth_deg
+
+        if len(window_samples) < 2:
+            spd0 = kalman_speeds[0]
+            peak_speed_mps = spd0
+            min_speed_mps = spd0
+            peak_speed_ts = window_samples[0].timestamp
+        else:
+            min_dt_thresh = min(0.25, actual_dt)
+            left = 0
+            for j in range(1, len(window_samples)):
+                tj = window_samples[j].timestamp
+                while left + 1 < j and (tj - window_samples[left + 1].timestamp) >= eff_sub:
+                    left += 1
+                # Pick i between left and left+1 closest to (tj - eff_sub)
+                i = left
+                if left + 1 < j:
+                    err_l = abs((tj - window_samples[left].timestamp) - eff_sub)
+                    err_r = abs((tj - window_samples[left + 1].timestamp) - eff_sub)
+                    if err_r < err_l and (tj - window_samples[left + 1].timestamp) >= min_dt_thresh:
+                        i = left + 1
+
+                ti = window_samples[i].timestamp
+                dt_ij = max(0.0, tj - ti)
+                avg_k_ij = sum(kalman_speeds[i : j + 1]) / (j - i + 1)
+                dx_ij = window_samples[j].x - window_samples[i].x
+                dz_ij = window_samples[j].z - window_samples[i].z
+                disp_ij = math.hypot(dx_ij, dz_ij)
+
+                if dt_ij >= min_dt_thresh and dt_ij > 1e-4:
+                    sub_speed = 0.55 * (disp_ij / dt_ij) + 0.45 * avg_k_ij
+                else:
+                    sub_speed = avg_k_ij
+
+                if sub_speed > peak_speed_mps or peak_speed_ts is None:
+                    peak_speed_mps = sub_speed
+                    peak_speed_ts = tj
+                    peak_azimuth_deg = self._compute_slice_azimuth(window_samples[i : j + 1], dx_ij, dz_ij, disp_ij)
+                if sub_speed < min_speed_mps:
+                    min_speed_mps = sub_speed
+
+            if min_speed_mps == float("inf"):
+                min_speed_mps = mean_speed_mps
+
+        # Current speed over most recent <= 0.8s tail
+        curr_cutoff = ref_ts - min(0.8, max(0.2, eff_win))
+        curr_slice = [s for s in window_samples if s.timestamp >= curr_cutoff]
+        if len(curr_slice) >= 2:
+            c_first, c_last = curr_slice[0], curr_slice[-1]
+            c_dt = max(0.0, c_last.timestamp - c_first.timestamp)
+            c_avg_k = sum(math.hypot(s.vx, s.vz) for s in curr_slice) / len(curr_slice)
+            if c_dt >= 0.15:
+                c_disp = math.hypot(c_last.x - c_first.x, c_last.z - c_first.z)
+                current_speed_mps = 0.55 * (c_disp / c_dt) + 0.45 * c_avg_k
+            else:
+                current_speed_mps = c_avg_k
+        else:
+            current_speed_mps = kalman_speeds[-1]
+
         return WindowKinematicMetrics(
             track_id=track_id,
             window_s=eff_win,
@@ -368,7 +474,38 @@ class TrackKinematicHistoryBuffer:
             mean_azimuth_deg=float(round(mean_azimuth_deg, 1)) if mean_azimuth_deg is not None else None,
             directional_consistency=float(round(consistency, 3)),
             displacement_m=float(round(disp_m, 3)),
+            peak_speed_mps=float(round(peak_speed_mps, 3)),
+            peak_speed_kmh=float(round(peak_speed_mps * 3.6, 2)),
+            peak_speed_ts=round(peak_speed_ts, 3) if peak_speed_ts is not None else None,
+            peak_azimuth_deg=float(round(peak_azimuth_deg, 1)) if peak_azimuth_deg is not None else None,
+            min_speed_mps=float(round(min_speed_mps, 3)),
+            current_speed_mps=float(round(current_speed_mps, 3)),
         )
+
+    @staticmethod
+    def _compute_slice_azimuth(
+        slice_samples: list[KinematicSample],
+        disp_dx: float,
+        disp_dz: float,
+        disp_m: float,
+    ) -> Optional[float]:
+        sum_ux = 0.0
+        sum_uz = 0.0
+        valid = 0
+        for s in slice_samples:
+            spd = math.hypot(s.vx, s.vz)
+            if spd >= 0.08:
+                sum_ux += s.vx / spd
+                sum_uz += s.vz / spd
+                valid += 1
+        if disp_m >= 0.12:
+            w = max(1, valid)
+            sum_ux += (disp_dx / disp_m) * w
+            sum_uz += (disp_dz / disp_m) * w
+            valid += w
+        if valid > 0 and math.hypot(sum_ux, sum_uz) > 1e-6:
+            return normalize_azimuth_deg(math.degrees(math.atan2(sum_uz, sum_ux)))
+        return None
 
     def _prune_inactive_tracks(self, active_ids: set[int], now_ts: float) -> None:
         stale_cutoff = now_ts - max(self.max_history_s, 60.0)

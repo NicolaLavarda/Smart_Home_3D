@@ -22,6 +22,7 @@ const TRIGGER_TYPE_LABELS = {
   entity_state_change: 'Cambio stato entità',
   biometric_detection: 'Riconoscimento volto / targa',
   proximity_3d: 'Prossimità a punto 3D',
+  scene_event: 'Episodio scena (SceneEvent)',
 };
 
 const ACTION_TYPE_LABELS = {
@@ -66,6 +67,7 @@ export class AutomationStudioUI {
     this.zones = [];
     this.virtualEntities = [];
     this.rules = [];
+    this.armedStates = [];
     this.logs = [];
     this.identities = [];
     this.plates = [];
@@ -144,6 +146,7 @@ export class AutomationStudioUI {
     this.zones = Array.isArray(data.zones) ? data.zones : [];
     this.virtualEntities = Array.isArray(data.virtual_entities) ? data.virtual_entities : [];
     this.rules = Array.isArray(data.rules) ? data.rules : [];
+    this.armedStates = Array.isArray(data.armed_states) ? data.armed_states : [];
     this.logs = Array.isArray(data.logs) ? data.logs : [];
     this.identities = Array.isArray(data.identities) ? data.identities : [];
     this.plates = Array.isArray(data.plates) ? data.plates : [];
@@ -172,6 +175,14 @@ export class AutomationStudioUI {
     if (msg.type === 'automation_rules_updated' && Array.isArray(msg.rules)) {
       this.rules = msg.rules;
       if (this.isOpen && !this.editingRule) this.render();
+      return;
+    }
+
+    if (msg.type === 'automation_pretrigger_updated') {
+      this.armedStates = Array.isArray(msg.armed_states) ? msg.armed_states : [];
+      if (this.isOpen && !this.editingRule && this.activeTab === 'rules') {
+        this.render();
+      }
       return;
     }
 
@@ -431,6 +442,9 @@ export class AutomationStudioUI {
       <datalist id="auto-all-entities-datalist">
         ${this._buildEntitiesDatalistOptionsHtml()}
       </datalist>
+      <datalist id="auto-cameras-datalist">
+        ${this.cameras.map((cam) => `<option value="${escapeHtml(cam)}"></option>`).join('')}
+      </datalist>
     `;
 
     this._bindHeaderAndTabEvents();
@@ -547,11 +561,17 @@ export class AutomationStudioUI {
            </div>`
         : this.rules
             .map((r) => {
+              const preCount = Array.isArray(r.pre_triggers) ? r.pre_triggers.length : 0;
               const trigCount = Array.isArray(r.triggers) ? r.triggers.length : 0;
               const actCount = Array.isArray(r.actions) ? r.actions.length : 0;
               const lastStr = r.last_triggered_at
                 ? new Date(r.last_triggered_at * 1000).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
                 : 'Mai';
+              const armedForRule = this.armedStates.filter((a) => a.rule_id === r.rule_id);
+              const armedHtml = armedForRule.length
+                ? `<div class="auto-armed-pill" title="${escapeHtml(armedForRule[0].summary || '')}">⚡ Pre-trigger: ${escapeHtml(armedForRule[0].stage_name || 'Attivo')} · ${Number(armedForRule[0].remaining_s ?? 0).toFixed(0)}s</div>`
+                : '';
+              const seqPrefix = preCount > 0 ? `${preCount} pre-trigger → ` : '';
               return `
                 <div class="auto-list-item ${r.enabled ? '' : 'is-disabled'}" data-rule-card="${escapeHtml(r.rule_id)}">
                   <div class="auto-item-main">
@@ -561,8 +581,9 @@ export class AutomationStudioUI {
                         <h4 class="auto-item-title">${escapeHtml(r.name)}</h4>
                       </div>
                       <p class="auto-item-sub">
-                        ${escapeHtml(r.description || `${trigCount} trigger · ${actCount} azioni · Ultima: ${lastStr}`)}
+                        ${escapeHtml(r.description || `${seqPrefix}${trigCount} trigger · ${actCount} azioni · Ultima: ${lastStr}`)}
                       </p>
+                      ${armedHtml}
                     </div>
                     <label class="auto-switch" title="Attiva o disattiva regola">
                       <input type="checkbox" class="auto-rule-toggle-cb" data-rule-id="${escapeHtml(r.rule_id)}" ${r.enabled ? 'checked' : ''} />
@@ -633,14 +654,7 @@ export class AutomationStudioUI {
         const found = this.rules.find((r) => r.rule_id === btn.dataset.editRule);
         if (found) {
           this.editingRule = JSON.parse(JSON.stringify(found));
-          if (!this.editingRule.condition) {
-            this.editingRule.condition = {
-              condition_id: uid('cnd'),
-              type: 'and',
-              children: [],
-              params: {},
-            };
-          }
+          this._normalizeEditingRule(this.editingRule);
           this.render();
         }
       });
@@ -656,6 +670,25 @@ export class AutomationStudioUI {
     });
   }
 
+  _normalizeEditingRule(rule) {
+    if (!rule) return;
+    if (!Array.isArray(rule.pre_triggers)) rule.pre_triggers = [];
+    if (!Array.isArray(rule.triggers)) rule.triggers = [];
+    if (!Array.isArray(rule.actions)) rule.actions = [];
+    if (!rule.trigger_logic) rule.trigger_logic = 'or';
+    if (!Number.isFinite(Number(rule.trigger_window_s))) rule.trigger_window_s = 10.0;
+    if (!rule.trigger_correlation_scope) rule.trigger_correlation_scope = 'same_subject';
+    rule.log_blocked_evaluations = Boolean(rule.log_blocked_evaluations);
+    if (!rule.condition) {
+      rule.condition = {
+        condition_id: uid('cnd'),
+        type: 'and',
+        children: [],
+        params: {},
+      };
+    }
+  }
+
   _createDefaultRuleDraft() {
     const firstZoneId = this.zones[0]?.zone_id || '';
     return {
@@ -665,6 +698,11 @@ export class AutomationStudioUI {
       enabled: true,
       execution_mode: 'single',
       cooldown_s: 5.0,
+      pre_triggers: [],
+      trigger_logic: 'or',
+      trigger_window_s: 10.0,
+      trigger_correlation_scope: 'same_subject',
+      log_blocked_evaluations: false,
       triggers: [
         {
           trigger_id: uid('trg'),
@@ -748,13 +786,34 @@ export class AutomationStudioUI {
                 <option value="single" ${r.execution_mode === 'single' ? 'selected' : ''}>Singola (ignora se attiva)</option>
                 <option value="restart" ${r.execution_mode === 'restart' ? 'selected' : ''}>Riavvia se riscatta</option>
                 <option value="parallel" ${r.execution_mode === 'parallel' ? 'selected' : ''}>Parallela</option>
+                <option value="queued" ${r.execution_mode === 'queued' ? 'selected' : ''}>In coda (sequenziale)</option>
               </select>
             </label>
             <label class="auto-field">
               <span>Cooldown (s)</span>
               <input type="number" id="rule-inp-cooldown" min="0" max="86400" step="0.5" value="${Number(r.cooldown_s ?? 3)}" />
             </label>
+            <label class="auto-check-row span-2">
+              <input type="checkbox" id="rule-inp-log-blocked" ${r.log_blocked_evaluations ? 'checked' : ''} />
+              <span>Logga valutazioni bloccate (diagnostica)</span>
+            </label>
           </div>
+        </section>
+
+        <section class="auto-block">
+          <div class="auto-block-header">
+            <h3 class="auto-block-title">Pre-Trigger / Sequenza (opzionale)</h3>
+            <button type="button" class="auto-btn tonal xs" id="btn-rule-add-pretrigger">
+              ${icon('plus', { size: 12 })} <span>Pre-Trigger</span>
+            </button>
+          </div>
+          ${
+            Array.isArray(r.pre_triggers) && r.pre_triggers.length > 0
+              ? `<div class="auto-stack" id="rule-pretriggers-stack">
+                   ${r.pre_triggers.map((stg, sIdx) => this._renderPreTriggerStageHtml(stg, sIdx, r.pre_triggers.length)).join('')}
+                 </div>`
+              : `<p class="auto-hint-text">Aggiungi un pre-trigger per armare una finestra d'attesa (es. veicolo ≥ 0,5 m/s → attende max 10s → rileva targa in whitelist).</p>`
+          }
         </section>
 
         <section class="auto-block">
@@ -764,8 +823,40 @@ export class AutomationStudioUI {
               ${icon('plus', { size: 12 })} <span>Trigger</span>
             </button>
           </div>
+          ${
+            r.triggers.length > 1 || r.trigger_logic === 'and_within'
+              ? `<div class="auto-trigger-logic-bar">
+                   <div class="auto-grid-2">
+                     <label class="auto-field ${r.trigger_logic === 'and_within' ? '' : 'span-2'}">
+                       <span>Logica trigger</span>
+                       <select id="rule-inp-trigger-logic">
+                         <option value="or" ${(!r.trigger_logic || r.trigger_logic === 'or') ? 'selected' : ''}>OR · Uno qualsiasi</option>
+                         <option value="and_within" ${r.trigger_logic === 'and_within' ? 'selected' : ''}>AND · Tutti entro finestra</option>
+                       </select>
+                     </label>
+                     ${
+                       r.trigger_logic === 'and_within'
+                         ? `<label class="auto-field">
+                              <span>Finestra (s)</span>
+                              <input type="number" min="0.5" max="3600" step="0.5" id="rule-inp-trigger-window" value="${Number(r.trigger_window_s ?? 10)}" />
+                            </label>
+                            <label class="auto-field span-2">
+                              <span>Correlazione</span>
+                              <select id="rule-inp-trigger-corr">
+                                <option value="same_subject" ${(!r.trigger_correlation_scope || r.trigger_correlation_scope === 'same_subject') ? 'selected' : ''}>Stesso soggetto (consigliato)</option>
+                                <option value="same_track" ${r.trigger_correlation_scope === 'same_track' ? 'selected' : ''}>Stessa traccia / ID</option>
+                                <option value="same_scene_event" ${r.trigger_correlation_scope === 'same_scene_event' ? 'selected' : ''}>Stesso episodio scena</option>
+                                <option value="any" ${r.trigger_correlation_scope === 'any' ? 'selected' : ''}>Qualsiasi (cross-domain)</option>
+                              </select>
+                            </label>`
+                         : ''
+                     }
+                   </div>
+                 </div>`
+              : ''
+          }
           <div class="auto-stack" id="rule-triggers-stack">
-            ${r.triggers.map((t, idx) => this._renderTriggerItemHtml(t, idx)).join('')}
+            ${r.triggers.map((t, idx) => this._renderTriggerItemHtml(t, `main:${idx}`)).join('')}
           </div>
         </section>
 
@@ -793,7 +884,96 @@ export class AutomationStudioUI {
     `;
   }
 
-  _renderTriggerItemHtml(trig, idx) {
+  _renderPreTriggerStageHtml(stage, sIdx, totalStages) {
+    const triggers = Array.isArray(stage.triggers) ? stage.triggers : [];
+    const matchMode = stage.match_mode || 'any';
+    const corrScope = stage.correlation_scope || 'same_subject';
+    const stageName = stage.name || `Pre-trigger ${sIdx + 1}`;
+    return `
+      <div class="auto-pretrigger-card" data-pre-stage-idx="${sIdx}">
+        <div class="auto-pretrigger-head">
+          <span class="auto-pretrigger-badge">⚡ Fase ${sIdx + 1}</span>
+          <input type="text" class="auto-pretrigger-name-inp" data-pre-field="${sIdx}:name" value="${escapeHtml(stageName)}" placeholder="Nome pre-trigger" />
+          <button type="button" class="auto-btn icon-only danger xs" data-del-pre-idx="${sIdx}" title="Rimuovi pre-trigger" aria-label="Rimuovi pre-trigger">
+            ${icon('x', { size: 13 })}
+          </button>
+        </div>
+
+        <div class="auto-grid-2">
+          <label class="auto-field">
+            <span>Attesa max (s)</span>
+            <input type="number" min="0.5" max="3600" step="0.5" data-pre-field="${sIdx}:max_wait_s" value="${Number(stage.max_wait_s ?? 10)}" />
+          </label>
+          <label class="auto-field">
+            <span>Ritardo min (s)</span>
+            <input type="number" min="0" max="3600" step="0.5" data-pre-field="${sIdx}:min_delay_s" value="${Number(stage.min_delay_s ?? 0)}" />
+          </label>
+          <label class="auto-field">
+            <span>Correlazione</span>
+            <select data-pre-field="${sIdx}:correlation_scope">
+              <option value="same_subject" ${corrScope === 'same_subject' ? 'selected' : ''}>Stesso soggetto</option>
+              <option value="same_track" ${corrScope === 'same_track' ? 'selected' : ''}>Stessa traccia / ID</option>
+              <option value="same_scene_event" ${corrScope === 'same_scene_event' ? 'selected' : ''}>Stesso episodio scena</option>
+              <option value="any" ${corrScope === 'any' ? 'selected' : ''}>Qualsiasi (cross-domain)</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Logica stage</span>
+            <select data-pre-field="${sIdx}:match_mode">
+              <option value="any" ${matchMode === 'any' ? 'selected' : ''}>OR · Uno qualsiasi</option>
+              <option value="all" ${matchMode === 'all' ? 'selected' : ''}>AND · Tutti entro finestra</option>
+            </select>
+          </label>
+          ${
+            matchMode === 'all'
+              ? `<label class="auto-field span-2">
+                   <span>Finestra stage AND (s)</span>
+                   <input type="number" min="0.5" max="3600" step="0.5" data-pre-field="${sIdx}:stage_window_s" value="${Number(stage.stage_window_s ?? 10)}" />
+                 </label>`
+              : ''
+          }
+          <label class="auto-check-row">
+            <input type="checkbox" data-pre-bool="${sIdx}:refresh_on_rearm" ${stage.refresh_on_rearm !== false ? 'checked' : ''} />
+            <span>Rinnova finestra se attivo</span>
+          </label>
+          <label class="auto-check-row">
+            <input type="checkbox" data-pre-bool="${sIdx}:consume_on_fire" ${stage.consume_on_fire !== false ? 'checked' : ''} />
+            <span>Consuma allo scatto</span>
+          </label>
+        </div>
+
+        <div class="auto-block-header">
+          <span class="auto-notif-label">Trigger di questa fase</span>
+          <div class="auto-block-header-actions">
+            <button type="button" class="auto-btn ghost xs" data-pre-toggle-cond="${sIdx}">
+              <span>${stage.condition ? 'Rimuovi cond.' : '+ Condizione'}</span>
+            </button>
+            <button type="button" class="auto-btn tonal xs" data-pre-add-trig="${sIdx}">
+              ${icon('plus', { size: 11 })} <span>Trigger</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="auto-stack">
+          ${triggers.map((t, tIdx) => this._renderTriggerItemHtml(t, `pre:${sIdx}:${tIdx}`)).join('')}
+        </div>
+
+        ${
+          stage.condition
+            ? `<div class="auto-pretrigger-cond-box">
+                 <span class="auto-ifelse-tag">Condizione opzionale fase ${sIdx + 1}</span>
+                 ${this._renderConditionNodeHtml(stage.condition, `pre_cond:${sIdx}`, true)}
+               </div>`
+            : ''
+        }
+      </div>
+      <div class="auto-pretrigger-connector">
+        ↓ Attende max ${Number(stage.max_wait_s ?? 10)}s → ${sIdx + 1 < totalStages ? `Fase ${sIdx + 2}` : 'Trigger principali'} ↓
+      </div>
+    `;
+  }
+
+  _renderTriggerItemHtml(trig, pathStr) {
     const tType = trig.type || 'zone_presence';
     const sf = trig.subject_filter || {};
     const p = trig.params || {};
@@ -804,6 +984,7 @@ export class AutomationStudioUI {
       'kinematic_vector',
       'biometric_detection',
       'proximity_3d',
+      'scene_event',
     ].includes(tType);
 
     const polygonOptions = this.zones
@@ -823,7 +1004,7 @@ export class AutomationStudioUI {
           <label class="auto-field span-2">
             <span>Area poligonale</span>
             <div class="auto-input-with-btn">
-              <select data-trig-param="${idx}:zone_id">
+              <select data-trig-param="${escapeHtml(pathStr)}:zone_id">
                 <option value="">Seleziona area...</option>
                 ${polygonOptions}
               </select>
@@ -834,15 +1015,16 @@ export class AutomationStudioUI {
           </label>
           <label class="auto-field">
             <span>Evento</span>
-            <select data-trig-param="${idx}:event">
+            <select data-trig-param="${escapeHtml(pathStr)}:event">
               <option value="enter" ${p.event === 'enter' ? 'selected' : ''}>Entrata</option>
+              <option value="present" ${p.event === 'present' ? 'selected' : ''}>Presenza / Riconoscimento in area</option>
               <option value="exit" ${p.event === 'exit' ? 'selected' : ''}>Uscita</option>
               <option value="dwell" ${p.event === 'dwell' ? 'selected' : ''}>Stazionamento</option>
             </select>
           </label>
           <label class="auto-field">
             <span>Permanenza min (s)</span>
-            <input type="number" min="0" max="3600" step="0.5" data-trig-param="${idx}:min_dwell_s" value="${Number(p.min_dwell_s ?? 0)}" />
+            <input type="number" min="0" max="3600" step="0.5" data-trig-param="${escapeHtml(pathStr)}:min_dwell_s" value="${Number(p.min_dwell_s ?? 0)}" />
           </label>
         </div>
       `;
@@ -852,7 +1034,7 @@ export class AutomationStudioUI {
           <label class="auto-field span-2">
             <span>Perimetro / linea 3D</span>
             <div class="auto-input-with-btn">
-              <select data-trig-param="${idx}:perimeter_id">
+              <select data-trig-param="${escapeHtml(pathStr)}:perimeter_id">
                 <option value="">Seleziona perimetro...</option>
                 ${allZoneOptions}
               </select>
@@ -863,7 +1045,7 @@ export class AutomationStudioUI {
           </label>
           <label class="auto-field span-2">
             <span>Verso di attraversamento</span>
-            <select data-trig-param="${idx}:direction">
+            <select data-trig-param="${escapeHtml(pathStr)}:direction">
               <option value="a_to_b" ${p.direction === 'a_to_b' ? 'selected' : ''}>A → B (verso freccia 3D)</option>
               <option value="b_to_a" ${p.direction === 'b_to_a' ? 'selected' : ''}>B → A (opposto alla freccia)</option>
               <option value="both" ${(!p.direction || p.direction === 'both') ? 'selected' : ''}>Entrambi i versi (A ↔ B)</option>
@@ -884,25 +1066,25 @@ export class AutomationStudioUI {
         <div class="auto-grid-2">
           <label class="auto-field">
             <span>Da Area A</span>
-            <select data-trig-param="${idx}:from_zone_id">
+            <select data-trig-param="${escapeHtml(pathStr)}:from_zone_id">
               <option value="">Seleziona...</option>
               ${fromOpts}
             </select>
           </label>
           <label class="auto-field">
             <span>Ad Area B</span>
-            <select data-trig-param="${idx}:to_zone_id">
+            <select data-trig-param="${escapeHtml(pathStr)}:to_zone_id">
               <option value="">Seleziona...</option>
               ${toOpts}
             </select>
           </label>
           <label class="auto-field">
             <span>Transito max (s)</span>
-            <input type="number" min="1" max="600" step="1" data-trig-param="${idx}:max_transit_s" value="${Number(p.max_transit_s ?? 20)}" />
+            <input type="number" min="1" max="600" step="1" data-trig-param="${escapeHtml(pathStr)}:max_transit_s" value="${Number(p.max_transit_s ?? 20)}" />
           </label>
           <label class="auto-field">
             <span>Vel. min (m/s)</span>
-            <input type="number" min="0" max="30" step="0.1" data-trig-param="${idx}:min_speed_mps" value="${Number(p.min_speed_mps ?? 0)}" />
+            <input type="number" min="0" max="30" step="0.1" data-trig-param="${escapeHtml(pathStr)}:min_speed_mps" value="${Number(p.min_speed_mps ?? 0)}" />
           </label>
         </div>
       `;
@@ -911,7 +1093,7 @@ export class AutomationStudioUI {
         <div class="auto-grid-2">
           <label class="auto-field span-2">
             <span>Area di riferimento</span>
-            <select data-trig-param="${idx}:zone_id">
+            <select data-trig-param="${escapeHtml(pathStr)}:zone_id">
               <option value="">Ovunque nella scena 3D</option>
               ${polygonOptions}
             </select>
@@ -919,27 +1101,27 @@ export class AutomationStudioUI {
           <label class="auto-field span-2">
             <span>Direzione azimut (0°=Est, 90°=Sud, 180°=Ovest, 270°=Nord)</span>
             <div class="auto-input-with-btn">
-              <input type="number" min="0" max="359" step="5" placeholder="Qualsiasi direzione" data-trig-param="${idx}:target_azimuth_deg" value="${p.target_azimuth_deg ?? ''}" />
-              <button type="button" class="auto-btn tonal xs" data-pick-direction-3d="${idx}" title="Clicca 2 punti nel 3D per orientare il vettore direzione">
+              <input type="number" min="0" max="359" step="5" placeholder="Qualsiasi direzione" data-trig-param="${escapeHtml(pathStr)}:target_azimuth_deg" value="${p.target_azimuth_deg ?? ''}" />
+              <button type="button" class="auto-btn tonal xs" data-pick-direction-3d="${escapeHtml(pathStr)}" title="Clicca 2 punti nel 3D per orientare il vettore direzione">
                 ${icon('compass', { size: 12 })} <span>Punta 3D</span>
               </button>
             </div>
           </label>
           <label class="auto-field">
             <span>Tolleranza (±°)</span>
-            <input type="number" min="5" max="180" step="5" data-trig-param="${idx}:azimuth_tolerance_deg" value="${Number(p.azimuth_tolerance_deg ?? 35)}" />
+            <input type="number" min="5" max="180" step="5" data-trig-param="${escapeHtml(pathStr)}:azimuth_tolerance_deg" value="${Number(p.azimuth_tolerance_deg ?? 35)}" />
           </label>
           <label class="auto-field">
             <span>Durata min (s)</span>
-            <input type="number" min="0.5" max="120" step="0.5" data-trig-param="${idx}:min_duration_s" value="${Number(p.min_duration_s ?? 2.0)}" />
+            <input type="number" min="0.2" max="120" step="0.1" data-trig-param="${escapeHtml(pathStr)}:min_duration_s" value="${Number(p.min_duration_s ?? 1.0)}" />
           </label>
           <label class="auto-field">
             <span>Vel. min (m/s)</span>
-            <input type="number" min="0" max="40" step="0.1" data-trig-param="${idx}:min_speed_mps" value="${Number(p.min_speed_mps ?? 0.5)}" />
+            <input type="number" min="0" max="40" step="0.1" data-trig-param="${escapeHtml(pathStr)}:min_speed_mps" value="${Number(p.min_speed_mps ?? 0.5)}" />
           </label>
           <label class="auto-field">
             <span>Vel. max (m/s)</span>
-            <input type="number" min="0" max="40" step="0.1" placeholder="Illimitata" data-trig-param="${idx}:max_speed_mps" value="${p.max_speed_mps ?? ''}" />
+            <input type="number" min="0" max="40" step="0.1" placeholder="Illimitata" data-trig-param="${escapeHtml(pathStr)}:max_speed_mps" value="${p.max_speed_mps ?? ''}" />
           </label>
         </div>
       `;
@@ -949,7 +1131,7 @@ export class AutomationStudioUI {
         <div class="auto-grid-2">
           <label class="auto-field">
             <span>Riferimento</span>
-            <select data-trig-param="${idx}:mode">
+            <select data-trig-param="${escapeHtml(pathStr)}:mode">
               <option value="fixed_time" ${mode === 'fixed_time' ? 'selected' : ''}>Ora fissa</option>
               <option value="sunrise" ${mode === 'sunrise' ? 'selected' : ''}>Alba</option>
               <option value="sunset" ${mode === 'sunset' ? 'selected' : ''}>Tramonto</option>
@@ -960,16 +1142,16 @@ export class AutomationStudioUI {
             mode === 'fixed_time'
               ? `<label class="auto-field">
                    <span>Orario</span>
-                   <input type="time" data-trig-param="${idx}:at" value="${escapeHtml(p.at || '22:00')}" />
+                   <input type="time" data-trig-param="${escapeHtml(pathStr)}:at" value="${escapeHtml(p.at || '22:00')}" />
                  </label>`
               : mode === 'interval'
                 ? `<label class="auto-field">
                      <span>Ogni (secondi)</span>
-                     <input type="number" min="5" max="86400" step="5" data-trig-param="${idx}:interval_seconds" value="${Number(p.interval_seconds ?? 60)}" />
+                     <input type="number" min="5" max="86400" step="5" data-trig-param="${escapeHtml(pathStr)}:interval_seconds" value="${Number(p.interval_seconds ?? 60)}" />
                    </label>`
                 : `<label class="auto-field">
                      <span>Offset (min, ±)</span>
-                     <input type="number" min="-360" max="360" step="5" data-trig-param="${idx}:offset_minutes" value="${Number(p.offset_minutes ?? 0)}" />
+                     <input type="number" min="-360" max="360" step="5" data-trig-param="${escapeHtml(pathStr)}:offset_minutes" value="${Number(p.offset_minutes ?? 0)}" />
                    </label>`
           }
         </div>
@@ -979,19 +1161,19 @@ export class AutomationStudioUI {
         <div class="auto-grid-2">
           <label class="auto-field span-2">
             <span>ID Entità (<code>sh3d.*</code> o Home Assistant)</span>
-            <input type="text" list="auto-all-entities-datalist" data-trig-param="${idx}:entity_id" value="${escapeHtml(p.entity_id || 'sh3d.allarme_perimetrale')}" placeholder="Es. sh3d.allarme_perimetrale o switch.cancello" />
+            <input type="text" list="auto-all-entities-datalist" data-trig-param="${escapeHtml(pathStr)}:entity_id" value="${escapeHtml(p.entity_id || 'sh3d.allarme_perimetrale')}" placeholder="Es. sh3d.allarme_perimetrale o switch.cancello" />
           </label>
           <label class="auto-field">
             <span>Da stato (opz.)</span>
-            <input type="text" data-trig-param="${idx}:from_state" value="${escapeHtml(p.from_state || '')}" placeholder="Qualsiasi" />
+            <input type="text" data-trig-param="${escapeHtml(pathStr)}:from_state" value="${escapeHtml(p.from_state || '')}" placeholder="Qualsiasi" />
           </label>
           <label class="auto-field">
             <span>A stato</span>
-            <input type="text" data-trig-param="${idx}:to_state" value="${escapeHtml(p.to_state || 'on')}" placeholder="on" />
+            <input type="text" data-trig-param="${escapeHtml(pathStr)}:to_state" value="${escapeHtml(p.to_state || 'on')}" placeholder="on" />
           </label>
           <label class="auto-field span-2">
             <span>Mantenuto per almeno (s)</span>
-            <input type="number" min="0" max="3600" step="1" data-trig-param="${idx}:for_duration_s" value="${Number(p.for_duration_s ?? 0)}" />
+            <input type="number" min="0" max="3600" step="1" data-trig-param="${escapeHtml(pathStr)}:for_duration_s" value="${Number(p.for_duration_s ?? 0)}" />
           </label>
         </div>
       `;
@@ -1000,7 +1182,7 @@ export class AutomationStudioUI {
         <div class="auto-grid-2">
           <label class="auto-field">
             <span>Modalità</span>
-            <select data-trig-param="${idx}:modality">
+            <select data-trig-param="${escapeHtml(pathStr)}:modality">
               <option value="any" ${(!p.modality || p.modality === 'any') ? 'selected' : ''}>Volto o targa</option>
               <option value="face" ${p.modality === 'face' ? 'selected' : ''}>Solo volto</option>
               <option value="alpr" ${p.modality === 'alpr' ? 'selected' : ''}>Solo targa</option>
@@ -1008,7 +1190,18 @@ export class AutomationStudioUI {
           </label>
           <label class="auto-field">
             <span>Camera (opz.)</span>
-            <input type="text" data-trig-param="${idx}:camera_id" value="${escapeHtml(p.camera_id || '')}" placeholder="Tutte" />
+            <input type="text" list="auto-cameras-datalist" data-trig-param="${escapeHtml(pathStr)}:camera_id" value="${escapeHtml(p.camera_id || '')}" placeholder="Tutte" />
+          </label>
+          <label class="auto-field span-2">
+            <span>Area 3D (opz.)</span>
+            <select data-trig-param="${escapeHtml(pathStr)}:zone_id">
+              <option value="">Ovunque nella scena 3D</option>
+              ${polygonOptions}
+            </select>
+          </label>
+          <label class="auto-check-row span-2">
+            <input type="checkbox" data-trig-bool="${escapeHtml(pathStr)}:require_locked" ${p.require_locked !== false ? 'checked' : ''} />
+            <span>Solo riconoscimento confermato (consenso K frame / sconosciuto finale)</span>
           </label>
         </div>
       `;
@@ -1017,19 +1210,53 @@ export class AutomationStudioUI {
         <div class="auto-grid-2">
           <label class="auto-field">
             <span>Coord. X (m)</span>
-            <input type="number" step="0.1" data-trig-param="${idx}:target_x" value="${Number(p.target_x ?? 0)}" />
+            <input type="number" step="0.1" data-trig-param="${escapeHtml(pathStr)}:target_x" value="${Number(p.target_x ?? 0)}" />
           </label>
           <label class="auto-field">
             <span>Coord. Z (m)</span>
-            <input type="number" step="0.1" data-trig-param="${idx}:target_z" value="${Number(p.target_z ?? 0)}" />
+            <input type="number" step="0.1" data-trig-param="${escapeHtml(pathStr)}:target_z" value="${Number(p.target_z ?? 0)}" />
           </label>
           <label class="auto-field">
             <span>Raggio (m)</span>
-            <input type="number" min="0.2" max="50" step="0.2" data-trig-param="${idx}:radius_m" value="${Number(p.radius_m ?? 2.0)}" />
+            <input type="number" min="0.2" max="50" step="0.2" data-trig-param="${escapeHtml(pathStr)}:radius_m" value="${Number(p.radius_m ?? 2.0)}" />
           </label>
           <label class="auto-field">
             <span>Permanenza (s)</span>
-            <input type="number" min="0" max="600" step="0.5" data-trig-param="${idx}:min_dwell_s" value="${Number(p.min_dwell_s ?? 1.0)}" />
+            <input type="number" min="0" max="600" step="0.5" data-trig-param="${escapeHtml(pathStr)}:min_dwell_s" value="${Number(p.min_dwell_s ?? 1.0)}" />
+          </label>
+        </div>
+      `;
+    } else if (tType === 'scene_event') {
+      specificFieldsHtml = `
+        <div class="auto-grid-2">
+          <label class="auto-field">
+            <span>Fase episodio</span>
+            <select data-trig-param="${escapeHtml(pathStr)}:event">
+              <option value="started" ${(!p.event || p.event === 'started') ? 'selected' : ''}>Inizio episodio</option>
+              <option value="importance_escalated" ${p.event === 'importance_escalated' ? 'selected' : ''}>Escalation ad Allerta</option>
+              <option value="closed" ${p.event === 'closed' ? 'selected' : ''}>Chiusura episodio</option>
+              <option value="any" ${p.event === 'any' ? 'selected' : ''}>Qualsiasi transizione</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Importanza</span>
+            <select data-trig-param="${escapeHtml(pathStr)}:importance">
+              <option value="any" ${(!p.importance || p.importance === 'any') ? 'selected' : ''}>Qualsiasi</option>
+              <option value="alert" ${p.importance === 'alert' ? 'selected' : ''}>Allerta</option>
+              <option value="notable" ${p.importance === 'notable' ? 'selected' : ''}>Rilevante</option>
+              <option value="routine" ${p.importance === 'routine' ? 'selected' : ''}>Routine</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Area 3D (opz.)</span>
+            <select data-trig-param="${escapeHtml(pathStr)}:zone_id">
+              <option value="">Tutte</option>
+              ${polygonOptions}
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Soggetti minimi</span>
+            <input type="number" min="0" max="20" step="1" data-trig-param="${escapeHtml(pathStr)}:min_subjects" value="${Number(p.min_subjects ?? 0)}" />
           </label>
         </div>
       `;
@@ -1038,22 +1265,22 @@ export class AutomationStudioUI {
     return `
       <div class="auto-node-surface">
         <div class="auto-node-bar">
-          <select class="auto-node-type-select" data-trig-type-idx="${idx}">
+          <select class="auto-node-type-select" data-trig-type-path="${escapeHtml(pathStr)}">
             ${Object.entries(TRIGGER_TYPE_LABELS)
               .map(([k, label]) => `<option value="${k}" ${tType === k ? 'selected' : ''}>${escapeHtml(label)}</option>`)
               .join('')}
           </select>
-          <button type="button" class="auto-btn icon-only danger xs" data-del-trig-idx="${idx}" title="Rimuovi trigger" aria-label="Rimuovi trigger">
+          <button type="button" class="auto-btn icon-only danger xs" data-del-trig-path="${escapeHtml(pathStr)}" title="Rimuovi trigger" aria-label="Rimuovi trigger">
             ${icon('x', { size: 13 })}
           </button>
         </div>
         ${specificFieldsHtml}
-        ${needsSubjectFilter ? this._renderSubjectFilterHtml(sf, idx) : ''}
+        ${needsSubjectFilter ? this._renderSubjectFilterHtml(sf, pathStr) : ''}
       </div>
     `;
   }
 
-  _renderSubjectFilterHtml(sf = {}, trigIdx) {
+  _renderSubjectFilterHtml(sf = {}, pathStr) {
     const classesList = Array.isArray(sf.classes) ? sf.classes : [];
     const currentClass = classesList[0] || 'any';
     const faceMode = sf.face_mode || 'any';
@@ -1065,8 +1292,19 @@ export class AutomationStudioUI {
       .map((item) => {
         const name = item.name;
         const active = selectedIds.some((s) => s.toLowerCase() === name.toLowerCase());
-        return `<button type="button" class="auto-chip ${active ? 'active' : ''}" data-trig-id-chip="${trigIdx}:${escapeHtml(name)}">${escapeHtml(name)}</button>`;
+        return `<button type="button" class="auto-chip ${active ? 'active' : ''}" data-trig-id-chip="${escapeHtml(pathStr)}:${escapeHtml(name)}">${escapeHtml(name)}</button>`;
       })
+      .join('');
+
+    const savedPlateChips = this.plates
+      .map((item) => {
+        const plate = String(item.plate || '').toUpperCase();
+        if (!plate) return '';
+        const label = item.owner_name ? `${plate} · ${item.owner_name}` : plate;
+        const active = selectedPlates.some((s) => s.toUpperCase() === plate);
+        return `<button type="button" class="auto-chip ${active ? 'active' : ''}" data-trig-plate-chip="${escapeHtml(pathStr)}:${escapeHtml(plate)}">${escapeHtml(label)}</button>`;
+      })
+      .filter(Boolean)
       .join('');
 
     return `
@@ -1074,7 +1312,7 @@ export class AutomationStudioUI {
         <div class="auto-grid-2">
           <label class="auto-field">
             <span>Soggetto</span>
-            <select data-trig-sf="${trigIdx}:classes">
+            <select data-trig-sf="${escapeHtml(pathStr)}:classes">
               <option value="any" ${currentClass === 'any' ? 'selected' : ''}>Qualsiasi</option>
               <option value="person" ${currentClass === 'person' ? 'selected' : ''}>Persone</option>
               <option value="vehicle" ${currentClass === 'vehicle' ? 'selected' : ''}>Veicoli</option>
@@ -1084,7 +1322,7 @@ export class AutomationStudioUI {
           </label>
           <label class="auto-field">
             <span>Filtro volto</span>
-            <select data-trig-sf="${trigIdx}:face_mode">
+            <select data-trig-sf="${escapeHtml(pathStr)}:face_mode">
               <option value="any" ${faceMode === 'any' ? 'selected' : ''}>Chiunque</option>
               <option value="unknown" ${faceMode === 'unknown' ? 'selected' : ''}>Solo sconosciuti</option>
               <option value="known" ${faceMode === 'known' ? 'selected' : ''}>Volti registrati</option>
@@ -1097,13 +1335,13 @@ export class AutomationStudioUI {
               ? `<div class="auto-field span-2">
                    <span>Persone (${faceMode === 'include' ? 'incluse' : 'escluse'})</span>
                    ${savedIdChips ? `<div class="auto-chips-wrap">${savedIdChips}</div>` : ''}
-                   <input type="text" data-trig-sf="${trigIdx}:identities" value="${escapeHtml(selectedIds.join(', '))}" placeholder="Nomi separati da virgola" />
+                   <input type="text" data-trig-sf="${escapeHtml(pathStr)}:identities" value="${escapeHtml(selectedIds.join(', '))}" placeholder="Nomi separati da virgola" />
                  </div>`
               : ''
           }
           <label class="auto-field">
             <span>Filtro targa</span>
-            <select data-trig-sf="${trigIdx}:plate_mode">
+            <select data-trig-sf="${escapeHtml(pathStr)}:plate_mode">
               <option value="any" ${plateMode === 'any' ? 'selected' : ''}>Qualsiasi</option>
               <option value="whitelisted" ${plateMode === 'whitelisted' ? 'selected' : ''}>In whitelist</option>
               <option value="not_whitelisted" ${plateMode === 'not_whitelisted' ? 'selected' : ''}>Non in whitelist</option>
@@ -1113,14 +1351,15 @@ export class AutomationStudioUI {
           </label>
           <label class="auto-field">
             <span>Grazia biometria (s)</span>
-            <input type="number" min="0" max="10" step="0.2" data-trig-sf="${trigIdx}:biometric_grace_s" value="${Number(sf.biometric_grace_s ?? 1.2)}" />
+            <input type="number" min="0" max="60" step="0.2" data-trig-sf="${escapeHtml(pathStr)}:biometric_grace_s" value="${Number(sf.biometric_grace_s ?? 1.2)}" />
           </label>
           ${
             plateMode === 'include' || plateMode === 'exclude'
-              ? `<label class="auto-field span-2">
-                   <span>Targhe (separate da virgola)</span>
-                   <input type="text" data-trig-sf="${trigIdx}:plates" value="${escapeHtml(selectedPlates.join(', '))}" placeholder="Es. AB123CD" />
-                 </label>`
+              ? `<div class="auto-field span-2">
+                   <span>Targhe (${plateMode === 'include' ? 'incluse' : 'escluse'})</span>
+                   ${savedPlateChips ? `<div class="auto-chips-wrap">${savedPlateChips}</div>` : ''}
+                   <input type="text" data-trig-sf="${escapeHtml(pathStr)}:plates" value="${escapeHtml(selectedPlates.join(', '))}" placeholder="Es. AB123CD" />
+                 </div>`
               : ''
           }
         </div>
@@ -1248,15 +1487,155 @@ export class AutomationStudioUI {
         </div>
       `;
     } else if (cType === 'track_kinematics') {
+      const evalMode = p.evaluation_mode || 'mean';
       leafFields = `
         <div class="auto-grid-2">
           <label class="auto-field">
+            <span>Modalità velocità</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:evaluation_mode">
+              <option value="mean" ${evalMode === 'mean' ? 'selected' : ''}>Media nella finestra</option>
+              <option value="peak_in_window" ${evalMode === 'peak_in_window' ? 'selected' : ''}>Picco nella finestra (lookback)</option>
+              <option value="min_in_window" ${evalMode === 'min_in_window' ? 'selected' : ''}>Minimo nella finestra</option>
+              <option value="current" ${evalMode === 'current' ? 'selected' : ''}>Istantanea attuale</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Finestra (s)</span>
+            <input type="number" min="0.5" max="120" step="0.5" data-cond-param="${escapeHtml(pathStr)}:window_s" value="${Number(p.window_s ?? 2)}" />
+          </label>
+          <label class="auto-field">
             <span>Vel. min (m/s)</span>
-            <input type="number" min="0" max="35" step="0.1" data-cond-param="${escapeHtml(pathStr)}:min_speed_mps" value="${Number(p.min_speed_mps ?? 0)}" />
+            <input type="number" min="0" max="35" step="0.1" placeholder="Qualsiasi" data-cond-param="${escapeHtml(pathStr)}:min_speed_mps" value="${p.min_speed_mps ?? ''}" />
+          </label>
+          <label class="auto-field">
+            <span>Vel. max (m/s)</span>
+            <input type="number" min="0" max="35" step="0.1" placeholder="Illimitata" data-cond-param="${escapeHtml(pathStr)}:max_speed_mps" value="${p.max_speed_mps ?? ''}" />
           </label>
           <label class="auto-field">
             <span>Azimut (°)</span>
             <input type="number" min="0" max="359" step="5" placeholder="Qualsiasi" data-cond-param="${escapeHtml(pathStr)}:target_azimuth_deg" value="${p.target_azimuth_deg ?? ''}" />
+          </label>
+          <label class="auto-field">
+            <span>Tolleranza (±°)</span>
+            <input type="number" min="5" max="180" step="5" data-cond-param="${escapeHtml(pathStr)}:azimuth_tolerance_deg" value="${Number(p.azimuth_tolerance_deg ?? 35)}" />
+          </label>
+        </div>
+      `;
+    } else if (cType === 'subject_filter') {
+      const clsArr = Array.isArray(p.classes) ? p.classes : [];
+      const curCls = clsArr[0] || 'any';
+      const fMode = p.face_mode || 'any';
+      const pMode = p.plate_mode || 'any';
+      const idsList = Array.isArray(p.identities) ? p.identities : [];
+      const platesList = Array.isArray(p.plates) ? p.plates : [];
+      leafFields = `
+        <div class="auto-grid-2">
+          <label class="auto-field">
+            <span>Bersaglio</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:target">
+              <option value="trigger_track" ${(!p.target || p.target === 'trigger_track') ? 'selected' : ''}>Soggetto del trigger</option>
+              <option value="any_active" ${p.target === 'any_active' ? 'selected' : ''}>Almeno un soggetto attivo</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Soggetto</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:classes">
+              <option value="any" ${curCls === 'any' ? 'selected' : ''}>Qualsiasi</option>
+              <option value="person" ${curCls === 'person' ? 'selected' : ''}>Persone</option>
+              <option value="vehicle" ${curCls === 'vehicle' ? 'selected' : ''}>Veicoli</option>
+              <option value="dog" ${curCls === 'dog' ? 'selected' : ''}>Animali</option>
+              <option value="bicycle" ${curCls === 'bicycle' ? 'selected' : ''}>Biciclette</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Filtro volto</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:face_mode">
+              <option value="any" ${fMode === 'any' ? 'selected' : ''}>Chiunque</option>
+              <option value="unknown" ${fMode === 'unknown' ? 'selected' : ''}>Solo sconosciuti</option>
+              <option value="known" ${fMode === 'known' ? 'selected' : ''}>Volti registrati</option>
+              <option value="include" ${fMode === 'include' ? 'selected' : ''}>Solo specifici...</option>
+              <option value="exclude" ${fMode === 'exclude' ? 'selected' : ''}>Escludi specifici...</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Filtro targa</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:plate_mode">
+              <option value="any" ${pMode === 'any' ? 'selected' : ''}>Qualsiasi</option>
+              <option value="whitelisted" ${pMode === 'whitelisted' ? 'selected' : ''}>In whitelist</option>
+              <option value="not_whitelisted" ${pMode === 'not_whitelisted' ? 'selected' : ''}>Non in whitelist</option>
+              <option value="include" ${pMode === 'include' ? 'selected' : ''}>Specifiche...</option>
+              <option value="exclude" ${pMode === 'exclude' ? 'selected' : ''}>Escludi...</option>
+            </select>
+          </label>
+          ${
+            fMode === 'include' || fMode === 'exclude'
+              ? `<label class="auto-field span-2">
+                   <span>Nomi (separati da virgola)</span>
+                   <input type="text" data-cond-param="${escapeHtml(pathStr)}:identities" value="${escapeHtml(idsList.join(', '))}" placeholder="Nicola, Maria" />
+                 </label>`
+              : ''
+          }
+          ${
+            pMode === 'include' || pMode === 'exclude'
+              ? `<label class="auto-field span-2">
+                   <span>Targhe (separate da virgola)</span>
+                   <input type="text" data-cond-param="${escapeHtml(pathStr)}:plates" value="${escapeHtml(platesList.join(', '))}" placeholder="AB123CD" />
+                 </label>`
+              : ''
+          }
+        </div>
+      `;
+    } else if (cType === 'scene_event') {
+      leafFields = `
+        <div class="auto-grid-2">
+          <label class="auto-field">
+            <span>Importanza episodio</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:importance">
+              <option value="any" ${(!p.importance || p.importance === 'any') ? 'selected' : ''}>Qualsiasi</option>
+              <option value="alert" ${p.importance === 'alert' ? 'selected' : ''}>Allerta</option>
+              <option value="notable" ${p.importance === 'notable' ? 'selected' : ''}>Rilevante</option>
+              <option value="routine" ${p.importance === 'routine' ? 'selected' : ''}>Routine</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Soggetti minimi</span>
+            <input type="number" min="0" max="20" step="1" data-cond-param="${escapeHtml(pathStr)}:min_subjects" value="${p.min_subjects ?? ''}" placeholder="Qualsiasi" />
+          </label>
+          <label class="auto-field">
+            <span>Sconosciuti presenti</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:has_unknown_person">
+              <option value="any" ${(!p.has_unknown_person || p.has_unknown_person === 'any') ? 'selected' : ''}>Indifferente</option>
+              <option value="yes" ${p.has_unknown_person === 'yes' ? 'selected' : ''}>Sì</option>
+              <option value="no" ${p.has_unknown_person === 'no' ? 'selected' : ''}>No</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Targa in whitelist</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:has_whitelisted_plate">
+              <option value="any" ${(!p.has_whitelisted_plate || p.has_whitelisted_plate === 'any') ? 'selected' : ''}>Indifferente</option>
+              <option value="yes" ${p.has_whitelisted_plate === 'yes' ? 'selected' : ''}>Sì</option>
+              <option value="no" ${p.has_whitelisted_plate === 'no' ? 'selected' : ''}>No</option>
+            </select>
+          </label>
+        </div>
+      `;
+    } else if (cType === 'recent_zone_visit') {
+      leafFields = `
+        <div class="auto-grid-2">
+          <label class="auto-field span-2">
+            <span>Area 3D visitata</span>
+            <select data-cond-param="${escapeHtml(pathStr)}:zone_id">
+              <option value="">Seleziona area...</option>
+              ${polygonOptions}
+            </select>
+          </label>
+          <label class="auto-field">
+            <span>Entro gli ultimi (s)</span>
+            <input type="number" min="0" max="600" step="0.5" data-cond-param="${escapeHtml(pathStr)}:within_s" value="${Number(p.within_s ?? 10)}" />
+          </label>
+          <label class="auto-field">
+            <span>Permanenza min (s)</span>
+            <input type="number" min="0" max="600" step="0.5" data-cond-param="${escapeHtml(pathStr)}:min_dwell_s" value="${Number(p.min_dwell_s ?? 0)}" />
           </label>
         </div>
       `;
@@ -1270,6 +1649,9 @@ export class AutomationStudioUI {
             <option value="time_window" ${cType === 'time_window' ? 'selected' : ''}>Fascia oraria / Sole</option>
             <option value="zone_occupancy" ${cType === 'zone_occupancy' ? 'selected' : ''}>Occupazione area 3D</option>
             <option value="track_kinematics" ${cType === 'track_kinematics' ? 'selected' : ''}>Velocità / direzione soggetto</option>
+            <option value="subject_filter" ${cType === 'subject_filter' ? 'selected' : ''}>Filtro soggetto / biometria</option>
+            <option value="scene_event" ${cType === 'scene_event' ? 'selected' : ''}>Stato episodio scena</option>
+            <option value="recent_zone_visit" ${cType === 'recent_zone_visit' ? 'selected' : ''}>Passaggio recente in area 3D</option>
           </select>
           <button type="button" class="auto-btn icon-only danger xs" data-cond-del-path="${escapeHtml(pathStr)}" title="Rimuovi condizione">
             ${icon('x', { size: 12 })}
@@ -1609,9 +1991,24 @@ export class AutomationStudioUI {
     `;
   }
 
+  _resolveTrigger(pathStr) {
+    const r = this.editingRule;
+    if (!r || !pathStr) return { list: null, idx: -1, trig: null };
+    const parts = String(pathStr).split(':');
+    if (parts[0] === 'pre' && parts.length === 3) {
+      const sIdx = Number(parts[1]);
+      const tIdx = Number(parts[2]);
+      const list = r.pre_triggers?.[sIdx]?.triggers;
+      return { list, idx: tIdx, trig: list?.[tIdx] || null };
+    }
+    const idx = parts[0] === 'main' ? Number(parts[1]) : Number(parts[0]);
+    return { list: r.triggers, idx, trig: r.triggers?.[idx] || null };
+  }
+
   _bindRuleEditorEvents() {
     const r = this.editingRule;
     if (!r) return;
+    this._normalizeEditingRule(r);
 
     this.panelEl.querySelector('#btn-auto-rule-back')?.addEventListener('click', () => {
       this.editingRule = null;
@@ -1631,6 +2028,129 @@ export class AutomationStudioUI {
     this.panelEl.querySelector('#rule-inp-cooldown')?.addEventListener('input', (e) => {
       r.cooldown_s = Math.max(0, parseFloat(e.target.value) || 0);
     });
+    this.panelEl.querySelector('#rule-inp-log-blocked')?.addEventListener('change', (e) => {
+      r.log_blocked_evaluations = Boolean(e.target.checked);
+    });
+
+    this.panelEl.querySelector('#rule-inp-trigger-logic')?.addEventListener('change', (e) => {
+      r.trigger_logic = e.target.value;
+      this.render();
+    });
+    this.panelEl.querySelector('#rule-inp-trigger-window')?.addEventListener('input', (e) => {
+      r.trigger_window_s = Math.max(0.5, parseFloat(e.target.value) || 10.0);
+    });
+    this.panelEl.querySelector('#rule-inp-trigger-corr')?.addEventListener('change', (e) => {
+      r.trigger_correlation_scope = e.target.value;
+    });
+
+    // Pre-trigger stages controls
+    this.panelEl.querySelector('#btn-rule-add-pretrigger')?.addEventListener('click', () => {
+      r.pre_triggers.push({
+        stage_id: uid('pre'),
+        name: `Pre-trigger ${r.pre_triggers.length + 1}`,
+        enabled: true,
+        match_mode: 'any',
+        max_wait_s: 10.0,
+        min_delay_s: 0.0,
+        stage_window_s: 10.0,
+        correlation_scope: 'same_subject',
+        consume_on_fire: true,
+        refresh_on_rearm: true,
+        condition: null,
+        triggers: [
+          {
+            trigger_id: uid('trg'),
+            type: 'kinematic_vector',
+            enabled: true,
+            subject_filter: { classes: ['vehicle'], face_mode: 'any', identities: [], plate_mode: 'any', plates: [], biometric_grace_s: 1.2 },
+            params: { zone_id: '', target_azimuth_deg: null, azimuth_tolerance_deg: 35, min_duration_s: 0.5, min_speed_mps: 0.5 },
+          },
+        ],
+      });
+      this.render();
+    });
+
+    this.panelEl.querySelectorAll('[data-del-pre-idx]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const sIdx = Number(btn.dataset.delPreIdx);
+        r.pre_triggers.splice(sIdx, 1);
+        this.render();
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-pre-field]').forEach((inp) => {
+      const handler = () => {
+        const lastColon = inp.dataset.preField.lastIndexOf(':');
+        const sIdx = Number(inp.dataset.preField.slice(0, lastColon));
+        const key = inp.dataset.preField.slice(lastColon + 1);
+        const stg = r.pre_triggers[sIdx];
+        if (!stg) return;
+        let val = inp.value;
+        if (inp.type === 'number') {
+          val = val === '' ? 0 : parseFloat(val);
+        }
+        stg[key] = val;
+        if (key === 'match_mode') {
+          this.render();
+        } else if (key === 'max_wait_s') {
+          const card = inp.closest('.auto-pretrigger-card');
+          const conn = card?.nextElementSibling;
+          if (conn && conn.classList.contains('auto-pretrigger-connector')) {
+            const nextLabel = sIdx + 1 < r.pre_triggers.length ? `Fase ${sIdx + 2}` : 'Trigger principali';
+            conn.textContent = `↓ Attende max ${Number(val || 10)}s → ${nextLabel} ↓`;
+          }
+        }
+      };
+      inp.addEventListener('input', handler);
+      inp.addEventListener('change', handler);
+    });
+
+    this.panelEl.querySelectorAll('[data-pre-bool]').forEach((chk) => {
+      chk.addEventListener('change', () => {
+        const lastColon = chk.dataset.preBool.lastIndexOf(':');
+        const sIdx = Number(chk.dataset.preBool.slice(0, lastColon));
+        const key = chk.dataset.preBool.slice(lastColon + 1);
+        const stg = r.pre_triggers[sIdx];
+        if (!stg) return;
+        stg[key] = Boolean(chk.checked);
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-pre-add-trig]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const sIdx = Number(btn.dataset.preAddTrig);
+        const stg = r.pre_triggers[sIdx];
+        if (!stg) return;
+        stg.triggers = stg.triggers || [];
+        stg.triggers.push({
+          trigger_id: uid('trg'),
+          type: 'zone_presence',
+          enabled: true,
+          subject_filter: { classes: ['vehicle'], face_mode: 'any', identities: [], plate_mode: 'any', plates: [], biometric_grace_s: 1.2 },
+          params: { zone_id: this.zones[0]?.zone_id || '', event: 'enter', min_dwell_s: 0 },
+        });
+        this.render();
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-pre-toggle-cond]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const sIdx = Number(btn.dataset.preToggleCond);
+        const stg = r.pre_triggers[sIdx];
+        if (!stg) return;
+        if (stg.condition) {
+          stg.condition = null;
+        } else {
+          stg.condition = {
+            condition_id: uid('cnd'),
+            type: 'and',
+            children: [],
+            params: {},
+          };
+        }
+        this.render();
+      });
+    });
 
     this.panelEl.querySelector('#btn-rule-add-trigger')?.addEventListener('click', () => {
       r.triggers.push({
@@ -1643,33 +2163,39 @@ export class AutomationStudioUI {
       this.render();
     });
 
-    this.panelEl.querySelectorAll('[data-del-trig-idx]').forEach((btn) => {
+    this.panelEl.querySelectorAll('[data-del-trig-path]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const idx = Number(btn.dataset.delTrigIdx);
-        r.triggers.splice(idx, 1);
-        this.render();
+        const { list, idx } = this._resolveTrigger(btn.dataset.delTrigPath);
+        if (Array.isArray(list) && idx >= 0) {
+          list.splice(idx, 1);
+          this.render();
+        }
       });
     });
 
-    this.panelEl.querySelectorAll('[data-trig-type-idx]').forEach((sel) => {
+    this.panelEl.querySelectorAll('[data-trig-type-path]').forEach((sel) => {
       sel.addEventListener('change', () => {
-        const idx = Number(sel.dataset.trigTypeIdx);
+        const { trig } = this._resolveTrigger(sel.dataset.trigTypePath);
+        if (!trig) return;
         const newType = sel.value;
-        r.triggers[idx].type = newType;
-        r.triggers[idx].params = this._defaultTriggerParamsForType(newType);
+        trig.type = newType;
+        trig.params = this._defaultTriggerParamsForType(newType);
         this.render();
       });
     });
 
     this.panelEl.querySelectorAll('[data-trig-param]').forEach((inp) => {
       const handler = () => {
-        const [idxStr, key] = inp.dataset.trigParam.split(':');
-        const trig = r.triggers[Number(idxStr)];
+        const lastColon = inp.dataset.trigParam.lastIndexOf(':');
+        const pathStr = inp.dataset.trigParam.slice(0, lastColon);
+        const key = inp.dataset.trigParam.slice(lastColon + 1);
+        const { trig } = this._resolveTrigger(pathStr);
         if (!trig) return;
         let val = inp.value;
         if (inp.type === 'number') {
           val = val === '' ? null : parseFloat(val);
         }
+        trig.params = trig.params || {};
         trig.params[key] = val;
 
         if (key === 'mode') {
@@ -1678,15 +2204,32 @@ export class AutomationStudioUI {
           trig.type === 'kinematic_vector' &&
           (key === 'target_azimuth_deg' || key === 'azimuth_tolerance_deg' || key === 'zone_id')
         ) {
-          this.zoneRenderer?.showDirectionCone({
-            azimuthDeg: trig.params.target_azimuth_deg,
-            toleranceDeg: trig.params.azimuth_tolerance_deg,
-            zoneId: trig.params.zone_id,
-          });
+          const az = trig.params.target_azimuth_deg;
+          if (az === null || az === undefined || az === '') {
+            this.zoneRenderer?.hideDirectionCone();
+          } else {
+            this.zoneRenderer?.showDirectionCone({
+              azimuthDeg: az,
+              toleranceDeg: trig.params.azimuth_tolerance_deg,
+              zoneId: trig.params.zone_id,
+            });
+          }
         }
       };
       inp.addEventListener('input', handler);
       inp.addEventListener('change', handler);
+    });
+
+    this.panelEl.querySelectorAll('[data-trig-bool]').forEach((chk) => {
+      chk.addEventListener('change', () => {
+        const lastColon = chk.dataset.trigBool.lastIndexOf(':');
+        const pathStr = chk.dataset.trigBool.slice(0, lastColon);
+        const key = chk.dataset.trigBool.slice(lastColon + 1);
+        const { trig } = this._resolveTrigger(pathStr);
+        if (!trig) return;
+        trig.params = trig.params || {};
+        trig.params[key] = Boolean(chk.checked);
+      });
     });
 
     this.panelEl.querySelectorAll('[data-quick-new-zone]').forEach((btn) => {
@@ -1699,8 +2242,7 @@ export class AutomationStudioUI {
 
     this.panelEl.querySelectorAll('[data-pick-direction-3d]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const idx = Number(btn.dataset.pickDirection3d);
-        const trig = r.triggers[idx];
+        const { trig } = this._resolveTrigger(btn.dataset.pickDirection3d);
         if (!trig) return;
         this.setCollapsed(true);
         this.setStatus('Clicca nel 3D il punto di partenza e poi il punto verso cui punta la direzione.', 'info');
@@ -1717,8 +2259,10 @@ export class AutomationStudioUI {
 
     this.panelEl.querySelectorAll('[data-trig-sf]').forEach((inp) => {
       const handler = () => {
-        const [idxStr, key] = inp.dataset.trigSf.split(':');
-        const trig = r.triggers[Number(idxStr)];
+        const lastColon = inp.dataset.trigSf.lastIndexOf(':');
+        const pathStr = inp.dataset.trigSf.slice(0, lastColon);
+        const key = inp.dataset.trigSf.slice(lastColon + 1);
+        const { trig } = this._resolveTrigger(pathStr);
         if (!trig) return;
         trig.subject_filter = trig.subject_filter || {};
         if (key === 'classes') {
@@ -1743,14 +2287,34 @@ export class AutomationStudioUI {
 
     this.panelEl.querySelectorAll('[data-trig-id-chip]').forEach((chip) => {
       chip.addEventListener('click', () => {
-        const [idxStr, name] = chip.dataset.trigIdChip.split(':');
-        const trig = r.triggers[Number(idxStr)];
+        const lastColon = chip.dataset.trigIdChip.lastIndexOf(':');
+        const pathStr = chip.dataset.trigIdChip.slice(0, lastColon);
+        const name = chip.dataset.trigIdChip.slice(lastColon + 1);
+        const { trig } = this._resolveTrigger(pathStr);
         if (!trig) return;
+        trig.subject_filter = trig.subject_filter || {};
         const list = Array.isArray(trig.subject_filter.identities) ? trig.subject_filter.identities : [];
         const existingIdx = list.findIndex((s) => s.toLowerCase() === name.toLowerCase());
         if (existingIdx >= 0) list.splice(existingIdx, 1);
         else list.push(name);
         trig.subject_filter.identities = list;
+        this.render();
+      });
+    });
+
+    this.panelEl.querySelectorAll('[data-trig-plate-chip]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const lastColon = chip.dataset.trigPlateChip.lastIndexOf(':');
+        const pathStr = chip.dataset.trigPlateChip.slice(0, lastColon);
+        const plate = chip.dataset.trigPlateChip.slice(lastColon + 1);
+        const { trig } = this._resolveTrigger(pathStr);
+        if (!trig) return;
+        trig.subject_filter = trig.subject_filter || {};
+        const list = Array.isArray(trig.subject_filter.plates) ? trig.subject_filter.plates : [];
+        const existingIdx = list.findIndex((s) => s.toUpperCase() === plate.toUpperCase());
+        if (existingIdx >= 0) list.splice(existingIdx, 1);
+        else list.push(plate);
+        trig.subject_filter.plates = list;
         this.render();
       });
     });
@@ -1781,15 +2345,33 @@ export class AutomationStudioUI {
     if (tType === 'zone_presence') return { zone_id: firstPoly, event: 'enter', min_dwell_s: 0 };
     if (tType === 'perimeter_crossing') return { perimeter_id: firstAny, direction: 'a_to_b' };
     if (tType === 'zone_transition') return { from_zone_id: firstPoly, to_zone_id: '', max_transit_s: 20, min_speed_mps: 0 };
-    if (tType === 'kinematic_vector') return { zone_id: '', target_azimuth_deg: 90, azimuth_tolerance_deg: 35, min_duration_s: 2.0, min_speed_mps: 0.5 };
+    if (tType === 'kinematic_vector') return { zone_id: '', target_azimuth_deg: null, azimuth_tolerance_deg: 35, min_duration_s: 1.0, min_speed_mps: 0.5 };
     if (tType === 'time_schedule') return { mode: 'fixed_time', at: '22:00', offset_minutes: 0 };
     if (tType === 'entity_state_change') return { entity_id: 'sh3d.allarme_perimetrale', from_state: '', to_state: 'on', for_duration_s: 0 };
-    if (tType === 'biometric_detection') return { modality: 'any', camera_id: '' };
+    if (tType === 'biometric_detection') return { modality: 'any', camera_id: '', zone_id: '', require_locked: true };
     if (tType === 'proximity_3d') return { target_x: 0, target_z: 0, radius_m: 2.0, min_dwell_s: 1.0 };
+    if (tType === 'scene_event') return { event: 'started', importance: 'any', zone_id: '', min_subjects: 0 };
     return {};
   }
 
   _resolveConditionNode(pathStr) {
+    if (pathStr.startsWith('pre_cond:')) {
+      const sub = pathStr.slice('pre_cond:'.length);
+      const parts = sub.split('.');
+      const stg = this.editingRule?.pre_triggers?.[Number(parts[0])];
+      if (!stg) return { node: null, parent: null, idx: -1 };
+      if (parts.length === 1) return { node: stg.condition, parent: null, idx: -1 };
+      let curr = stg.condition;
+      let parent = null;
+      let lastIdx = -1;
+      for (let i = 1; i < parts.length; i++) {
+        parent = curr;
+        lastIdx = Number(parts[i]);
+        curr = curr?.children?.[lastIdx];
+      }
+      return { node: curr, parent, idx: lastIdx };
+    }
+
     if (pathStr.startsWith('act_if:')) {
       const sub = pathStr.slice('act_if:'.length);
       const parts = sub.split('.');
@@ -1824,11 +2406,24 @@ export class AutomationStudioUI {
       sel.addEventListener('change', () => {
         const { node } = this._resolveConditionNode(sel.dataset.condTypePath);
         if (!node) return;
-        node.type = sel.value;
-        if (['and', 'or', 'not', 'xor'].includes(node.type)) {
+        const nextType = sel.value;
+        node.type = nextType;
+        if (['and', 'or', 'not', 'xor'].includes(nextType)) {
           node.children = node.children || [];
-        } else if (!node.params || Object.keys(node.params).length === 0) {
+        } else if (nextType === 'entity_state') {
           node.params = { entity_id: 'sh3d.allarme_perimetrale', operator: '==', value: 'on' };
+        } else if (nextType === 'time_window') {
+          node.params = { after_hhmm: '', before_hhmm: '', sun_state: 'any' };
+        } else if (nextType === 'zone_occupancy') {
+          node.params = { zone_id: this.zones[0]?.zone_id || '', operator: '>=', count: 1 };
+        } else if (nextType === 'track_kinematics') {
+          node.params = { evaluation_mode: 'peak_in_window', window_s: 10.0, min_speed_mps: 0.5, target_azimuth_deg: null, azimuth_tolerance_deg: 35 };
+        } else if (nextType === 'subject_filter') {
+          node.params = { target: 'trigger_track', classes: [], face_mode: 'any', identities: [], plate_mode: 'any', plates: [] };
+        } else if (nextType === 'scene_event') {
+          node.params = { importance: 'any', has_unknown_person: 'any', has_whitelisted_plate: 'any' };
+        } else if (nextType === 'recent_zone_visit') {
+          node.params = { zone_id: this.zones[0]?.zone_id || '', within_s: 10.0, min_dwell_s: 0.0 };
         }
         this.render();
       });
@@ -1882,6 +2477,22 @@ export class AutomationStudioUI {
         const { node } = this._resolveConditionNode(pathStr);
         if (!node) return;
         node.params = node.params || {};
+        if (node.type === 'subject_filter') {
+          if (key === 'classes') {
+            node.params.classes = inp.value === 'any' ? [] : [inp.value];
+          } else if (key === 'identities' || key === 'plates') {
+            node.params[key] = String(inp.value || '')
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean);
+          } else {
+            node.params[key] = inp.value;
+            if (key === 'face_mode' || key === 'plate_mode') {
+              this.render();
+            }
+          }
+          return;
+        }
         node.params[key] = inp.type === 'number' ? (inp.value === '' ? null : parseFloat(inp.value)) : inp.value;
       };
       inp.addEventListener('input', handler);
@@ -2760,17 +3371,23 @@ export class AutomationStudioUI {
             .map((l) => {
               const dtStr = new Date((l.timestamp || 0) * 1000).toLocaleTimeString('it-IT');
               const actionsCount = Array.isArray(l.actions_executed) ? l.actions_executed.length : 0;
+              const statusKey = l.status || 'executed';
+              const statusLabel = statusKey === 'condition_blocked' ? 'Bloccata' : statusKey === 'error' ? 'Errore' : 'Eseguita';
+              const preSum = l.details?.pre_trigger_summary ? ` · Pre: ${l.details.pre_trigger_summary}` : '';
               return `
                 <div class="auto-list-item">
                   <div class="auto-item-main">
                     <div class="auto-item-info">
-                      <h4 class="auto-item-title">${escapeHtml(l.rule_name)}</h4>
+                      <div class="auto-item-title-row">
+                        <span class="auto-log-status-pill is-${escapeHtml(statusKey)}">${statusLabel}</span>
+                        <h4 class="auto-item-title">${escapeHtml(l.rule_name)}</h4>
+                      </div>
                       <p class="auto-item-sub">${escapeHtml(l.trigger_summary)}</p>
                     </div>
                     <span class="auto-item-time">${escapeHtml(dtStr)}</span>
                   </div>
                   <div class="auto-item-footer">
-                    <span class="auto-item-stat">${escapeHtml(l.trigger_type)} · ${actionsCount} azioni${l.identity ? ` · ${escapeHtml(l.identity)}` : ''}${l.plate ? ` · ${escapeHtml(l.plate)}` : ''}</span>
+                    <span class="auto-item-stat">${escapeHtml(l.trigger_type)} · ${actionsCount} azioni${l.identity ? ` · ${escapeHtml(l.identity)}` : ''}${l.plate ? ` · ${escapeHtml(l.plate)}` : ''}${escapeHtml(preSum)}</span>
                   </div>
                 </div>
               `;

@@ -1,8 +1,12 @@
+from .actions import ActionRegistry, BaseActionExecutor, action_tree_contains_delay
 from .astronomy import AstronomicalClock
+from .correlator import ArmedStageToken, CorrelatedRuleMatch, CorrelationPolicy, RuleSequenceCoordinator
 from .engine import AutomationEngineService
 from .evaluators import (
+    BaseConditionEvaluator,
     BaseTriggerEvaluator,
     ConditionEvaluator,
+    ConditionRegistry,
     EntityStateSnapshot,
     EvaluationContext,
     SubjectFilterEvaluator,
@@ -22,10 +26,13 @@ from .kinematics import (
 )
 from .models import (
     ActionSpec,
+    ArmedPreTriggerSnapshot,
     AutomationExecutionLog,
     AutomationRuleDefinition,
     ConditionSpec,
     Point2D,
+    PreTriggerStageSpec,
+    RuleDiagnosticEntry,
     SpatialZoneDefinition,
     SubjectFilterSpec,
     TriggerSpec,
@@ -33,19 +40,30 @@ from .models import (
 )
 
 __all__ = [
+    "ActionRegistry",
     "ActionSpec",
+    "ArmedPreTriggerSnapshot",
+    "ArmedStageToken",
     "AstronomicalClock",
     "AutomationEngineService",
     "AutomationExecutionLog",
     "AutomationRuleDefinition",
+    "BaseActionExecutor",
+    "BaseConditionEvaluator",
     "BaseTriggerEvaluator",
     "ConditionEvaluator",
+    "ConditionRegistry",
     "ConditionSpec",
+    "CorrelatedRuleMatch",
+    "CorrelationPolicy",
     "EntityStateSnapshot",
     "EvaluationContext",
     "KinematicSample",
     "PerimeterCrossingEvent",
     "Point2D",
+    "PreTriggerStageSpec",
+    "RuleDiagnosticEntry",
+    "RuleSequenceCoordinator",
     "SpatialGeometryEngine",
     "SpatialZoneDefinition",
     "SubjectFilterEvaluator",
@@ -59,6 +77,7 @@ __all__ = [
     "WindowKinematicMetrics",
     "ZonePresenceState",
     "ZoneTransitionEvent",
+    "action_tree_contains_delay",
     "angular_difference_deg",
     "normalize_azimuth_deg",
 ]

@@ -7,7 +7,7 @@ import math
 import re
 from typing import Any, Callable, Optional, Type
 
-from spatial_server.domain.models import TrackedEntity3D
+from spatial_server.domain.models import SpatialPoint3D, TrackedEntity3D
 from .astronomy import AstronomicalClock
 from .kinematics import (
     TrackKinematicHistoryBuffer,
@@ -107,23 +107,57 @@ class SubjectFilterEvaluator:
         return True
 
     @staticmethod
+    def has_positive_biometric_filter(spec: SubjectFilterSpec) -> bool:
+        return spec.face_mode in ("known", "include") or spec.plate_mode in ("whitelisted", "include")
+
+    @staticmethod
+    def has_negative_biometric_filter(spec: SubjectFilterSpec) -> bool:
+        return spec.face_mode in ("unknown", "exclude") or spec.plate_mode in ("not_whitelisted", "exclude")
+
+    @staticmethod
+    def matches_class_only(track: TrackedEntity3D, spec: SubjectFilterSpec) -> bool:
+        allowed_classes = {c.strip().lower() for c in spec.classes if c and c.strip()}
+        if not allowed_classes or "any" in allowed_classes or "all" in allowed_classes:
+            return True
+        raw_cls = (track.class_label or "").strip().lower()
+        coarse_cls = _coarse_class(raw_cls)
+        return raw_cls in allowed_classes or coarse_cls in allowed_classes
+
+    @staticmethod
     def should_defer_for_biometrics(
         track: TrackedEntity3D,
         spec: SubjectFilterSpec,
         now_ts: float,
-        track_first_seen_ts: float,
+        trigger_or_first_seen_ts: float,
+        *,
+        for_positive_candidate: bool = False,
     ) -> bool:
         """
-        Return True if the filter depends on face/plate identity, the track's biometric
-        resolution is still pending/none, and we are still inside `spec.biometric_grace_s`.
+        Return True if the trigger should wait briefly (within `spec.biometric_grace_s`)
+        for face/ALPR resolution:
+        - `for_positive_candidate=True`: trigger requires `known`/`include`/`whitelisted` and has not
+          matched yet; wait from trigger time until `biometric_locked` or grace expiry (even if
+          `biometric_status == "unknown"` from earlier distant attempts).
+        - `for_positive_candidate=False`: trigger uses negative filter (`unknown`/`exclude`) and
+          matched provisionally; wait while biometrics is still unresolved (`none`/`pending`) within grace.
         """
         if spec.biometric_grace_s <= 0.0:
-            return False
-        if (now_ts - track_first_seen_ts) > spec.biometric_grace_s:
             return False
         needs_face = spec.face_mode != "any"
         needs_plate = spec.plate_mode != "any"
         if not needs_face and not needs_plate:
+            return False
+
+        if for_positive_candidate:
+            if not SubjectFilterEvaluator.matches_class_only(track, spec):
+                return False
+            if track.biometric_locked:
+                return False
+            if spec.face_mode in ("known", "include") or spec.plate_mode in ("whitelisted", "include"):
+                return True
+            return False
+
+        if (now_ts - trigger_or_first_seen_ts) > spec.biometric_grace_s:
             return False
         if track.biometric_locked or track.biometric_status in ("locked", "unknown"):
             return False
@@ -161,6 +195,7 @@ class TriggerActivationEvent:
     old_state: Optional[str] = None
     new_state: Optional[str] = None
     kinematics: Optional[WindowKinematicMetrics] = None
+    scene_event_id: Optional[str] = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -180,6 +215,9 @@ class EvaluationContext:
     step_events_by_track: dict[int, TrackStepEvents] = field(default_factory=dict)
     entity_changes: list[tuple[str, Optional[str], str]] = field(default_factory=list)
     biometric_updates: list[dict[str, Any]] = field(default_factory=list)
+    scene_event: Optional[Any] = None
+    scene_lifecycle_events: list[tuple[str, Any]] = field(default_factory=list)
+    is_pre_trigger_eval: bool = False
     trigger_event: Optional[TriggerActivationEvent] = None
 
     def resolve_entity(self, entity_id: str) -> Optional[EntityStateSnapshot]:
@@ -255,8 +293,8 @@ class TriggerRegistry:
 @TriggerRegistry.register("zone_presence")
 class ZonePresenceTriggerEvaluator(BaseTriggerEvaluator):
     """
-    Fires when a matching subject enters, exits, or dwells for `min_dwell_s`
-    inside a 2.5D polygonal area (`zone_id`).
+    Fires when a matching subject enters, exits, dwells for `min_dwell_s`, or is
+    `present` (matching filter + dwell, including post-entry biometric lock) inside `zone_id`.
     """
 
     def evaluate(
@@ -266,9 +304,6 @@ class ZonePresenceTriggerEvaluator(BaseTriggerEvaluator):
         ctx: EvaluationContext,
         runtime_state: dict[str, Any],
     ) -> list[TriggerActivationEvent]:
-        if not ctx.step_events_by_track:
-            return []
-
         zone_id = str(spec.params.get("zone_id") or "").strip()
         if not zone_id or zone_id not in ctx.zones:
             return []
@@ -277,10 +312,51 @@ class ZonePresenceTriggerEvaluator(BaseTriggerEvaluator):
         min_dwell_s = max(0.0, float(spec.params.get("min_dwell_s") or 0.0))
 
         dwell_fired: set[int] = runtime_state.setdefault("dwell_fired_tracks", set())
+        present_fired: set[int] = runtime_state.setdefault("present_fired_tracks", set())
         active_in_zone_ids = {t.track_id for t in ctx.kinematics_buffer.get_tracks_in_zone(zone_id)}
         dwell_fired.intersection_update(active_in_zone_ids)
+        present_fired.intersection_update(active_in_zone_ids)
 
         activations: list[TriggerActivationEvent] = []
+
+        # Allow `present` mode to fire immediately on biometric update even if step_events_by_track is empty
+        if event_mode == "present" and not ctx.step_events_by_track and ctx.biometric_updates:
+            active_by_id = {t.track_id: t for t in ctx.active_tracks}
+            for tr_in_zone in ctx.kinematics_buffer.get_tracks_in_zone(zone_id):
+                tid = tr_in_zone.track_id
+                tr = active_by_id.get(tid, tr_in_zone)
+                if tid in present_fired:
+                    continue
+                curr_dwell = ctx.kinematics_buffer.get_track_zone_dwell(tid, zone_id)
+                if curr_dwell < min_dwell_s:
+                    continue
+                if not SubjectFilterEvaluator.matches(
+                    tr,
+                    spec.subject_filter,
+                    known_identities_lower=ctx.known_identities_lower,
+                    whitelisted_plates_upper=ctx.whitelisted_plates_upper,
+                ):
+                    continue
+                present_fired.add(tid)
+                subj_label = tr.identity or tr.plate or tr.class_label
+                kin = ctx.kinematics_buffer.compute_window_kinematics(tid, window_s=10.0, now_ts=ctx.now_ts)
+                activations.append(
+                    TriggerActivationEvent(
+                        trigger_id=spec.trigger_id,
+                        trigger_type=spec.type,
+                        timestamp=ctx.now_ts,
+                        summary=f"{subj_label} (#{tid}) presente in '{zone.name}'",
+                        track=tr,
+                        zone_id=zone_id,
+                        kinematics=kin,
+                        extra={"event": "present", "zone_name": zone.name, "dwell_s": round(curr_dwell, 2)},
+                    )
+                )
+            return activations
+
+        if not ctx.step_events_by_track:
+            return []
+
         for tid, step in ctx.step_events_by_track.items():
             tr = step.track
             if not SubjectFilterEvaluator.matches(
@@ -294,6 +370,7 @@ class ZonePresenceTriggerEvaluator(BaseTriggerEvaluator):
             subj_label = tr.identity or tr.plate or tr.class_label
             if event_mode == "enter" and zone_id in step.entered_zones:
                 if min_dwell_s <= 0.0:
+                    kin = ctx.kinematics_buffer.compute_window_kinematics(tid, window_s=2.0, now_ts=ctx.now_ts)
                     activations.append(
                         TriggerActivationEvent(
                             trigger_id=spec.trigger_id,
@@ -302,12 +379,14 @@ class ZonePresenceTriggerEvaluator(BaseTriggerEvaluator):
                             summary=f"{subj_label} (#{tid}) entrato in '{zone.name}'",
                             track=tr,
                             zone_id=zone_id,
+                            kinematics=kin,
                             extra={"event": "enter", "zone_name": zone.name},
                         )
                     )
             elif event_mode == "exit":
                 for ex_zid, dwell_s in step.exited_zones:
                     if ex_zid == zone_id and dwell_s >= min_dwell_s:
+                        kin = ctx.kinematics_buffer.compute_window_kinematics(tid, window_s=2.0, now_ts=ctx.now_ts)
                         activations.append(
                             TriggerActivationEvent(
                                 trigger_id=spec.trigger_id,
@@ -316,13 +395,32 @@ class ZonePresenceTriggerEvaluator(BaseTriggerEvaluator):
                                 summary=f"{subj_label} (#{tid}) uscito da '{zone.name}' (permanenza {dwell_s:.1f}s)",
                                 track=tr,
                                 zone_id=zone_id,
+                                kinematics=kin,
                                 extra={"event": "exit", "zone_name": zone.name, "dwell_s": round(dwell_s, 2)},
                             )
                         )
+            elif event_mode == "present":
+                curr_dwell = step.active_zone_dwells.get(zone_id)
+                if curr_dwell is not None and curr_dwell >= min_dwell_s and tid not in present_fired:
+                    present_fired.add(tid)
+                    kin = ctx.kinematics_buffer.compute_window_kinematics(tid, window_s=10.0, now_ts=ctx.now_ts)
+                    activations.append(
+                        TriggerActivationEvent(
+                            trigger_id=spec.trigger_id,
+                            trigger_type=spec.type,
+                            timestamp=ctx.now_ts,
+                            summary=f"{subj_label} (#{tid}) presente in '{zone.name}'",
+                            track=tr,
+                            zone_id=zone_id,
+                            kinematics=kin,
+                            extra={"event": "present", "zone_name": zone.name, "dwell_s": round(curr_dwell, 2)},
+                        )
+                    )
             if event_mode == "dwell" or (event_mode == "enter" and min_dwell_s > 0.0):
                 curr_dwell = step.active_zone_dwells.get(zone_id)
                 if curr_dwell is not None and curr_dwell >= max(0.1, min_dwell_s) and tid not in dwell_fired:
                     dwell_fired.add(tid)
+                    kin = ctx.kinematics_buffer.compute_window_kinematics(tid, window_s=2.0, now_ts=ctx.now_ts)
                     activations.append(
                         TriggerActivationEvent(
                             trigger_id=spec.trigger_id,
@@ -331,6 +429,7 @@ class ZonePresenceTriggerEvaluator(BaseTriggerEvaluator):
                             summary=f"{subj_label} (#{tid}) in '{zone.name}' da {curr_dwell:.1f}s",
                             track=tr,
                             zone_id=zone_id,
+                            kinematics=kin,
                             extra={"event": "dwell", "zone_name": zone.name, "dwell_s": round(curr_dwell, 2)},
                         )
                     )
@@ -497,7 +596,7 @@ class KinematicVectorTriggerEvaluator(BaseTriggerEvaluator):
             return []
 
         zone_id = str(spec.params.get("zone_id") or "").strip()
-        min_duration_s = max(0.3, float(spec.params.get("min_duration_s") or 1.5))
+        min_duration_s = max(0.2, float(spec.params.get("min_duration_s") or 1.5))
         target_azimuth = (
             float(spec.params["target_azimuth_deg"])
             if spec.params.get("target_azimuth_deg") is not None and str(spec.params.get("target_azimuth_deg")) != ""
@@ -513,7 +612,10 @@ class KinematicVectorTriggerEvaluator(BaseTriggerEvaluator):
         min_consistency = float(spec.params.get("min_consistency") or 0.45)
 
         latched_tracks: dict[int, float] = runtime_state.setdefault("latched_tracks", {})
-        retrigger_after_s = max(min_duration_s * 1.5, 4.0)
+        if ctx.is_pre_trigger_eval:
+            retrigger_after_s = max(0.15, float(spec.params.get("rearm_interval_s") or 0.45))
+        else:
+            retrigger_after_s = max(0.2, float(spec.params.get("retrigger_after_s") or max(min_duration_s * 1.5, 4.0)))
 
         activations: list[TriggerActivationEvent] = []
         for tid, step in ctx.step_events_by_track.items():
@@ -759,7 +861,7 @@ class EntityStateChangeTriggerEvaluator(BaseTriggerEvaluator):
 
 @TriggerRegistry.register("biometric_detection")
 class BiometricDetectionTriggerEvaluator(BaseTriggerEvaluator):
-    """Fires immediately when a biometric face/ALPR event matches `subject_filter`."""
+    """Fires when a biometric face/ALPR event matches `subject_filter` and optional `zone_id`/`camera_id`."""
 
     def evaluate(
         self,
@@ -773,7 +875,11 @@ class BiometricDetectionTriggerEvaluator(BaseTriggerEvaluator):
 
         want_mod = str(spec.params.get("modality") or "any").strip().lower()
         want_cam = str(spec.params.get("camera_id") or "").strip()
+        want_zone = str(spec.params.get("zone_id") or "").strip()
+        zone_recent_s = max(0.0, float(spec.params.get("zone_recent_s") or 0.0))
+        require_locked = bool(spec.params.get("require_locked", True))
 
+        active_by_id = {t.track_id: t for t in ctx.active_tracks}
         activations: list[TriggerActivationEvent] = []
         for upd in ctx.biometric_updates:
             mod = str(upd.get("modality") or "").lower()
@@ -784,9 +890,26 @@ class BiometricDetectionTriggerEvaluator(BaseTriggerEvaluator):
                 continue
 
             tid = int(upd.get("track_id") or 0)
-            tr = ctx.kinematics_buffer.get_active_track(tid)
+            tr = active_by_id.get(tid) or ctx.kinematics_buffer.get_active_track(tid)
             if tr is None:
                 continue
+
+            upd_status = str(upd.get("biometric_status") or tr.biometric_status or "").lower()
+            if require_locked and (upd_status == "pending" or (tr.biometric_status == "pending" and not tr.biometric_locked)):
+                continue
+
+            active_zones = ctx.kinematics_buffer.get_track_active_zone_ids(tr.track_id)
+            if want_zone:
+                in_zone = want_zone in active_zones
+                if not in_zone and zone_recent_s > 0.0:
+                    in_zone = ctx.kinematics_buffer.was_track_in_zone_recently(
+                        tr.track_id,
+                        want_zone,
+                        ctx.now_ts,
+                        within_s=zone_recent_s,
+                    )
+                if not in_zone:
+                    continue
 
             if not SubjectFilterEvaluator.matches(
                 tr,
@@ -797,14 +920,112 @@ class BiometricDetectionTriggerEvaluator(BaseTriggerEvaluator):
                 continue
 
             subj_label = tr.identity or tr.plate or "Sconosciuto"
+            eff_zone_id = want_zone or (sorted(active_zones)[0] if active_zones else None)
+            kin = ctx.kinematics_buffer.compute_window_kinematics(tr.track_id, window_s=10.0, now_ts=ctx.now_ts)
             activations.append(
                 TriggerActivationEvent(
                     trigger_id=spec.trigger_id,
                     trigger_type=spec.type,
                     timestamp=ctx.now_ts,
-                    summary=f"Riconoscimento {mod.upper()}: '{subj_label}' su {cam_id} (#{tid})",
+                    summary=f"Riconoscimento {mod.upper()}: '{subj_label}' su {cam_id} (#{tr.track_id})",
                     track=tr,
-                    extra={"modality": mod, "camera_id": cam_id},
+                    zone_id=eff_zone_id,
+                    kinematics=kin,
+                    extra={"modality": mod, "camera_id": cam_id, "biometric_status": upd_status},
+                )
+            )
+        return activations
+
+
+@TriggerRegistry.register("scene_event")
+class SceneEventTriggerEvaluator(BaseTriggerEvaluator):
+    """Fires on SceneEvent lifecycle transitions (`started`, `closed`, `importance_escalated`)."""
+
+    def evaluate(
+        self,
+        rule_id: str,
+        spec: TriggerSpec,
+        ctx: EvaluationContext,
+        runtime_state: dict[str, Any],
+    ) -> list[TriggerActivationEvent]:
+        if not ctx.scene_lifecycle_events:
+            return []
+
+        want_ev = str(spec.params.get("event") or "started").strip().lower()
+        want_imp = str(spec.params.get("importance") or "any").strip().lower()
+        want_zone = str(spec.params.get("zone_id") or "").strip()
+        want_cam = str(spec.params.get("camera_id") or "").strip()
+        min_subjects = max(0, int(spec.params.get("min_subjects") or 0))
+
+        sf = spec.subject_filter
+        has_subj_filter = bool(sf.classes or sf.face_mode != "any" or sf.plate_mode != "any")
+        active_by_id = {t.track_id: t for t in ctx.active_tracks}
+
+        activations: list[TriggerActivationEvent] = []
+        for ev_kind, scene_ev in ctx.scene_lifecycle_events:
+            if want_ev not in ("any", "*", "") and ev_kind.lower() != want_ev:
+                continue
+            if want_imp not in ("any", "*", "") and str(getattr(scene_ev, "importance", "")).lower() != want_imp:
+                continue
+            ev_zone_ids = list(getattr(scene_ev, "zone_ids", []) or [])
+            if want_zone and want_zone not in ev_zone_ids:
+                continue
+            ev_cams = list(getattr(scene_ev, "cameras", []) or [])
+            if want_cam and want_cam not in ev_cams:
+                continue
+            subjects = list(getattr(scene_ev, "subjects", []) or [])
+            if min_subjects > 0 and len(subjects) < min_subjects:
+                continue
+
+            matched_track: Optional[TrackedEntity3D] = None
+            if has_subj_filter:
+                for subj in subjects:
+                    cand_tr = active_by_id.get(subj.track_id) or ctx.kinematics_buffer.get_active_track(subj.track_id)
+                    if cand_tr is None:
+                        cand_tr = TrackedEntity3D(
+                            track_id=subj.track_id,
+                            class_label=subj.class_label,
+                            identity=subj.identity,
+                            identity_confidence=float(subj.identity_confidence or 0.0),
+                            plate=subj.plate,
+                            plate_whitelisted=subj.plate_whitelisted,
+                            plate_owner=subj.plate_owner,
+                            biometric_locked=subj.biometric_status == "locked",
+                            biometric_status=subj.biometric_status,  # type: ignore[arg-type]
+                            best_crop_id=subj.best_crop_id,
+                            state=SpatialPoint3D(x=0.0, y=0.0, z=0.0, camera_sources=list(subj.cameras or [])),
+                            last_seen=float(subj.last_seen or ctx.now_ts),
+                        )
+                    if SubjectFilterEvaluator.matches(
+                        cand_tr,
+                        sf,
+                        known_identities_lower=ctx.known_identities_lower,
+                        whitelisted_plates_upper=ctx.whitelisted_plates_upper,
+                    ):
+                        matched_track = cand_tr
+                        break
+                if matched_track is None:
+                    continue
+            elif subjects:
+                first_tid = subjects[0].track_id
+                matched_track = active_by_id.get(first_tid) or ctx.kinematics_buffer.get_active_track(first_tid)
+
+            scene_id = str(getattr(scene_ev, "event_id", ""))
+            scene_summary = str(getattr(scene_ev, "summary_it", "") or getattr(scene_ev, "title", "") or scene_id)
+            activations.append(
+                TriggerActivationEvent(
+                    trigger_id=spec.trigger_id,
+                    trigger_type=spec.type,
+                    timestamp=ctx.now_ts,
+                    summary=f"Episodio scena ({ev_kind}): {scene_summary}",
+                    track=matched_track,
+                    zone_id=want_zone or (ev_zone_ids[0] if ev_zone_ids else None),
+                    scene_event_id=scene_id or None,
+                    extra={
+                        "scene_lifecycle": ev_kind,
+                        "scene_event_id": scene_id,
+                        "importance": getattr(scene_ev, "importance", "notable"),
+                    },
                 )
             )
         return activations
@@ -907,8 +1128,37 @@ def _compare_values(actual: Any, operator: str, expected: Any) -> bool:
     return False
 
 
+class BaseConditionEvaluator(ABC):
+    """Abstract Strategy for evaluating a single leaf ConditionSpec."""
+
+    condition_type: str = ""
+
+    @abstractmethod
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
+        """Return True if the condition holds within `ctx`."""
+
+
+class ConditionRegistry:
+    """Open/Closed registry mapping leaf condition_type strings to BaseConditionEvaluator instances."""
+
+    _evaluators: dict[str, BaseConditionEvaluator] = {}
+
+    @classmethod
+    def register(cls, condition_type: str) -> Callable[[Type[BaseConditionEvaluator]], Type[BaseConditionEvaluator]]:
+        def decorator(subclass: Type[BaseConditionEvaluator]) -> Type[BaseConditionEvaluator]:
+            subclass.condition_type = condition_type
+            cls._evaluators[condition_type] = subclass()
+            return subclass
+
+        return decorator
+
+    @classmethod
+    def get(cls, condition_type: str) -> Optional[BaseConditionEvaluator]:
+        return cls._evaluators.get(condition_type)
+
+
 class ConditionEvaluator:
-    """Evaluates recursive ConditionSpec boolean AST trees (AND, OR, NOT, XOR & leaf specifications)."""
+    """Evaluates recursive ConditionSpec boolean AST trees (AND, OR, NOT, XOR & leaf strategies)."""
 
     @classmethod
     def evaluate(cls, spec: Optional[ConditionSpec], ctx: EvaluationContext) -> bool:
@@ -930,19 +1180,25 @@ class ConditionEvaluator:
             true_count = sum(1 for child in spec.children if cls.evaluate(child, ctx))
             return (true_count % 2) == 1
 
-        if ctype == "entity_state":
-            return cls._eval_entity_state(spec.params, ctx)
-        if ctype == "time_window":
-            return cls._eval_time_window(spec.params, ctx)
-        if ctype == "zone_occupancy":
-            return cls._eval_zone_occupancy(spec.params, ctx)
-        if ctype == "track_kinematics":
-            return cls._eval_track_kinematics(spec.params, ctx)
-
+        leaf_eval = ConditionRegistry.get(ctype)
+        if leaf_eval is not None:
+            return leaf_eval.evaluate(spec.params or {}, ctx)
         return True
 
     @staticmethod
-    def _eval_entity_state(params: dict[str, Any], ctx: EvaluationContext) -> bool:
+    def _parse_hhmm_minutes(raw: str, default_min: int = 0) -> int:
+        if not raw or ":" not in raw:
+            return default_min
+        parts = raw.split(":")
+        try:
+            return max(0, min(24 * 60, int(parts[0]) * 60 + int(parts[1])))
+        except ValueError:
+            return default_min
+
+
+@ConditionRegistry.register("entity_state")
+class EntityStateConditionEvaluator(BaseConditionEvaluator):
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
         entity_id = str(params.get("entity_id") or "").strip()
         if not entity_id:
             return True
@@ -956,8 +1212,10 @@ class ConditionEvaluator:
         expected_val = params.get("value", params.get("state", "on"))
         return _compare_values(actual_val, operator, expected_val)
 
-    @staticmethod
-    def _eval_time_window(params: dict[str, Any], ctx: EvaluationContext) -> bool:
+
+@ConditionRegistry.register("time_window")
+class TimeWindowConditionEvaluator(BaseConditionEvaluator):
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
         local_dt = datetime.fromtimestamp(ctx.now_ts).astimezone()
 
         days = params.get("days_of_week")
@@ -987,24 +1245,15 @@ class ConditionEvaluator:
                 if not (after_min <= now_min <= before_min):
                     return False
             else:
-                # Overnight window (e.g. 22:00 -> 06:30)
                 if not (now_min >= after_min or now_min <= before_min):
                     return False
 
         return True
 
-    @staticmethod
-    def _parse_hhmm_minutes(raw: str, default_min: int = 0) -> int:
-        if not raw or ":" not in raw:
-            return default_min
-        parts = raw.split(":")
-        try:
-            return max(0, min(24 * 60, int(parts[0]) * 60 + int(parts[1])))
-        except ValueError:
-            return default_min
 
-    @staticmethod
-    def _eval_zone_occupancy(params: dict[str, Any], ctx: EvaluationContext) -> bool:
+@ConditionRegistry.register("zone_occupancy")
+class ZoneOccupancyConditionEvaluator(BaseConditionEvaluator):
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
         zone_id = str(params.get("zone_id") or "").strip()
         if not zone_id:
             return True
@@ -1031,31 +1280,165 @@ class ConditionEvaluator:
         expected_count = int(params.get("count") if params.get("count") is not None else 1)
         return _compare_values(matching_count, operator, expected_count)
 
-    @staticmethod
-    def _eval_track_kinematics(params: dict[str, Any], ctx: EvaluationContext) -> bool:
+
+@ConditionRegistry.register("track_kinematics")
+class TrackKinematicsConditionEvaluator(BaseConditionEvaluator):
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
         tr = ctx.trigger_event.track if ctx.trigger_event is not None else None
         if tr is None:
             return False
 
-        window_s = max(0.5, float(params.get("window_s") or 2.0))
+        window_s = max(0.5, min(120.0, float(params.get("window_s") or 2.0)))
+        sub_window_s = max(0.35, min(30.0, float(params.get("sub_window_s") or 1.0)))
+        eval_mode = str(params.get("evaluation_mode") or "mean").strip().lower()
         metrics = ctx.kinematics_buffer.compute_window_kinematics(
             tr.track_id,
             window_s=window_s,
             now_ts=ctx.now_ts,
+            sub_window_s=sub_window_s,
         )
         if metrics is None:
             return False
 
-        if params.get("min_speed_mps") is not None:
-            if metrics.mean_speed_mps < float(params["min_speed_mps"]):
+        if eval_mode == "peak_in_window":
+            speed_val = metrics.peak_speed_mps
+            az_val = metrics.peak_azimuth_deg if metrics.peak_azimuth_deg is not None else metrics.mean_azimuth_deg
+        elif eval_mode == "min_in_window":
+            speed_val = metrics.min_speed_mps
+            az_val = metrics.mean_azimuth_deg
+        elif eval_mode == "current":
+            speed_val = metrics.current_speed_mps
+            az_val = metrics.mean_azimuth_deg
+        else:
+            speed_val = metrics.mean_speed_mps
+            az_val = metrics.mean_azimuth_deg
+
+        raw_min = params.get("min_speed_mps")
+        if raw_min is not None and str(raw_min) != "":
+            if speed_val < float(raw_min):
                 return False
-        if params.get("max_speed_mps") is not None:
-            if metrics.mean_speed_mps > float(params["max_speed_mps"]):
+        raw_max = params.get("max_speed_mps")
+        if raw_max is not None and str(raw_max) != "":
+            if speed_val > float(raw_max):
                 return False
-        if params.get("target_azimuth_deg") is not None and str(params.get("target_azimuth_deg")) != "":
-            if metrics.mean_azimuth_deg is None:
+        raw_az = params.get("target_azimuth_deg")
+        if raw_az is not None and str(raw_az) != "":
+            if az_val is None:
                 return False
             tol = float(params.get("azimuth_tolerance_deg") or 35.0)
-            if angular_difference_deg(metrics.mean_azimuth_deg, float(params["target_azimuth_deg"])) > tol:
+            if angular_difference_deg(az_val, float(raw_az)) > tol:
                 return False
         return True
+
+
+@ConditionRegistry.register("subject_filter")
+class SubjectFilterConditionEvaluator(BaseConditionEvaluator):
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
+        raw_sf = params.get("subject_filter") if isinstance(params.get("subject_filter"), dict) else params
+        sf = SubjectFilterSpec.model_validate(raw_sf)
+        target_mode = str(params.get("target") or "trigger_track").strip().lower()
+
+        if target_mode == "any_active":
+            zone_id = str(params.get("zone_id") or "").strip()
+            candidates = (
+                ctx.kinematics_buffer.get_tracks_in_zone(zone_id)
+                if zone_id
+                else (ctx.active_tracks or list(ctx.kinematics_buffer._latest_tracks.values()))
+            )
+            return any(
+                SubjectFilterEvaluator.matches(
+                    t,
+                    sf,
+                    known_identities_lower=ctx.known_identities_lower,
+                    whitelisted_plates_upper=ctx.whitelisted_plates_upper,
+                )
+                for t in candidates
+            )
+
+        tr = ctx.trigger_event.track if ctx.trigger_event is not None else None
+        if tr is None:
+            return False
+        return SubjectFilterEvaluator.matches(
+            tr,
+            sf,
+            known_identities_lower=ctx.known_identities_lower,
+            whitelisted_plates_upper=ctx.whitelisted_plates_upper,
+        )
+
+
+@ConditionRegistry.register("scene_event")
+class SceneEventConditionEvaluator(BaseConditionEvaluator):
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
+        ev = ctx.scene_event
+        if ev is None:
+            return False
+
+        want_imp = str(params.get("importance") or "any").strip().lower()
+        if want_imp not in ("any", "*", "") and str(getattr(ev, "importance", "")).lower() != want_imp:
+            return False
+
+        subjects = list(getattr(ev, "subjects", []) or [])
+        min_subj = params.get("min_subjects")
+        if min_subj is not None and str(min_subj) != "" and len(subjects) < int(min_subj):
+            return False
+        max_subj = params.get("max_subjects")
+        if max_subj is not None and str(max_subj) != "" and len(subjects) > int(max_subj):
+            return False
+
+        want_zone = str(params.get("zone_id") or "").strip()
+        if want_zone and want_zone not in (getattr(ev, "zone_ids", []) or []):
+            return False
+        want_cam = str(params.get("camera_id") or "").strip()
+        if want_cam and want_cam not in (getattr(ev, "cameras", []) or []):
+            return False
+
+        has_unk = str(params.get("has_unknown_person") or "any").strip().lower()
+        if has_unk in ("yes", "no"):
+            unk_present = any(
+                s.class_label == "person"
+                and not _is_known_identity(getattr(s, "identity", None), ctx.known_identities_lower)
+                for s in subjects
+            )
+            if has_unk == "yes" and not unk_present:
+                return False
+            if has_unk == "no" and unk_present:
+                return False
+
+        has_wl = str(params.get("has_whitelisted_plate") or "any").strip().lower()
+        if has_wl in ("yes", "no"):
+            wl_present = any(
+                bool(
+                    getattr(s, "plate_whitelisted", False)
+                    or (
+                        getattr(s, "plate", None)
+                        and re.sub(r"[^A-Z0-9]", "", str(s.plate).upper()) in ctx.whitelisted_plates_upper
+                    )
+                )
+                for s in subjects
+            )
+            if has_wl == "yes" and not wl_present:
+                return False
+            if has_wl == "no" and wl_present:
+                return False
+
+        return True
+
+
+@ConditionRegistry.register("recent_zone_visit")
+class RecentZoneVisitConditionEvaluator(BaseConditionEvaluator):
+    def evaluate(self, params: dict[str, Any], ctx: EvaluationContext) -> bool:
+        tr = ctx.trigger_event.track if ctx.trigger_event is not None else None
+        if tr is None:
+            return False
+        zone_id = str(params.get("zone_id") or "").strip()
+        if not zone_id:
+            return True
+        within_s = max(0.0, float(params.get("within_s") or 10.0))
+        min_dwell_s = max(0.0, float(params.get("min_dwell_s") or 0.0))
+        return ctx.kinematics_buffer.was_track_in_zone_recently(
+            tr.track_id,
+            zone_id,
+            ctx.now_ts,
+            within_s=within_s,
+            min_dwell_s=min_dwell_s,
+        )

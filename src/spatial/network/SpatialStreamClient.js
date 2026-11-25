@@ -182,6 +182,7 @@ export class SpatialStreamClient {
           msg.type === 'automation_ha_service_call' ||
           msg.type === 'automation_zones_updated' ||
           msg.type === 'automation_rules_updated' ||
+          msg.type === 'automation_pretrigger_updated' ||
           msg.type === 'virtual_entity_updated' ||
           msg.type === 'virtual_entities_list'
         ) {
@@ -669,6 +670,20 @@ export class SpatialStreamClient {
   async clearAutomationLogs() {
     return await this.requestJson('/api/v1/automations/logs', {
       method: 'DELETE',
+      cache: 'no-store',
+    });
+  }
+
+  async fetchAutomationArmedStates() {
+    return await this.requestJson('/api/v1/automations/armed', {
+      method: 'GET',
+      cache: 'no-store',
+    });
+  }
+
+  async fetchAutomationRuleDiagnostics(ruleId, limit = 30) {
+    return await this.requestJson(`/api/v1/automations/rules/${encodeURIComponent(ruleId)}/diagnostics?limit=${Number(limit) || 30}`, {
+      method: 'GET',
       cache: 'no-store',
     });
   }
