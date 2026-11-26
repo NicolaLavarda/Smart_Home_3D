@@ -88,7 +88,19 @@ Questo documento elenca **tutte** le variabili d'ambiente definite in [`.env.exa
 | `OPENVINO_CPU_THREADS` | `2` | `2` | Numero di thread CPU OpenVINO/ONNX per detection YOLOv8n (`max(1, val)`). |
 | `OPENVINO_MODEL_NAME` | `yolov8n` | — | Nome logico modello in `.env.example` (il path fisico effettivo è controllato da `OPENVINO_YOLO_MODEL`, default `spatial_server/models/yolov8n_openvino_model`). |
 | `OPENVINO_FPS_LIMIT` | `7.0` | `7.0` | Budget FPS complessivo ripartito tra gli stream OpenVINO attivi (`max(1.5, fps / n_cams)`). |
-| `OPENVINO_CONF_THRESHOLD` | `0.62` | `0.35` | Soglia minima confidenza YOLOv8n/HOG (`0.62` consigliato in produzione in `.env.example`, `0.35` fallback codice). |
+| `OPENVINO_CONF_THRESHOLD` | `0.62` | `0.35` | Soglia minima confidenza globale di fallback YOLOv8n/HOG (usata per classi senza override specifico o quando le soglie per-classe sono omesse). |
+| `SPATIAL_RECONSTRUCT_PERSON` | `true` | `True` | Abilita/disabilita rilevamento e ricostruzione 3D per persone (`person`). |
+| `SPATIAL_PERSON_STATIONARY_CONF_THRESHOLD` | `0.78` | `OPENVINO_CONF_THRESHOLD` | Confidenza minima per ricostruire una persona ferma (`speed <= SPATIAL_PERSON_MIN_SPEED_MPS`). |
+| `SPATIAL_PERSON_MOVING_CONF_THRESHOLD` | `0.62` | `OPENVINO_CONF_THRESHOLD` | Confidenza minima per ricostruire una persona in movimento (`speed > SPATIAL_PERSON_MIN_SPEED_MPS`). |
+| `SPATIAL_PERSON_MIN_SPEED_MPS` | `0.25` | `0.25` | Velocità orizzontale minima (m/s) per discriminare persona ferma vs in movimento (`0.0` = nessuna tolleranza). |
+| `SPATIAL_RECONSTRUCT_VEHICLE` | `true` | `True` | Abilita/disabilita rilevamento e ricostruzione 3D per veicoli (`car`, `truck`, `motorbike`). |
+| `SPATIAL_VEHICLE_STATIONARY_CONF_THRESHOLD` | `0.72` | `OPENVINO_CONF_THRESHOLD` | Confidenza minima per ricostruire un veicolo fermo (`speed <= SPATIAL_VEHICLE_MIN_SPEED_MPS`). |
+| `SPATIAL_VEHICLE_MOVING_CONF_THRESHOLD` | `0.62` | `OPENVINO_CONF_THRESHOLD` | Confidenza minima per ricostruire un veicolo in movimento (`speed > SPATIAL_VEHICLE_MIN_SPEED_MPS`). |
+| `SPATIAL_VEHICLE_MIN_SPEED_MPS` | `0.35` | `0.35` | Velocità orizzontale minima (m/s) per discriminare veicolo fermo vs in movimento (`0.0` = nessuna tolleranza). |
+| `SPATIAL_RECONSTRUCT_ANIMAL` | `true` | `True` | Abilita/disabilita rilevamento e ricostruzione 3D per animali (`dog`, ecc.). |
+| `SPATIAL_ANIMAL_STATIONARY_CONF_THRESHOLD` | `0.75` | `OPENVINO_CONF_THRESHOLD` | Confidenza minima per ricostruire un animale fermo (`speed <= SPATIAL_ANIMAL_MIN_SPEED_MPS`). |
+| `SPATIAL_ANIMAL_MOVING_CONF_THRESHOLD` | `0.62` | `OPENVINO_CONF_THRESHOLD` | Confidenza minima per ricostruire un animale in movimento (`speed > SPATIAL_ANIMAL_MIN_SPEED_MPS`). |
+| `SPATIAL_ANIMAL_MIN_SPEED_MPS` | `0.20` | `0.20` | Velocità orizzontale minima (m/s) per discriminare animale fermo vs in movimento (`0.0` = nessuna tolleranza). |
 | `OPENVINO_CAMERA_STREAMS` | *(commentata)* | `""` (auto da `scene_manifest.json`) | Override manuale CSV `CamId=rtsp://...` per selezionare stream RTSP specifici per OpenVINO. |
 | `SPATIAL_RETENTION_DAYS` | `30` | `30` | Giorni di retention nello storico traiettorie `spatial_tracks.db`. |
 | `SPATIAL_PERSIST_MIN_DISPLACEMENT_M` | `0.15` | `0.15` | Spostamento minimo in metri richiesto prima di scrivere un nuovo campione di tracking su DB. |

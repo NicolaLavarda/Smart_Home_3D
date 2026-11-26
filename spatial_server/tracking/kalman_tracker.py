@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 import math
 from typing import Any, Callable, Literal, Optional
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from spatial_server.domain.models import SpatialPoint3D, TrackedEntity3D
+from spatial_server.domain.models import SpatialPoint3D, SpatialReconstructionPolicy, TrackedEntity3D
 from .interfaces import IMultiTargetTracker3D, TrackObservation3D
 
 
@@ -110,6 +111,49 @@ class _KalmanTrack:
     last_camera_id: Optional[str] = None
     stationary_anchor_pos: Optional[np.ndarray] = None
     stationary_since_ts: float = 0.0
+    reconstructed: bool = True
+    recent_positions: deque[tuple[float, float, float]] = field(default_factory=lambda: deque(maxlen=16))
+
+    def is_moving(self, min_speed_mps: float, window_s: float = 2.0) -> bool:
+        """
+        Determine whether this track is moving faster than `min_speed_mps`.
+        - `min_speed_mps == 0.0`: zero tolerance (any real displacement counts as moving).
+        - `min_speed_mps > 0.0`: requires both Kalman velocity and recent net displacement
+          speed to exceed `min_speed_mps`, preventing 1-frame bounding-box jitter from
+          falsely promoting stationary false positives.
+        """
+        if self.hits < 2 or len(self.recent_positions) < 2:
+            return False
+
+        kalman_speed = float(math.hypot(float(self.x[3]), float(self.x[5])))
+        curr_ts, curr_x, curr_z = self.recent_positions[-1]
+        _prev_ts, prev_x, prev_z = self.recent_positions[-2]
+        last_step_disp = float(math.hypot(curr_x - prev_x, curr_z - prev_z))
+
+        cutoff = curr_ts - max(0.2, float(window_s))
+        ref_sample = self.recent_positions[0]
+        for sample in self.recent_positions:
+            if sample[0] >= cutoff:
+                ref_sample = sample
+                break
+        if ref_sample is self.recent_positions[-1]:
+            ref_sample = self.recent_positions[-2]
+
+        dt_win = max(0.0, curr_ts - ref_sample[0])
+        disp_win = float(math.hypot(curr_x - ref_sample[1], curr_z - ref_sample[2]))
+        net_speed = (disp_win / dt_win) if dt_win > 1e-6 else 0.0
+
+        min_spd = max(0.0, float(min_speed_mps))
+        if min_spd <= 0.0:
+            return (last_step_disp > 1e-4 and net_speed > 1e-4) or (disp_win > 1e-3 and kalman_speed > 0.02)
+
+        # Require either sustained motion across >= 3 observations (~0.6s+) or clear displacement (>= 0.35m)
+        # so a single-frame bounding-box wobble cannot masquerade as movement.
+        has_motion_evidence = (self.hits >= 3 and dt_win >= 0.6) or (disp_win >= max(0.35, min_spd * 1.2))
+        if not has_motion_evidence:
+            return False
+
+        return (kalman_speed > min_spd) and (net_speed > min_spd)
 
     def max_physical_speed(self) -> float:
         return 13.5 if _coarse_class(self.class_label) == "vehicle" else 4.2
@@ -289,6 +333,7 @@ class _KalmanTrack:
         self.confidence = float(0.7 * self.confidence + 0.3 * obs.confidence)
         self.last_ts = max(self.last_ts, float(obs.timestamp))
         self.hits += 1
+        self.recent_positions.append((ref_ts, float(self.x[0]), float(self.x[2])))
 
         if self.stationary_anchor_pos is None:
             self.stationary_anchor_pos = self.x[:3].copy()
@@ -485,6 +530,7 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         camera_visibility_fn: Optional[Callable[[str, tuple[float, float, float]], bool]] = None,
         stationary_vehicle_reid_s: float = 120.0,
         person_reid_s: float = 10.0,
+        reconstruction_policy: Optional[SpatialReconstructionPolicy] = None,
     ) -> None:
         self.track_ttl_s = track_ttl_s
         self.max_gate_person_m = max_gate_person_m
@@ -497,7 +543,9 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         self.merge_radius_vehicle_m = merge_radius_vehicle_m
         self.stationary_vehicle_reid_s = max(0.0, float(stationary_vehicle_reid_s))
         self.person_reid_s = max(0.0, float(person_reid_s))
+        self.reconstruction_policy = reconstruction_policy
         self._next_track_id = max(1, int(initial_next_track_id))
+        self._next_tentative_id = -1
         self._tracks: dict[int, _KalmanTrack] = {}
         self._expired_tracks: dict[int, tuple[_KalmanTrack, float]] = {}
         self._recent_merges: list[tuple[int, int]] = []
@@ -649,14 +697,15 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         ]
         for tid in expired:
             tr_exp = self._tracks[tid]
-            self._expired_tracks[tid] = (tr_exp, effective_now)
-            self._record_lifecycle(
-                event="expired",
-                track_id=tid,
-                class_label=tr_exp.class_label,
-                camera_id=tr_exp.last_camera_id,
-                timestamp=effective_now,
-            )
+            if tid > 0:
+                self._expired_tracks[tid] = (tr_exp, effective_now)
+                self._record_lifecycle(
+                    event="expired",
+                    track_id=tid,
+                    class_label=tr_exp.class_label,
+                    camera_id=tr_exp.last_camera_id,
+                    timestamp=effective_now,
+                )
             del self._tracks[tid]
 
         max_reid_ttl = max(self.stationary_vehicle_reid_s, self.person_reid_s, 10.0) + 5.0
@@ -671,6 +720,10 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         obs_assignments: dict[int, int] = {}
         obs_by_cam: dict[str, list[tuple[int, TrackObservation3D]]] = {}
         for orig_idx, obs in enumerate(observations):
+            if self.reconstruction_policy is not None:
+                rule = self.reconstruction_policy.rule_for(obs.class_label)
+                if not rule.enabled or float(obs.confidence) < float(rule.min_detection_conf_threshold):
+                    continue
             obs_by_cam.setdefault(obs.camera_id, []).append((orig_idx, obs))
 
         for cam_id, indexed_obs in obs_by_cam.items():
@@ -680,7 +733,55 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         if len(self._tracks) > 1:
             self._merge_and_enforce_cardinality(effective_now, obs_assignments)
 
-        return self.get_active_tracks(), obs_assignments
+        # 4. Only expose assignments that belong to reconstructed tracks
+        confirmed_assignments = {
+            obs_idx: tid
+            for obs_idx, tid in obs_assignments.items()
+            if tid in self._tracks and self._tracks[tid].reconstructed
+        }
+        return self.get_active_tracks(), confirmed_assignments
+
+    def _evaluate_track_reconstruction(self, tr: _KalmanTrack) -> bool:
+        if self.reconstruction_policy is None:
+            return True
+        rule = self.reconstruction_policy.rule_for(tr.class_label)
+        if not rule.enabled:
+            return False
+        moving = tr.is_moving(rule.min_speed_mps)
+        req_conf = rule.required_confidence(moving)
+        return float(tr.confidence) >= req_conf
+
+    def _sync_track_reconstruction_state(
+        self,
+        tr: _KalmanTrack,
+        now_ts: float,
+        obs_assignments: dict[int, int],
+    ) -> int:
+        should_reconstruct = self._evaluate_track_reconstruction(tr)
+        if should_reconstruct:
+            if tr.track_id < 0:
+                old_tid = tr.track_id
+                new_tid = self._next_track_id
+                self._next_track_id += 1
+                self._tracks.pop(old_tid, None)
+                tr.track_id = new_tid
+                tr.reconstructed = True
+                self._tracks[new_tid] = tr
+                for obs_idx, assigned_tid in list(obs_assignments.items()):
+                    if assigned_tid == old_tid:
+                        obs_assignments[obs_idx] = new_tid
+                self._record_lifecycle(
+                    event="created",
+                    track_id=new_tid,
+                    class_label=tr.class_label,
+                    camera_id=tr.last_camera_id,
+                    timestamp=now_ts,
+                )
+            else:
+                tr.reconstructed = True
+        else:
+            tr.reconstructed = False
+        return tr.track_id
 
     def _effective_distance_and_gate(
         self,
@@ -779,19 +880,22 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                         if tr.plate and obs.plate:
                             if tr.plate == obs.plate:
                                 id_adjust -= 0.9
-                        # Slight preference for tracks already observed by this camera or with higher hits
+                        # Slight preference for tracks already observed by this camera or already reconstructed
                         cam_affinity = -0.15 if camera_id in tr.camera_sources else 0.0
-                        cost_mat[ti, oi] = max(0.0, dist + id_adjust + cam_affinity)
+                        recon_affinity = -0.25 if tr.reconstructed else 0.0
+                        cost_mat[ti, oi] = max(0.0, dist + id_adjust + cam_affinity + recon_affinity)
 
             row_idx, col_idx = linear_sum_assignment(cost_mat)
             for r, c in zip(row_idx, col_idx):
                 if cost_mat[r, c] < 1e5:
                     tid = track_ids[r]
                     orig_idx, obs = dedup_obs_list[c]
-                    self._tracks[tid].correct(obs, batch_seq=batch_seq)
-                    obs_assignments[orig_idx] = tid
+                    tr_matched = self._tracks[tid]
+                    tr_matched.correct(obs, batch_seq=batch_seq)
+                    final_tid = self._sync_track_reconstruction_state(tr_matched, now_ts, obs_assignments)
+                    obs_assignments[orig_idx] = final_tid
                     matched_obs.add(c)
-                    matched_tids.add(tid)
+                    matched_tids.add(final_tid)
 
         # Stage 2: Logical Cardinality & Imperfect-Calibration Fallback Association
         # If an observation was outside the Stage-1 gate due to camera miscalibration,
@@ -799,7 +903,10 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         # such that creating a new track would exceed the logical object count of the cameras.
         unmatched_ois = [oi for oi in range(len(dedup_obs_list)) if oi not in matched_obs]
         if unmatched_ois and len(matched_tids) < len(track_ids):
-            remaining_tids = [tid for tid in track_ids if tid not in matched_tids]
+            remaining_tids = [
+                tid for tid in track_ids
+                if tid in self._tracks and self._tracks[tid].reconstructed and tid not in matched_tids
+            ]
             fallback_cost = np.full((len(remaining_tids), len(unmatched_ois)), 1e6, dtype=np.float64)
 
             for r_ti, tid in enumerate(remaining_tids):
@@ -829,11 +936,12 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                     if not in_zone:
                         continue
 
-                    # Count existing tracks in this shared zone and compare with logical camera maximum
+                    # Count existing reconstructed tracks in this shared zone and compare with logical camera maximum
                     zone_tracks = [
                         other_tr
                         for other_tr in self._tracks.values()
-                        if _coarse_class(other_tr.class_label) == tr_cls
+                        if other_tr.reconstructed
+                        and _coarse_class(other_tr.class_label) == tr_cls
                         and float(np.linalg.norm(other_tr.x[:3] - obs_pos)) <= zone_limit
                     ]
                     logical_max = self._compute_zone_logical_max(
@@ -851,10 +959,12 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                     tid = remaining_tids[r]
                     oi = unmatched_ois[c]
                     orig_idx, obs = dedup_obs_list[oi]
-                    self._tracks[tid].correct(obs, batch_seq=batch_seq)
-                    obs_assignments[orig_idx] = tid
+                    tr_fb = self._tracks[tid]
+                    tr_fb.correct(obs, batch_seq=batch_seq)
+                    final_tid = self._sync_track_reconstruction_state(tr_fb, now_ts, obs_assignments)
+                    obs_assignments[orig_idx] = final_tid
                     matched_obs.add(oi)
-                    matched_tids.add(tid)
+                    matched_tids.add(final_tid)
 
         # Stage 3: Re-ID recently expired stationary/flickering tracks before allocating new track_id
         for oi, (orig_idx, obs) in enumerate(dedup_obs_list):
@@ -918,20 +1028,32 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                 tr_exp.P[2, 2] = max(float(tr_exp.P[2, 2]), p0_xz)
                 tr_exp.correct(obs, batch_seq=batch_seq)
                 self._tracks[revive_tid] = tr_exp
-                obs_assignments[orig_idx] = revive_tid
-                self._record_lifecycle(
-                    event="reid_revived",
-                    track_id=revive_tid,
-                    class_label=obs.class_label,
-                    camera_id=obs.camera_id,
-                    dt_gap_s=round(max(0.0, now_ts - tr_exp.last_ts), 3),
-                    dist_xz_m=round(_dist, 3),
-                    timestamp=now_ts,
-                )
+                final_revive_tid = self._sync_track_reconstruction_state(tr_exp, now_ts, obs_assignments)
+                obs_assignments[orig_idx] = final_revive_tid
+                if tr_exp.reconstructed:
+                    self._record_lifecycle(
+                        event="reid_revived",
+                        track_id=final_revive_tid,
+                        class_label=obs.class_label,
+                        camera_id=obs.camera_id,
+                        dt_gap_s=round(max(0.0, now_ts - tr_exp.last_ts), 3),
+                        dist_xz_m=round(_dist, 3),
+                        timestamp=now_ts,
+                    )
                 continue
 
-            tid = self._next_track_id
-            self._next_track_id += 1
+            should_confirm_now = True
+            if self.reconstruction_policy is not None:
+                rule = self.reconstruction_policy.rule_for(obs.class_label)
+                should_confirm_now = bool(rule.enabled and float(obs.confidence) >= float(rule.stationary_conf_threshold))
+
+            if should_confirm_now:
+                tid = self._next_track_id
+                self._next_track_id += 1
+            else:
+                tid = self._next_tentative_id
+                self._next_tentative_id -= 1
+
             x0 = np.array([obs.position[0], obs.position[1], obs.position[2], 0.0, 0.0, 0.0], dtype=np.float64)
             P0 = np.diag([p0_xz, 0.1, p0_xz, 1.5, 0.5, 1.5])
             pos_arr = np.array(obs.position, dtype=np.float64)
@@ -955,15 +1077,18 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                 last_camera_id=obs.camera_id,
                 stationary_anchor_pos=pos_arr.copy(),
                 stationary_since_ts=ts0,
+                reconstructed=should_confirm_now,
+                recent_positions=deque([(ts0, float(obs.position[0]), float(obs.position[2]))], maxlen=16),
             )
             obs_assignments[orig_idx] = tid
-            self._record_lifecycle(
-                event="created",
-                track_id=tid,
-                class_label=obs.class_label,
-                camera_id=obs.camera_id,
-                timestamp=now_ts,
-            )
+            if should_confirm_now:
+                self._record_lifecycle(
+                    event="created",
+                    track_id=tid,
+                    class_label=obs.class_label,
+                    camera_id=obs.camera_id,
+                    timestamp=now_ts,
+                )
 
         # Propagate assignments to any suppressed intra-camera duplicates
         for dup_orig_idx, prim_orig_idx in dup_map.items():
@@ -1102,6 +1227,8 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                 if tid_a not in self._tracks:
                     continue
                 tr_a = self._tracks[tid_a]
+                if not tr_a.reconstructed:
+                    continue
                 cls_a = _coarse_class(tr_a.class_label)
                 merge_rad = self.merge_radius_vehicle_m if cls_a == "vehicle" else self.merge_radius_person_m
 
@@ -1110,6 +1237,8 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
                     if tid_b not in self._tracks:
                         continue
                     tr_b = self._tracks[tid_b]
+                    if not tr_b.reconstructed:
+                        continue
                     if _coarse_class(tr_b.class_label) != cls_a:
                         continue
                     if not self._tracks_biometrically_compatible(tr_a, tr_b):
@@ -1144,7 +1273,8 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         # Pass C: Connected-component cluster cardinality cap per coarse class
         by_class: dict[str, list[int]] = {}
         for tid, tr in self._tracks.items():
-            by_class.setdefault(_coarse_class(tr.class_label), []).append(tid)
+            if tr.reconstructed:
+                by_class.setdefault(_coarse_class(tr.class_label), []).append(tid)
 
         for coarse_cls, class_tids in by_class.items():
             if len(class_tids) <= 1:
@@ -1277,4 +1407,4 @@ class Kalman3DMultiTracker(IMultiTargetTracker3D):
         return tr.to_model(now_eval)
 
     def get_active_tracks(self) -> list[TrackedEntity3D]:
-        return [tr.to_model(self._last_now) for tr in self._tracks.values()]
+        return [tr.to_model(self._last_now) for tr in self._tracks.values() if tr.reconstructed]

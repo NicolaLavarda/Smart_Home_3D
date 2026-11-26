@@ -1,10 +1,103 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
 EntityClassLabel = Literal["person", "car", "truck", "bicycle", "dog", "motorbike"]
+
+_VEHICLE_CLASS_LABELS = frozenset({"car", "truck", "motorbike", "motorcycle", "bus", "vehicle"})
+_ANIMAL_CLASS_LABELS = frozenset({"dog", "cat", "bird", "horse", "sheep", "cow", "bear", "animal"})
+
+
+def reconstruction_category(class_label: str) -> str:
+    """Map fine-grained detection labels into reconstruction categories: person, vehicle, animal, or fallback."""
+    norm = (class_label or "").strip().lower()
+    if norm == "person":
+        return "person"
+    if norm in _VEHICLE_CLASS_LABELS:
+        return "vehicle"
+    if norm in _ANIMAL_CLASS_LABELS:
+        return "animal"
+    return norm
+
+
+@dataclass(frozen=True)
+class ClassReconstructionRule:
+    """Confidence and motion thresholds deciding whether a class is reconstructed in 3D."""
+
+    enabled: bool = True
+    stationary_conf_threshold: float = 0.35
+    moving_conf_threshold: float = 0.35
+    min_speed_mps: float = 0.0
+
+    @property
+    def min_detection_conf_threshold(self) -> float:
+        return min(float(self.stationary_conf_threshold), float(self.moving_conf_threshold))
+
+    def required_confidence(self, is_moving: bool) -> float:
+        return float(self.moving_conf_threshold if is_moving else self.stationary_conf_threshold)
+
+
+@dataclass(frozen=True)
+class SpatialReconstructionPolicy:
+    """Per-category 3D reconstruction rules for persons, vehicles, and animals."""
+
+    person: ClassReconstructionRule
+    vehicle: ClassReconstructionRule
+    animal: ClassReconstructionRule
+    fallback_conf_threshold: float = 0.35
+
+    def rule_for(self, class_label: str) -> ClassReconstructionRule:
+        cat = reconstruction_category(class_label)
+        if cat == "person":
+            return self.person
+        if cat == "vehicle":
+            return self.vehicle
+        if cat == "animal":
+            return self.animal
+        return ClassReconstructionRule(
+            enabled=True,
+            stationary_conf_threshold=self.fallback_conf_threshold,
+            moving_conf_threshold=self.fallback_conf_threshold,
+            min_speed_mps=0.0,
+        )
+
+    def is_class_enabled(self, class_label: str) -> bool:
+        return self.rule_for(class_label).enabled
+
+    def min_detection_conf_floor(self) -> float:
+        floors = [
+            rule.min_detection_conf_threshold
+            for rule in (self.person, self.vehicle, self.animal)
+            if rule.enabled
+        ]
+        floors.append(float(self.fallback_conf_threshold))
+        return max(0.05, min(0.99, min(floors)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "person": {
+                "enabled": self.person.enabled,
+                "stationary_conf_threshold": self.person.stationary_conf_threshold,
+                "moving_conf_threshold": self.person.moving_conf_threshold,
+                "min_speed_mps": self.person.min_speed_mps,
+            },
+            "vehicle": {
+                "enabled": self.vehicle.enabled,
+                "stationary_conf_threshold": self.vehicle.stationary_conf_threshold,
+                "moving_conf_threshold": self.vehicle.moving_conf_threshold,
+                "min_speed_mps": self.vehicle.min_speed_mps,
+            },
+            "animal": {
+                "enabled": self.animal.enabled,
+                "stationary_conf_threshold": self.animal.stationary_conf_threshold,
+                "moving_conf_threshold": self.animal.moving_conf_threshold,
+                "min_speed_mps": self.animal.min_speed_mps,
+            },
+            "fallback_conf_threshold": self.fallback_conf_threshold,
+        }
 
 
 class BoundingBox2D(BaseModel):

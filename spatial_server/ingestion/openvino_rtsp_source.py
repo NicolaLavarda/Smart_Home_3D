@@ -13,7 +13,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from spatial_server.domain.models import BoundingBox2D, DetectionEvent
+from spatial_server.domain.models import BoundingBox2D, DetectionEvent, SpatialReconstructionPolicy
 from .interfaces import DetectionBatchCallback, IDetectionSource
 
 logger = logging.getLogger(__name__)
@@ -137,6 +137,7 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         shared_backend_name: Optional[str] = None,
         infer_lock: Optional[threading.Lock] = None,
         cpu_threads: int = 2,
+        reconstruction_policy: Optional[SpatialReconstructionPolicy] = None,
     ) -> None:
         self.rtsp_url = rtsp_url
         self.camera_id = camera_id
@@ -144,6 +145,7 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self.model_path = Path(model_path) if model_path else None
         self.frame_interval_s = 1.0 / max(target_fps, 1.0)
         self.conf_threshold = max(0.05, min(float(conf_threshold), 0.95))
+        self.reconstruction_policy = reconstruction_policy
         self._infer_lock = infer_lock
         self.cpu_threads = max(1, int(cpu_threads))
 
@@ -560,13 +562,27 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             cap.release()
             self._rtsp_connected = False
 
+    def _effective_global_min_conf(self) -> float:
+        policy = getattr(self, "reconstruction_policy", None)
+        if policy is None:
+            return float(self.conf_threshold)
+        return float(policy.min_detection_conf_floor())
+
+    def _allows_2d_detection(self, label: str, conf: float) -> bool:
+        policy = getattr(self, "reconstruction_policy", None)
+        if policy is None:
+            return float(conf) >= float(self.conf_threshold)
+        rule = policy.rule_for(label)
+        return bool(rule.enabled and float(conf) >= float(rule.min_detection_conf_threshold))
+
     def _infer_frame(self, frame: np.ndarray, ts: float) -> list[DetectionEvent]:
         h, w = frame.shape[:2]
         if w <= 0 or h <= 0:
             return []
 
         if self._yolo_model is not None:
-            results = self._yolo_model.predict(frame, imgsz=640, conf=self.conf_threshold, verbose=False)
+            min_conf = self._effective_global_min_conf()
+            results = self._yolo_model.predict(frame, imgsz=640, conf=min_conf, verbose=False)
             events: list[DetectionEvent] = []
             for r in results:
                 for box in r.boxes:
@@ -574,13 +590,16 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                     label = COCO_TO_DOMAIN.get(cls_idx)
                     if not label:
                         continue
+                    conf_val = float(box.conf[0])
+                    if not self._allows_2d_detection(label, conf_val):
+                        continue
                     x1, y1, x2, y2 = [float(v) for v in box.xyxyn[0]]
                     events.append(
                         DetectionEvent(
                             camera_id=self.camera_id,
                             timestamp=ts,
                             class_label=label,  # type: ignore[arg-type]
-                            confidence=float(box.conf[0]),
+                            confidence=conf_val,
                             bbox=BoundingBox2D(
                                 x_min=min(max(x1, 0.0), 1.0),
                                 y_min=min(max(y1, 0.0), 1.0),
@@ -601,7 +620,7 @@ class OpenVINORtspDetectionSource(IDetectionSource):
             events = []
             for (rx, ry, rw, rh), weight in zip(rects, weights):
                 conf = float(min(0.95, max(0.45, float(weight) * 0.55)))
-                if conf < 0.50:
+                if conf < 0.50 or not self._allows_2d_detection("person", conf):
                     continue
                 events.append(
                     DetectionEvent(
@@ -694,10 +713,11 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         if preds.ndim != 2 or preds.shape[1] < 84:
             return []
 
+        min_conf = self._effective_global_min_conf()
         scores_mat = preds[:, 4:]
         class_ids = np.argmax(scores_mat, axis=1)
         confs = scores_mat[np.arange(len(preds)), class_ids]
-        mask = confs >= self.conf_threshold
+        mask = confs >= min_conf
         if not np.any(mask):
             return []
 
@@ -708,12 +728,15 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         xyxy = []
         for cx, cy, bw, bh in boxes:
             xyxy.append([float(cx - bw * 0.5), float(cy - bh * 0.5), float(bw), float(bh)])
-        keep = cv2.dnn.NMSBoxes(xyxy, filt_confs.tolist(), score_threshold=self.conf_threshold, nms_threshold=0.45)
+        keep = cv2.dnn.NMSBoxes(xyxy, filt_confs.tolist(), score_threshold=min_conf, nms_threshold=0.45)
 
         events: list[DetectionEvent] = []
         for idx in (keep.flatten() if len(keep) > 0 else []):
             label = COCO_TO_DOMAIN.get(int(filt_ids[idx]))
             if not label:
+                continue
+            conf_val = float(filt_confs[idx])
+            if not self._allows_2d_detection(label, conf_val):
                 continue
             bx, by, bw, bh = xyxy[idx]
             x1 = min(max((bx - pad_left) / new_w, 0.0), 1.0)

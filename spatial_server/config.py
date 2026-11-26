@@ -8,6 +8,8 @@ from typing import Optional
 from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
+from spatial_server.domain.models import ClassReconstructionRule, SpatialReconstructionPolicy
+
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
 
@@ -194,6 +196,13 @@ def _sanitize_db_filename(raw: str, default: str = "nvr_index.db") -> str:
     return candidate
 
 
+def _parse_optional_conf_env(name: str) -> Optional[float]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    return max(0.05, min(0.99, float(raw.strip())))
+
+
 @dataclass(frozen=True)
 class SpatialServerConfig:
     host: str
@@ -301,6 +310,59 @@ class SpatialServerConfig:
     research_telemetry_max_mb: float = 250.0
     research_telemetry_retention_days: int = 7
     research_telemetry_save_crops: bool = True
+    reconstruct_person: bool = True
+    person_stationary_conf_threshold: Optional[float] = None
+    person_moving_conf_threshold: Optional[float] = None
+    person_min_speed_mps: float = 0.25
+    reconstruct_vehicle: bool = True
+    vehicle_stationary_conf_threshold: Optional[float] = None
+    vehicle_moving_conf_threshold: Optional[float] = None
+    vehicle_min_speed_mps: float = 0.35
+    reconstruct_animal: bool = True
+    animal_stationary_conf_threshold: Optional[float] = None
+    animal_moving_conf_threshold: Optional[float] = None
+    animal_min_speed_mps: float = 0.20
+
+    def get_reconstruction_policy(self) -> SpatialReconstructionPolicy:
+        """Build the per-category 3D reconstruction confidence & speed policy."""
+        base_conf = max(0.05, min(0.99, float(self.openvino_conf_threshold)))
+
+        def _make_rule(
+            enabled: bool,
+            stat_conf: Optional[float],
+            mov_conf: Optional[float],
+            min_speed: float,
+        ) -> ClassReconstructionRule:
+            eff_mov = base_conf if mov_conf is None else max(0.05, min(0.99, float(mov_conf)))
+            eff_stat = base_conf if stat_conf is None else max(0.05, min(0.99, float(stat_conf)))
+            return ClassReconstructionRule(
+                enabled=bool(enabled),
+                stationary_conf_threshold=eff_stat,
+                moving_conf_threshold=eff_mov,
+                min_speed_mps=max(0.0, float(min_speed)),
+            )
+
+        return SpatialReconstructionPolicy(
+            person=_make_rule(
+                self.reconstruct_person,
+                self.person_stationary_conf_threshold,
+                self.person_moving_conf_threshold,
+                self.person_min_speed_mps,
+            ),
+            vehicle=_make_rule(
+                self.reconstruct_vehicle,
+                self.vehicle_stationary_conf_threshold,
+                self.vehicle_moving_conf_threshold,
+                self.vehicle_min_speed_mps,
+            ),
+            animal=_make_rule(
+                self.reconstruct_animal,
+                self.animal_stationary_conf_threshold,
+                self.animal_moving_conf_threshold,
+                self.animal_min_speed_mps,
+            ),
+            fallback_conf_threshold=base_conf,
+        )
 
     @classmethod
     def from_env(cls) -> "SpatialServerConfig":
@@ -489,5 +551,17 @@ class SpatialServerConfig:
             research_telemetry_max_mb=max(20.0, float(os.getenv("RESEARCH_TELEMETRY_MAX_MB", "250.0"))),
             research_telemetry_retention_days=max(1, int(os.getenv("RESEARCH_TELEMETRY_RETENTION_DAYS", "7"))),
             research_telemetry_save_crops=_parse_bool_env("RESEARCH_TELEMETRY_SAVE_CROPS", True),
+            reconstruct_person=_parse_bool_env("SPATIAL_RECONSTRUCT_PERSON", True),
+            person_stationary_conf_threshold=_parse_optional_conf_env("SPATIAL_PERSON_STATIONARY_CONF_THRESHOLD"),
+            person_moving_conf_threshold=_parse_optional_conf_env("SPATIAL_PERSON_MOVING_CONF_THRESHOLD"),
+            person_min_speed_mps=max(0.0, float(os.getenv("SPATIAL_PERSON_MIN_SPEED_MPS", "0.25"))),
+            reconstruct_vehicle=_parse_bool_env("SPATIAL_RECONSTRUCT_VEHICLE", True),
+            vehicle_stationary_conf_threshold=_parse_optional_conf_env("SPATIAL_VEHICLE_STATIONARY_CONF_THRESHOLD"),
+            vehicle_moving_conf_threshold=_parse_optional_conf_env("SPATIAL_VEHICLE_MOVING_CONF_THRESHOLD"),
+            vehicle_min_speed_mps=max(0.0, float(os.getenv("SPATIAL_VEHICLE_MIN_SPEED_MPS", "0.35"))),
+            reconstruct_animal=_parse_bool_env("SPATIAL_RECONSTRUCT_ANIMAL", True),
+            animal_stationary_conf_threshold=_parse_optional_conf_env("SPATIAL_ANIMAL_STATIONARY_CONF_THRESHOLD"),
+            animal_moving_conf_threshold=_parse_optional_conf_env("SPATIAL_ANIMAL_MOVING_CONF_THRESHOLD"),
+            animal_min_speed_mps=max(0.0, float(os.getenv("SPATIAL_ANIMAL_MIN_SPEED_MPS", "0.20"))),
         )
 

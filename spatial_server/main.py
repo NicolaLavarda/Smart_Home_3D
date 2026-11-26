@@ -441,6 +441,7 @@ class SpatialPipelineService:
                     "openvino_device": self.config.openvino_device,
                     "openvino_target_fps": self.config.openvino_target_fps,
                     "openvino_conf_threshold": self.config.openvino_conf_threshold,
+                    "reconstruction_policy": self.config.get_reconstruction_policy().to_dict(),
                     "adaptive_fps_enabled": self.config.openvino_adaptive_fps_enabled,
                     "biometrics_enabled": self.config.biometrics_enabled,
                     "events_inertia_s": self.config.events_inertia_s,
@@ -541,6 +542,7 @@ class SpatialPipelineService:
         shared_ov = None
         shared_backend: Optional[str] = None
 
+        policy = self.config.get_reconstruction_policy()
         for idx, (cam_id, rtsp_url) in enumerate(targets):
             initial_cam_fps = self.fps_scheduler.get_target_fps(cam_id)
             src = OpenVINORtspDetectionSource(
@@ -554,6 +556,7 @@ class SpatialPipelineService:
                 shared_backend_name=shared_backend if idx > 0 else None,
                 infer_lock=shared_lock,
                 cpu_threads=self.config.openvino_cpu_threads,
+                reconstruction_policy=policy,
             )
             if idx == 0:
                 if src._compiled_ov is not None:
@@ -577,6 +580,7 @@ class SpatialPipelineService:
             target_fps=self.config.openvino_target_fps,
             conf_threshold=self.config.openvino_conf_threshold,
             cpu_threads=self.config.openvino_cpu_threads,
+            reconstruction_policy=self.config.get_reconstruction_policy(),
         )
 
     def _build_mqtt_camera_alias_map(self) -> dict[str, str]:
@@ -1004,6 +1008,26 @@ class SpatialPipelineService:
             async with self._persist_lock:
                 self._pending_persist.extend(persistable)
 
+        grounded_ids = {id(evt) for evt, _ in obs_meta}
+        confirmed_obs_event_ids = {
+            id(obs_meta[obs_idx][0])
+            for obs_idx in obs_assignments
+            if 0 <= obs_idx < len(obs_meta)
+        }
+        policy = self.config.get_reconstruction_policy()
+        if isinstance(self.tracker, Kalman3DMultiTracker):
+            scene_events: list[DetectionEvent] = []
+            for evt in events:
+                if id(evt) in grounded_ids:
+                    if id(evt) in confirmed_obs_event_ids:
+                        scene_events.append(evt)
+                else:
+                    rule = policy.rule_for(evt.class_label)
+                    if rule.enabled and float(evt.confidence) >= float(rule.stationary_conf_threshold):
+                        scene_events.append(evt)
+        else:
+            scene_events = events
+
         await self.broadcast_frame(active_tracks, now_ts)
         try:
             zones_by_track: dict[int, list[tuple[str, str]]] = {}
@@ -1025,7 +1049,7 @@ class SpatialPipelineService:
             prev_scene_id = prev_scene_ev.event_id if prev_scene_ev is not None else None
             prev_scene_imp = prev_scene_ev.importance if prev_scene_ev is not None else None
             curr_scene_ev = await self.scene_event_manager.on_detection_batch(
-                events,
+                scene_events,
                 active_tracks,
                 obs_assignments,
                 now_ts,
@@ -1048,7 +1072,7 @@ class SpatialPipelineService:
         except Exception as exc:
             logger.warning("Automation evaluation warning on tracks update: %s", exc)
         try:
-            self._update_adaptive_fps_and_telemetry(events, active_tracks, obs_meta, obs_assignments, now_ts)
+            self._update_adaptive_fps_and_telemetry(scene_events, active_tracks, obs_meta, obs_assignments, now_ts)
         except Exception as exc:
             logger.debug("Adaptive FPS / research telemetry batch update warning: %s", exc)
         return active_tracks
@@ -1812,7 +1836,10 @@ def build_pipeline_service(config: Optional[SpatialServerConfig] = None) -> Spat
     else:
         identity_resolver = NoOpIdentityResolver()
 
-    tracker = Kalman3DMultiTracker(initial_next_track_id=repository.get_max_track_id() + 1)
+    tracker = Kalman3DMultiTracker(
+        initial_next_track_id=repository.get_max_track_id() + 1,
+        reconstruction_policy=cfg.get_reconstruction_policy(),
+    )
     recording_archive = FilesystemNvrArchiveRepository(
         storage_dir=cfg.nvr_storage_dir,
         default_segment_duration_s=cfg.nvr_sub_segment_sec,
@@ -1988,6 +2015,7 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
                 "snapshots": service.event_snapshot_store.get_usage_stats(),
             },
             "fps_scheduler": service.fps_scheduler.get_snapshot(),
+            "reconstruction_policy": service.config.get_reconstruction_policy().to_dict(),
             "research_telemetry": (
                 service.research_collector.get_status()
                 if service.research_collector is not None
