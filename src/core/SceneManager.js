@@ -52,6 +52,7 @@ export class SceneManager {
     window.addEventListener('resize', this._onWindowResize);
 
     this.updateCallbacks = [];
+    this.resizeCallbacks = [];
     this.isNightMode = false;
     this.clock = new THREE.Clock();
     this._rafId = null;
@@ -197,6 +198,24 @@ export class SceneManager {
     this.renderer.setSize(this.width, this.height);
     this.renderer.setPixelRatio(this.getEffectivePixelRatio());
     this.css2dRenderer.setSize(this.width, this.height);
+
+    for (let i = 0; i < this.resizeCallbacks.length; i++) {
+      try {
+        this.resizeCallbacks[i](this.width, this.height);
+      } catch (err) {
+        console.warn('[SceneManager] Errore callback resize:', err);
+      }
+    }
+  }
+
+  addResizeCallback(fn) {
+    if (typeof fn === 'function') {
+      this.resizeCallbacks.push(fn);
+    }
+  }
+
+  removeResizeCallback(fn) {
+    this.resizeCallbacks = this.resizeCallbacks.filter((cb) => cb !== fn);
   }
 
   addUpdateCallback(fn) {

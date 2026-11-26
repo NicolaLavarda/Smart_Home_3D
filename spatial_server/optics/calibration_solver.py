@@ -134,10 +134,10 @@ class CameraCalibrationSolver:
 
         T_world_cv = np.linalg.inv(T_cv_world)
         pos_jump_m = float(np.linalg.norm(T_world_cv[:3, 3] - optical_model.T_world_cv[:3, 3]))
-        if pos_jump_m > 3.0:
+        if pos_jump_m > 2.2:
             raise RuntimeError(
-                f"SolvePnPRansac position jumped {pos_jump_m:.2f}m from physical mount (> 3.0m); "
-                "use non-coplanar 3D landmarks to avoid degenerate pose."
+                f"SolvePnPRansac position jumped {pos_jump_m:.2f}m from physical mount (> 2.2m); "
+                "use non-coplanar 3D landmarks or adjust FOV to avoid degenerate pose."
             )
         extrinsic_list = T_world_cv.reshape(-1).tolist()
         gl_list = matrix_cv_to_gl(T_world_cv).reshape(-1).tolist()

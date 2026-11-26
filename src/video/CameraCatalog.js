@@ -77,8 +77,8 @@ export class CameraCatalog {
           subStream: 'carraio_sub',
           cameraIp: '192.168.86.47',
           coverageZone: 'outdoor_gates_street',
-          fovH: 100.0,
-          fovV: 83.58,
+          fovH: 89.0,
+          fovV: 72.81,
           aspectRatio: 4 / 3,
         })
       );

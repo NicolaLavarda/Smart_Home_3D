@@ -930,6 +930,12 @@ export class CameraProjector {
       // Allinea il FOV iniziale del nodo 3D al manifesto SSoT (evita yfov grezzi del GLB prima della calibrazione)
       if (camNode.isPerspectiveCamera && Number.isFinite(fovV) && fovV > 0) {
         camNode.fov = fovV;
+        const isPano = this._isPanoramicBase({ opticalModel: manifestData?.optical_model, fovH });
+        const tanH = Math.tan(THREE.MathUtils.degToRad(fovH * 0.5));
+        const tanV = Math.max(1e-5, Math.tan(THREE.MathUtils.degToRad(fovV * 0.5)));
+        if (!isPano && Number.isFinite(tanH / tanV) && tanH > 0) {
+          camNode.aspect = tanH / tanV;
+        }
         camNode.updateProjectionMatrix();
       }
 
@@ -1435,6 +1441,12 @@ export class CameraProjector {
       }
       if (camNode.isPerspectiveCamera) {
         camNode.fov = fovV;
+        const isPano = this._isPanoramicBase(base);
+        const tanH = Math.tan(THREE.MathUtils.degToRad(fovH * 0.5));
+        const tanV = Math.max(1e-5, Math.tan(THREE.MathUtils.degToRad(fovV * 0.5)));
+        if (!isPano && Number.isFinite(tanH / tanV) && tanH > 0) {
+          camNode.aspect = tanH / tanV;
+        }
         camNode.updateProjectionMatrix();
       }
       camNode.updateMatrixWorld(true);
@@ -1466,6 +1478,32 @@ export class CameraProjector {
 
   getBaseCameraPose(camName) {
     return this.baseCameraPoses.get(camName) || null;
+  }
+
+  /**
+   * Calcola il FOV verticale del viewport 3D per contenere interamente l'overlay video
+   * della telecamera data l'aspect ratio corrente del browser, l'ottica e il roll fisico.
+   */
+  computePovViewportFov(camName, viewportAspect) {
+    const overlay = this.frustumOverlays.get(camName);
+    const pose = this.getCalibratedCameraPose(camName);
+    if (!overlay) {
+      return pose?.fovV ?? 42.0;
+    }
+
+    let rollRad = 0;
+    if (pose?.quaternion) {
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion).normalize();
+      const rightLevel = fwd.clone().cross(new THREE.Vector3(0, 1, 0));
+      if (rightLevel.lengthSq() > 1e-6) {
+        rightLevel.normalize();
+        const upLevel = rightLevel.clone().cross(fwd).normalize();
+        const upCam = new THREE.Vector3(0, 1, 0).applyQuaternion(pose.quaternion).normalize();
+        rollRad = Math.atan2(upCam.dot(rightLevel), upCam.dot(upLevel));
+      }
+    }
+
+    return overlay.getRequiredViewportFovV(viewportAspect, { rollRad });
   }
 
   getFrustumMode() {

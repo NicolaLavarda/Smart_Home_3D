@@ -38,6 +38,7 @@ export class CameraController {
     this._povLockedFov = null;
     this._povDockedPerfMs = 0;
     this._povExitLocked = false;
+    this._povViewportFovResolver = null;
     this._povListeners = new Set();
     this._povPointerDownPos = null;
     this._tmpPovDir = new THREE.Vector3();
@@ -344,6 +345,30 @@ export class CameraController {
     this._povExitLocked = Boolean(locked);
   }
 
+  setPovViewportFovResolver(resolverFn) {
+    this._povViewportFovResolver = typeof resolverFn === 'function' ? resolverFn : null;
+  }
+
+  _resolvePovFov(camName, fallbackFov = 42) {
+    if (camName && typeof this._povViewportFovResolver === 'function') {
+      const resolved = Number(this._povViewportFovResolver(camName, this.camera?.aspect));
+      if (Number.isFinite(resolved) && resolved > 0) {
+        return resolved;
+      }
+    }
+    return fallbackFov;
+  }
+
+  syncPovViewportFov() {
+    if (!this.activePovCameraName || this._povPhase !== 'active' || this.isTransitioning) return;
+    const nextFov = this._resolvePovFov(this.activePovCameraName, this.camera.fov);
+    if (Number.isFinite(nextFov) && nextFov > 0 && Math.abs(this.camera.fov - nextFov) > 0.05) {
+      this.camera.fov = nextFov;
+      this.camera.updateProjectionMatrix();
+      this._povLockedFov = nextFov;
+    }
+  }
+
   exitCameraPOV({ reason = 'manual' } = {}) {
     if (!this.activePovCameraName && this._povPhase === 'idle') return false;
     const previousCameraName = this.activePovCameraName;
@@ -497,8 +522,9 @@ export class CameraController {
       this.controls.target.copy(lookTarget);
       this.camera.lookAt(lookTarget);
 
+      const resolvedCamName = cameraName || this.activePovCameraName;
       if (fov !== null && Number.isFinite(fov)) {
-        this.camera.fov = fov;
+        this.camera.fov = this._resolvePovFov(resolvedCamName, fov);
         this.camera.updateProjectionMatrix();
       }
       this.controls.update();
@@ -528,7 +554,8 @@ export class CameraController {
 
       const camName = camNode.name || options.cameraName || null;
       const forCalibration = Boolean(options?.forCalibration);
-      const fov = camNode.isPerspectiveCamera && camNode.fov ? camNode.fov : 42;
+      const rawFov = camNode.isPerspectiveCamera && camNode.fov ? camNode.fov : 42;
+      const fov = this._resolvePovFov(camName, rawFov);
       // Posizione ottica esatta della lente (0m offset) così l'overlay video 3D coincide pixel-per-pixel col modello
       const eyePos = worldPos.clone();
       const lookTarget = eyePos.clone().add(worldDir.clone().multiplyScalar(12));

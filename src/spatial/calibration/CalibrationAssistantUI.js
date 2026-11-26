@@ -11,7 +11,7 @@ import {
 const STORAGE_KEY = 'sh3d_camera_calibration_v2';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const PNP_STEP_OPACITY_3D_PCT = 10;
-const PNP_STEP_OPACITY_2D_PCT = 75;
+const PNP_STEP_OPACITY_2D_PCT = 85;
 
 function isObjectVisibleInHierarchy(obj) {
   let cur = obj;
@@ -552,7 +552,7 @@ export class CalibrationAssistantUI {
 
           <div id="calib-pnp-opacity-nudge" class="calib-pnp-nudge" style="display:none;">
             <span>Video trasparente: alzalo per vedere i dettagli nel feed.</span>
-            <button type="button" class="calib-preset-chip" id="calib-pnp-raise-opacity">Porta a 75%</button>
+            <button type="button" class="calib-preset-chip" id="calib-pnp-raise-opacity">Porta a 85%</button>
           </div>
 
           <div id="calib-pnp-hint" class="calib-pnp-hint">
@@ -1106,7 +1106,12 @@ export class CalibrationAssistantUI {
   applyLiveCalibration(syncViewportCamera = true) {
     const pose = this.cameraProjector.applyCameraCalibration(this.activeCameraName, this.state);
     if (syncViewportCamera && pose && this.cameraController) {
-      this.cameraController.setInstantCameraPose(pose.position, pose.quaternion, this.state.fovV, this.activeCameraName);
+      const viewFov =
+        this.cameraProjector.computePovViewportFov?.(
+          this.activeCameraName,
+          this.sceneManager?.camera?.aspect
+        ) ?? this.state.fovV;
+      this.cameraController.setInstantCameraPose(pose.position, pose.quaternion, viewFov, this.activeCameraName);
     }
     this.refreshPairErrorsUI();
     return pose;
@@ -1406,7 +1411,7 @@ export class CalibrationAssistantUI {
         hintEl.textContent = `Coppia P${pairNum} — STEP 1 (opacità 10%): Clicca un punto geometrico noto sul modello 3D.`;
       } else {
         const pairNum = this.correspondences.length + 1;
-        hintEl.textContent = `Coppia P${pairNum} — STEP 2 (opacità 75%): Clicca lo stesso punto sull’immagine video live (Esc per annullare P${pairNum}).`;
+        hintEl.textContent = `Coppia P${pairNum} — STEP 2 (opacità 85%): Clicca lo stesso punto sull’immagine video live (Esc per annullare P${pairNum}).`;
       }
     }
 
@@ -1679,6 +1684,7 @@ export class CalibrationAssistantUI {
 
     let solvedResult = null;
     let usedSource = 'local';
+    let backendRejectedReason = null;
 
     try {
       if (this.spatialStreamClient) {
@@ -1692,7 +1698,17 @@ export class CalibrationAssistantUI {
         if (res && res.status === 'ok' && Array.isArray(res.matrix_world_gl) && res.matrix_world_gl.length === 16) {
           solvedResult = res;
           usedSource = 'backend';
+        } else if (res && res.status === 'error' && res.http_status === 400) {
+          backendRejectedReason = String(res.detail || 'Posa PnP non valida');
         }
+      }
+
+      if (backendRejectedReason) {
+        this.setStatus(
+          `SolvePnP scartato dal server (${backendRejectedReason}). Verifica prima il FOV Vert. oppure usa 4+ spigoli non complanari.`,
+          'error'
+        );
+        return false;
       }
 
       if (!solvedResult) {
@@ -1712,12 +1728,29 @@ export class CalibrationAssistantUI {
       }
 
       if (solvedResult && Array.isArray(solvedResult.matrix_world_gl)) {
-        this._userEditedSinceOpen = true;
-        this.state = decomposeWorldMatrixToCalibState(
+        const candidateState = decomposeWorldMatrixToCalibState(
           solvedResult.matrix_world_gl,
           basePose,
           this.state
         );
+        const jumpM = Math.hypot(
+          candidateState.offsetX || 0,
+          candidateState.offsetY || 0,
+          candidateState.offsetZ || 0
+        );
+        if (
+          typeof this.cameraProjector?.isCalibrationPosePlausible === 'function' &&
+          !this.cameraProjector.isCalibrationPosePlausible(candidateState)
+        ) {
+          this.setStatus(
+            `SolvePnP scartato: spostamento stimato (${jumpM.toFixed(2)} m) oltre il limite fisico. Verifica prima il FOV Vert. oppure seleziona 4+ spigoli non complanari.`,
+            'error'
+          );
+          return false;
+        }
+
+        this._userEditedSinceOpen = true;
+        this.state = candidateState;
         this.syncInputsFromState();
         this.applyLiveCalibration(true);
         this.saveStateToLocal(this.activeCameraName, {
@@ -1764,7 +1797,10 @@ export class CalibrationAssistantUI {
     if (typeof this.cameraProjector?.resetCameraCalibration === 'function') {
       pose = this.cameraProjector.resetCameraCalibration(camName, { clearLocal: true });
       if (pose && this.cameraController) {
-        this.cameraController.setInstantCameraPose(pose.position, pose.quaternion, this.state.fovV, camName);
+        const viewFov =
+          this.cameraProjector.computePovViewportFov?.(camName, this.sceneManager?.camera?.aspect) ??
+          this.state.fovV;
+        this.cameraController.setInstantCameraPose(pose.position, pose.quaternion, viewFov, camName);
       }
       this.refreshPairErrorsUI();
     } else {

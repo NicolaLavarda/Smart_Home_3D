@@ -270,6 +270,7 @@ export class SpatialStreamClient {
       headers: customHeaders,
       timeoutMs = 5000,
       skipAuthRetry = false,
+      returnErrorPayload = false,
       ...fetchOptions
     } = options;
 
@@ -320,6 +321,16 @@ export class SpatialStreamClient {
 
     if (!resp.ok) {
       console.warn(`[SpatialStreamClient] Richiesta fallita (${resp.status}) su ${path}`);
+      if (returnErrorPayload) {
+        let detail = `HTTP ${resp.status}`;
+        try {
+          const errBody = await resp.json();
+          if (errBody && typeof errBody.detail === 'string') {
+            detail = errBody.detail;
+          }
+        } catch {}
+        return { status: 'error', http_status: resp.status, detail };
+      }
       return null;
     }
 
@@ -540,6 +551,7 @@ export class SpatialStreamClient {
       method: 'POST',
       body: JSON.stringify(payload),
       timeoutMs: 8000,
+      returnErrorPayload: true,
     });
   }
 

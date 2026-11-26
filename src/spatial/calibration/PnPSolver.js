@@ -4,6 +4,33 @@ const DEFAULT_REF_WIDTH = 1920;
 const DEFAULT_REF_HEIGHT = 1080;
 
 /**
+ * Restituisce il raggio limite positivo prima dell'eventuale ripiegamento non monotono
+ * del modello radiale Brown-Conrady: d/dr [r * (1 + k1*r^2 + k2*r^4)] = 1 + 3*k1*r^2 + 5*k2*r^4 = 0.
+ */
+function findRadialFoldbackLimit(k1, k2) {
+  let minU = Infinity;
+
+  if (Math.abs(k2) <= 1e-12) {
+    if (k1 < -1e-9) {
+      minU = -1.0 / (3.0 * k1);
+    }
+  } else {
+    const a = 5.0 * k2;
+    const b = 3.0 * k1;
+    const disc = b * b - 4.0 * a;
+    if (disc >= 0) {
+      const sqrtDisc = Math.sqrt(disc);
+      const u1 = (-b - sqrtDisc) / (2.0 * a);
+      const u2 = (-b + sqrtDisc) / (2.0 * a);
+      if (u1 > 0 && u1 < minU) minU = u1;
+      if (u2 > 0 && u2 < minU) minU = u2;
+    }
+  }
+
+  return Number.isFinite(minU) && minU > 0 ? Math.sqrt(minU) : null;
+}
+
+/**
  * Inverte il modello di distorsione radiale Brown-Conrady (k1, k2)
  * da pixel normalizzati immagine [u, v] (origine in alto a sinistra)
  * al piano pinhole normalizzato (+X destra, +Y alto, Z = -1).
@@ -27,12 +54,41 @@ export function undistortPixelUvToNormalized(pixelUv, fovV, fovH, k1 = 0, k2 = 0
     return { xn: 0, yn: 0, tanV, tanH };
   }
 
-  let r = rd;
-  for (let i = 0; i < 8; i++) {
+  const evalDistorted = (r) => {
     const r2 = r * r;
-    const f = r * (1.0 + k1 * r2 + k2 * r2 * r2) - rd;
-    const df = Math.max(0.15, 1.0 + 3.0 * k1 * r2 + 5.0 * k2 * r2 * r2);
-    r = Math.max(0, r - f / df);
+    return r * (1.0 + k1 * r2 + k2 * r2 * r2);
+  };
+  const evalDerivative = (r) => {
+    const r2 = r * r;
+    return 1.0 + 3.0 * k1 * r2 + 5.0 * k2 * r2 * r2;
+  };
+
+  const rPeak = findRadialFoldbackLimit(k1, k2);
+  const rMax = rPeak !== null ? Math.min(rPeak * 0.96, Math.max(rd * 3.0, 4.0)) : Math.max(rd * 2.5, 4.0);
+  const rdMax = evalDistorted(rMax);
+
+  let r;
+  if (rPeak !== null && rd >= rdMax) {
+    r = rMax;
+  } else {
+    let lo = 0.0;
+    let hi = rMax;
+    r = Math.min(Math.max(rd, lo), hi);
+    for (let i = 0; i < 12; i++) {
+      const f = evalDistorted(r) - rd;
+      if (Math.abs(f) < 1e-9) break;
+      if (f < 0) {
+        lo = Math.max(lo, r);
+      } else {
+        hi = Math.min(hi, r);
+      }
+      const df = evalDerivative(r);
+      let nextR = df > 1e-4 ? r - f / df : 0.5 * (lo + hi);
+      if (!(nextR > lo && nextR < hi)) {
+        nextR = 0.5 * (lo + hi);
+      }
+      r = nextR;
+    }
   }
 
   const scale = r / rd;

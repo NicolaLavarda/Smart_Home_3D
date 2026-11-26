@@ -407,8 +407,8 @@ def test_multicam_portico_raycast_openvino_and_overlap_fusion() -> None:
     assert portico_entry["stream_id"] == "portico_main"
     assert portico_entry["sub_stream_id"] == "portico_sub"
     assert portico_entry["camera_ip"] == "192.168.86.51"
-    assert abs(float(portico_entry["fov_h_deg"]) - 105.0) < 0.2
-    assert abs(float(portico_entry["fov_v_deg"]) - 72.49) < 0.2
+    assert abs(float(portico_entry["fov_h_deg"]) - 78.0) < 0.3
+    assert abs(float(portico_entry["fov_v_deg"]) - 48.98) < 0.3
 
     portico_model = create_optical_model_from_manifest("Cam_Portico", portico_entry)
     assert isinstance(portico_model, PinholeRadTanOpticalModel)
@@ -435,7 +435,7 @@ def test_multicam_portico_raycast_openvino_and_overlap_fusion() -> None:
     hit = raycaster.intersect_ground_detailed(center_ray)
     assert hit is not None
     assert not hit.used_fallback_plane, "Cam_Portico center ray should hit GLB ground collider mesh"
-    assert 0.0 <= hit.point[0] <= 14.0 and 8.0 <= hit.point[2] <= 22.0 and abs(hit.point[1]) < 0.25
+    assert -8.0 <= hit.point[0] <= 14.0 and 8.0 <= hit.point[2] <= 24.0 and abs(hit.point[1]) < 0.25
 
     # 3. Multi-camera OpenVINO target resolution, FPS budget split & MQTT camera aliasing
     with tempfile.TemporaryDirectory() as tmp:

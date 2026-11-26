@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { undistortPixelUvToNormalized } from './PnPSolver.js';
 
 /**
  * CameraFrustumOverlay
@@ -45,6 +46,9 @@ export class CameraFrustumOverlay {
     this.mesh.frustumCulled = false;
 
     this.videoTexture = null;
+    this._boundaryNormalized = [];
+    this.maxAbsTanX = 0;
+    this.maxAbsTanY = 0;
     this.updateGeometry();
   }
 
@@ -124,44 +128,95 @@ export class CameraFrustumOverlay {
         uvAttr.setXY(i, u0, v0);
       }
 
+      this._boundaryNormalized = [];
+      this.maxAbsTanX = Math.tan(Math.min(halfH, Math.PI * 0.45));
+      this.maxAbsTanY = Math.tan(halfV);
+
       posAttr.needsUpdate = true;
       uvAttr.needsUpdate = true;
       this.geometry.computeBoundingSphere();
       return;
     }
 
-    const tanV = Math.tan(THREE.MathUtils.degToRad(this.fovV * 0.5));
-    const tanH = this.fovH ? Math.tan(THREE.MathUtils.degToRad(this.fovH * 0.5)) : tanV * this.aspect;
-    const h = 2.0 * tanV * this.depth;
-    const w = 2.0 * tanH * this.depth;
+    const tanV = Math.max(1e-5, Math.tan(THREE.MathUtils.degToRad(this.fovV * 0.5)));
+    const tanH = this.fovH ? Math.max(1e-5, Math.tan(THREE.MathUtils.degToRad(this.fovH * 0.5))) : tanV * this.aspect;
 
     const k1 = this.distortion[0] || 0;
     const k2 = this.distortion[1] || 0;
 
-    for (let i = 0; i < posAttr.count; i++) {
-      const bx = this.basePositions[i * 3];
-      const by = this.basePositions[i * 3 + 1];
-      posAttr.setXYZ(i, bx * w, by * h, -this.depth);
+    const boundary = [];
+    let maxAbsX = 0;
+    let maxAbsY = 0;
 
-      // Mappa UV con preview distorsione radiale Brown-Conrady
+    for (let i = 0; i < posAttr.count; i++) {
       const u0 = this.baseUVs[i * 2];
       const v0 = this.baseUVs[i * 2 + 1];
-      if (Math.abs(k1) > 1e-5 || Math.abs(k2) > 1e-5) {
-        const xn = (u0 - 0.5) * 2.0 * tanH;
-        const yn = (v0 - 0.5) * 2.0 * tanV;
-        const r2 = xn * xn + yn * yn;
-        const radial = 1.0 + k1 * r2 + k2 * r2 * r2;
-        const uDist = 0.5 + (xn * radial) / (2.0 * tanH);
-        const vDist = 0.5 + (yn * radial) / (2.0 * tanV);
-        uvAttr.setXY(i, THREE.MathUtils.clamp(uDist, 0.0, 1.0), THREE.MathUtils.clamp(vDist, 0.0, 1.0));
-      } else {
-        uvAttr.setXY(i, u0, v0);
+
+      // Mantiene UV uniformi 0..1 su tutta la mesh così il video non viene mai ritagliato ai bordi,
+      // e sposta i vertici 3D alle coordinate pinhole undistorte corrispondenti (coerente con PnP e backend).
+      const { xn, yn } = undistortPixelUvToNormalized([u0, 1.0 - v0], this.fovV, this.fovH || (2 * THREE.MathUtils.radToDeg(Math.atan(tanH))), k1, k2);
+      posAttr.setXYZ(i, xn * this.depth, yn * this.depth, -this.depth);
+      uvAttr.setXY(i, u0, v0);
+
+      if (Math.abs(xn) > maxAbsX) maxAbsX = Math.abs(xn);
+      if (Math.abs(yn) > maxAbsY) maxAbsY = Math.abs(yn);
+      if (u0 <= 1e-5 || u0 >= 1.0 - 1e-5 || v0 <= 1e-5 || v0 >= 1.0 - 1e-5) {
+        boundary.push([xn, yn]);
       }
     }
+
+    this._boundaryNormalized = boundary;
+    this.maxAbsTanX = maxAbsX || tanH;
+    this.maxAbsTanY = maxAbsY || tanV;
 
     posAttr.needsUpdate = true;
     uvAttr.needsUpdate = true;
     this.geometry.computeBoundingSphere();
+  }
+
+  /**
+   * Calcola il FOV verticale del viewport 3D necessario a contenere integralmente
+   * l'overlay video (incluso aspect ratio, distorsione radiale e roll) senza tagliarlo ai lati.
+   */
+  getRequiredViewportFovV(viewportAspect = 16 / 9, { rollRad = 0, margin = 1.02 } = {}) {
+    const safeAspect = Number.isFinite(viewportAspect) && viewportAspect > 0.2 ? viewportAspect : 16 / 9;
+
+    if (this.isPanoramic()) {
+      const baseFovV = THREE.MathUtils.clamp(Number(this.fovV) || 55.0, 15.0, 120.0);
+      const baseTanV = Math.tan(THREE.MathUtils.degToRad(baseFovV * 0.5)) * margin;
+      const targetTanH = Math.tan(THREE.MathUtils.degToRad(56.0));
+      const reqTanV = Math.max(baseTanV, targetTanH / safeAspect);
+      return THREE.MathUtils.clamp(2 * THREE.MathUtils.radToDeg(Math.atan(reqTanV)), baseFovV, 95.0);
+    }
+
+    const cosR = Math.cos(rollRad);
+    const sinR = Math.sin(rollRad);
+    let maxX = 0;
+    let maxY = 0;
+
+    if (this._boundaryNormalized.length > 0) {
+      for (let i = 0; i < this._boundaryNormalized.length; i++) {
+        const [xn, yn] = this._boundaryNormalized[i];
+        const rx = xn * cosR - yn * sinR;
+        const ry = xn * sinR + yn * cosR;
+        if (Math.abs(rx) > maxX) maxX = Math.abs(rx);
+        if (Math.abs(ry) > maxY) maxY = Math.abs(ry);
+      }
+    } else {
+      const tanV = this.maxAbsTanY || Math.tan(THREE.MathUtils.degToRad(this.fovV * 0.5));
+      const tanH = this.maxAbsTanX || tanV * this.aspect;
+      for (const sx of [-1, 1]) {
+        for (const sy of [-1, 1]) {
+          const rx = sx * tanH * cosR - sy * tanV * sinR;
+          const ry = sx * tanH * sinR + sy * tanV * cosR;
+          if (Math.abs(rx) > maxX) maxX = Math.abs(rx);
+          if (Math.abs(ry) > maxY) maxY = Math.abs(ry);
+        }
+      }
+    }
+
+    const reqTanV = Math.max(maxY * margin, (maxX * margin) / safeAspect);
+    return THREE.MathUtils.clamp(2 * THREE.MathUtils.radToDeg(Math.atan(reqTanV)), 15.0, 130.0);
   }
 
   dispose() {

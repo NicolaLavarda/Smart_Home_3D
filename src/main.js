@@ -154,6 +154,10 @@ async function bootstrap() {
   // 8. Spatial CV Engine, Multi-Camera Catalog, Video Streaming & Architettura NVR/Edge OOP
   const cameraCatalog = new CameraCatalog();
   const cameraProjector = new CameraProjector(sceneManager.scene, assetLoader);
+  cameraController.setPovViewportFovResolver((camName, aspect) =>
+    cameraProjector.computePovViewportFov(camName, aspect)
+  );
+  sceneManager.addResizeCallback(() => cameraController.syncPovViewportFov());
   const trajectoryRenderer = new TrajectoryRenderer(sceneManager.scene);
   const spatialStreamClient = new SpatialStreamClient();
   const videoStreamManager = new VideoStreamManager({
@@ -421,7 +425,8 @@ async function bootstrap() {
     if (cameraController.isTransitioning || cameraController._povPhase !== 'active') return;
     const pose = cameraProjector.getCalibratedCameraPose(activePovCam);
     if (pose?.position && pose?.quaternion) {
-      cameraController.setInstantCameraPose(pose.position, pose.quaternion, pose.fovV, activePovCam);
+      const viewFov = cameraProjector.computePovViewportFov?.(activePovCam, sceneManager.camera.aspect) ?? pose.fovV;
+      cameraController.setInstantCameraPose(pose.position, pose.quaternion, viewFov, activePovCam);
     }
   };
 
@@ -544,6 +549,18 @@ async function bootstrap() {
     securityFabHub.update(delta);
     interactionManager.update(sceneManager.camera);
   });
+
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    window.__sh3d = {
+      sceneManager,
+      cameraController,
+      cameraProjector,
+      calibrationAssistant,
+      assetLoader,
+      povOverlayController,
+      securityFabHub,
+    };
+  }
 }
 
 window.addEventListener('DOMContentLoaded', bootstrap);

@@ -99,8 +99,8 @@ def test_f19_camera_coverage_3state_occlusion_and_portico_anchor() -> None:
           }
           return false;
         };
-        const behindLavUnoccluded = isGroundCovered(lavUnoccluded.groundPositions, 0.5, 18.0);
-        const behindLavOccluded = isGroundCovered(lavOccluded.groundPositions, 0.5, 18.0);
+        const behindLavUnoccluded = isGroundCovered(lavUnoccluded.groundPositions, 1.5, 16.8);
+        const behindLavOccluded = isGroundCovered(lavOccluded.groundPositions, 1.5, 16.8);
 
         // 3. CameraProjector 3-state cycle & Cam_Portico anchor guard
         const storage = {};
@@ -317,3 +317,104 @@ def test_f19_backend_solve_pnp_rejects_large_position_jump(tmp_path: Path) -> No
     with patch.object(cv2, "solvePnPRansac", return_value=(True, rvec_fake, tvec_fake, inliers_fake)):
         with pytest.raises(RuntimeError, match="jumped"):
             solver.solve_pnp_ransac(model, correspondences)
+
+
+@pytest.mark.tier1
+def test_f19_overlay_no_crop_viewport_fov_and_pnp_jump_guard() -> None:
+    """Verifies CameraFrustumOverlay preserves full [0,1] UVs under distortion, computes roll/aspect-aware POV FOV, and rejects local PnP jumps."""
+    js_res = run_vite_module_script(
+        REPO_ROOT,
+        r"""
+        const fs = await import('fs');
+        const { makeElement } = installBrowserShims({ href: 'https://localhost:5173/' });
+        const THREE = await server.ssrLoadModule('three');
+        const { CameraFrustumOverlay } = await server.ssrLoadModule('/src/spatial/calibration/CameraFrustumOverlay.js');
+        const { CameraProjector } = await server.ssrLoadModule('/src/spatial/CameraProjector.js');
+        const { CalibrationAssistantUI } = await server.ssrLoadModule('/src/spatial/calibration/CalibrationAssistantUI.js');
+
+        // 1. Overlay UV preservation under strong barrel distortion (k1 = -0.22, k2 = 0.05)
+        const overlay = new CameraFrustumOverlay('Cam_Portico', {
+          fovV: 48.98,
+          fovH: 78.0,
+          aspect: 16 / 9,
+          distortion: [-0.22, 0.05, 0, 0, 0],
+        });
+        overlay.setPOVMode(true);
+        const uvArr = overlay.geometry.attributes.uv.array;
+        const posArr = overlay.geometry.attributes.position.array;
+        let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+        let maxPosX = 0;
+        for (let i = 0; i < uvArr.length / 2; i++) {
+          const u = uvArr[i * 2];
+          const v = uvArr[i * 2 + 1];
+          if (u < minU) minU = u;
+          if (u > maxU) maxU = u;
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+          maxPosX = Math.max(maxPosX, Math.abs(posArr[i * 3]));
+        }
+        const pinholeHalfW = Math.tan(THREE.MathUtils.degToRad(78.0 * 0.5)) * overlay.depth;
+        const fovNarrow15 = overlay.getRequiredViewportFovV(1.5, { rollRad: THREE.MathUtils.degToRad(4.4) });
+        const fovWide178 = overlay.getRequiredViewportFovV(16 / 9, { rollRad: 0 });
+
+        // 2. Projector computePovViewportFov & CalibrationAssistantUI PnP > 2.2m rejection
+        const manifest = JSON.parse(fs.readFileSync('public/models/scene_manifest.json', 'utf-8'));
+        const porticoMeta = manifest.cameras.Cam_Portico;
+        const cameras = new Map();
+        const cam = new THREE.PerspectiveCamera(porticoMeta.fov_v_deg, porticoMeta.aspect_ratio, 0.1, 250);
+        cam.name = 'Cam_Portico';
+        new THREE.Matrix4().set(...porticoMeta.gltf_transform.matrix_world_gl).decompose(cam.position, cam.quaternion, new THREE.Vector3());
+        cam.updateMatrixWorld(true);
+        cameras.set('Cam_Portico', cam);
+
+        const projector = new CameraProjector(new THREE.Scene(), { cameras, manifest, groundColliders: [] });
+        projector.setupCameraFrustums();
+        const projectorFov15 = projector.computePovViewportFov('Cam_Portico', 1.5);
+
+        const uiLayer = makeElement('div', 'ui-layer');
+        uiLayer.classList.add('ui-layer');
+        document.body.appendChild(uiLayer);
+        const canvas = makeElement('canvas', 'c-pnp');
+        const calib = new CalibrationAssistantUI({
+          sceneManager: { renderer: { domElement: canvas }, camera: { aspect: 1.5, updateMatrixWorld() {} }, scene: new THREE.Scene(), addUpdateCallback() {}, removeUpdateCallback() {} },
+          cameraController: { activePovCameraName: 'Cam_Portico', setPovExitLocked() {}, exitCameraPOV() {}, setInstantCameraPose() {} },
+          cameraProjector: projector,
+          videoStreamManager: { acquireVideoTexture: async () => ({ texture: {}, provider: { mode: 'webrtc' } }), releaseVideoTexture() {} },
+          spatialStreamClient: null,
+          assetLoader: { manifest, cameras },
+          haClient: { isAdmin: true },
+        });
+        await calib.open('Cam_Portico');
+        const beforeState = { ...calib.state };
+        // Feed 4 coplanar-ish correspondences mapped to a far-away fake viewpoint (>3m away)
+        calib.correspondences = [
+          { world_point: [5.89, 0.0, 12.43], pixel_uv: [0.2, 0.8] },
+          { world_point: [5.89, 0.0, 15.13], pixel_uv: [0.8, 0.8] },
+          { world_point: [4.65, 0.0, 12.43], pixel_uv: [0.25, 0.3] },
+          { world_point: [3.16, 2.08, 12.48], pixel_uv: [0.75, 0.25] },
+        ];
+        await calib.solvePnP();
+        const afterState = { ...calib.state };
+        const statusMsg = calib.panelEl?.querySelector('#calib-status-msg')?.textContent || '';
+
+        return {
+          minU, maxU, minV, maxV,
+          flaredOutward: maxPosX > pinholeHalfW * 1.05,
+          fovNarrow15,
+          fovWide178,
+          projectorFov15,
+          statePreserved: JSON.stringify(beforeState) === JSON.stringify(afterState),
+          statusMsg,
+        };
+        """,
+    )
+
+    assert js_res["minU"] == pytest.approx(0.0, abs=1e-5)
+    assert js_res["maxU"] == pytest.approx(1.0, abs=1e-5)
+    assert js_res["minV"] == pytest.approx(0.0, abs=1e-5)
+    assert js_res["maxV"] == pytest.approx(1.0, abs=1e-5)
+    assert js_res["flaredOutward"] is True
+    assert js_res["fovNarrow15"] > js_res["fovWide178"]
+    assert js_res["projectorFov15"] > 50.0
+    assert js_res["statePreserved"] is True
+    assert "scartato" in js_res["statusMsg"].lower() or "non ha trovato" in js_res["statusMsg"].lower()

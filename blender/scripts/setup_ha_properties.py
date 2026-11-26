@@ -478,10 +478,11 @@ def _setup_cam_carraio(col_cameras):
     cam_obj.rotation_mode = "XYZ"
     cam_obj.rotation_euler = (pitch_rad, 0.0, 0.0)
 
-    # Parametri ottici reali Reolink RLC-540A (2.8mm F2.0, 5MP 2560x1920 4:3 a pixel quadrati: FOV_H=100.0°, FOV_V=83.58°; datasheet 100° H x 75° V)
+    # Parametri ottici reali Reolink RLC-540A (2.8mm F2.0, 5MP 2560x1920 4:3;
+    # pinhole 89.0° H x 72.81° V che con distorsione radiale k1=-0.18, k2=0.04 copre ~100° H x 78.5° V effettivi)
     cam_obj.data.sensor_fit = "HORIZONTAL"
     cam_obj.data.lens = 2.8
-    cam_obj.data.sensor_width = round(2.0 * 2.8 * math.tan(math.radians(100.0 / 2.0)), 4)
+    cam_obj.data.sensor_width = round(2.0 * 2.8 * math.tan(math.radians(89.0 / 2.0)), 4)
     cam_obj.data.sensor_height = round(cam_obj.data.sensor_width / (4.0 / 3.0), 4)
     cam_obj.data.clip_start = 0.1
     cam_obj.data.clip_end = 250.0
@@ -506,18 +507,21 @@ def _setup_cam_carraio(col_cameras):
 
 def _setup_cam_portico(col_cameras):
     """
-    Crea o aggiorna la telecamera di sicurezza Cam_Portico (Reolink RLC-811A, zoom ottico 5x 2.7-13.5mm @ 1x = 2.7mm).
+    Crea o aggiorna la telecamera di sicurezza Cam_Portico (Reolink RLC-811A, zoom ottico 5x 2.7-13.5mm).
     Misure fisiche fornite dall'utente rispetto alla casa:
     - Quota obiettivo da terra: Z = 2.15 m (215 cm)
     - 66 cm più a ovest dalla parete più a est della sala da pranzo (X = 13.90 -> X = 13.24 m)
     - Sporge 17 cm verso sud dal muro sud della sala da pranzo (Y = -8.05 -> Y = -8.22 m)
-    - Inquadratura (1x = 2.7mm, HFOV 105°): guarda verso il portico prendendo dal muro sud della sala da pranzo fino al giardino/garage.
+    - Inquadratura e ottica calibrate sul fotogramma reale Portico:
+      azimuth=214.0°, pitch_down=5.7°, roll=+4.4°, pinhole 78.0° H × 48.98° V + k1=-0.10, k2=0.02
+      (~82° H × 50° V effettivi senza ritaglio né sovra-estensione del FOV pinhole).
     """
     import bmesh
 
     cam_pos = mathutils.Vector((13.24, -8.22, 2.15))
-    azimuth_deg = 222.5     # Centro tra muro sud sala da pranzo (179°) e garage (266°), span HFOV=87°
-    pitch_down_deg = 16.0   # Inclinazione verso il basso: +6° headroom sopra, -38° suolo da 2.75m
+    azimuth_deg = 214.0
+    pitch_down_deg = 5.7
+    roll_deg = 4.4
 
     az_rad = math.radians(azimuth_deg)
     pd_rad = math.radians(pitch_down_deg)
@@ -526,7 +530,7 @@ def _setup_cam_portico(col_cameras):
         math.cos(pd_rad) * math.sin(az_rad),
         -math.sin(pd_rad),
     )).normalized()
-    rot_quat = direction.to_track_quat("-Z", "Y")
+    rot_quat = direction.to_track_quat("-Z", "Y") @ mathutils.Quaternion((0.0, 0.0, 1.0), math.radians(roll_deg))
     rot_euler = rot_quat.to_euler("XYZ")
 
     mat_white = _get_or_create_camera_material(
@@ -625,11 +629,12 @@ def _setup_cam_portico(col_cameras):
     cam_obj.rotation_mode = "XYZ"
     cam_obj.rotation_euler = rot_euler
 
-    # Parametri ottici Reolink RLC-811A (zoom ottico 5x 2.7-13.5mm @ 1x = 2.7mm, 16:9 4K a pixel quadrati: FOV_H=105.0°, FOV_V=72.49°)
-    # Nota: il datasheet Reolink riporta 55° V, ma su sensore 16:9 (fx == fy) un HFOV di 105° implica VFOV = 2*atan(tan(52.5°)*9/16) = 72.49°
+    # Parametri ottici reali Reolink RLC-811A sul portico (16:9 4K, focale equivalente 3.6mm,
+    # pinhole rectilineare 78.0° H x 48.98° V che con distorsione radiale k1=-0.10, k2=0.02
+    # corrisponde esattamente alla copertura reale ~82° H x 50° V del feed)
     cam_obj.data.sensor_fit = "HORIZONTAL"
-    cam_obj.data.lens = 2.7
-    cam_obj.data.sensor_width = round(2.0 * 2.7 * math.tan(math.radians(105.0 / 2.0)), 4)
+    cam_obj.data.lens = 3.6
+    cam_obj.data.sensor_width = round(2.0 * 3.6 * math.tan(math.radians(78.0 / 2.0)), 4)
     cam_obj.data.sensor_height = round(cam_obj.data.sensor_width / (16.0 / 9.0), 4)
     cam_obj.data.clip_start = 0.1
     cam_obj.data.clip_end = 250.0
@@ -644,7 +649,7 @@ def _setup_cam_portico(col_cameras):
     cam_obj["camera_model"] = "Reolink RLC-811A"
     cam_obj["coverage_zone"] = "Portico"
     cam_obj["optical_model"] = "pinhole_radtan"
-    cam_obj["distortion_coeffs"] = [-0.22, 0.05, 0.0, 0.0, 0.0]
+    cam_obj["distortion_coeffs"] = [-0.10, 0.02, 0.0, 0.0, 0.0]
     cam_obj["stream_id"] = "portico_main"
     cam_obj["sub_stream_id"] = "portico_sub"
     cam_obj["main_stream_label"] = "Main 4K"

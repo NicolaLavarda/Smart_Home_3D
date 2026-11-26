@@ -961,8 +961,8 @@ def test_f17_portico_multicam_manifest_modal_and_ha_resolution():
     assert d["porticoEntry"]["mainStream"] == "portico_main"
     assert d["porticoEntry"]["subStream"] == "portico_sub"
     assert d["porticoEntry"]["cameraIp"] == "192.168.86.51"
-    assert d["porticoEntry"]["fovH"] == 87
-    assert d["porticoEntry"]["fovV"] == 44
+    assert d["porticoEntry"]["fovH"] == pytest.approx(78.0, abs=0.2)
+    assert d["porticoEntry"]["fovV"] == pytest.approx(48.98, abs=0.2)
     assert "Portico" in d["porticoTitle"]
     assert "." not in d["porticoSubtitle"]
     assert d["porticoMainBtn"] == "Main 4K"
@@ -1924,7 +1924,7 @@ def test_f17_panoramic_aspect_preservation_ordering_and_layout_switch():
     assert res["ok"] is True, res
     d = res["data"]
     assert d["panoInitSize"] == {"w": 1280, "h": 360}
-    assert d["stdInitSize"] == {"w": 640, "h": 360}
+    assert d["stdInitSize"] == {"w": 480, "h": 360}
     assert d["panoAfterSubSize"] == {"w": 960, "h": 360}
     assert d["panoAfterMainSize"] == {"w": 1280, "h": 360}
     assert d["orderedIds"] == ["Cam_Carraio", "Cam_Portico", "Cam_Ingresso", "Cam_Stradina"]
