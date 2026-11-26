@@ -114,7 +114,7 @@ def _get_git_version_info(repo_root: Path, limit: int = 10) -> dict[str, Any]:
 
     def _run_git(args: list[str]) -> str:
         proc = subprocess.run(
-            ["git", *args],
+            ["git", "-c", f"safe.directory={repo_root.as_posix()}", *args],
             cwd=str(repo_root),
             capture_output=True,
             text=True,
