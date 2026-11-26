@@ -248,3 +248,31 @@ def test_research_collector_export_and_dev_mode_defaults(tmp_path: Path) -> None
         assert "REPORT_SUMMARY.md" in names
         assert "session_meta.json" in names
         assert any(n.endswith("anomalies.jsonl") for n in names)
+
+
+def test_server_version_endpoint_returns_git_info(tmp_path: Path) -> None:
+    cfg = replace(
+        SpatialServerConfig.from_env(),
+        data_dir=tmp_path,
+        sqlite_db_path=tmp_path / "test_version.db",
+        dev_mode=True,
+        auth_required=False,
+        biometrics_enabled=False,
+        default_ingestion_mode="synthetic",
+        research_telemetry_enabled=False,
+    )
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        res = client.get("/api/v1/version?limit=3")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "ok"
+        assert body["available"] is True
+        assert isinstance(body["commit"], str) and len(body["commit"]) >= 7
+        assert isinstance(body["short_commit"], str) and len(body["short_commit"]) >= 4
+        assert isinstance(body["recent_commits"], list)
+        assert 1 <= len(body["recent_commits"]) <= 3
+        first = body["recent_commits"][0]
+        assert first["commit"] == body["commit"]
+        assert "committed_at" in first and "subject" in first
+        assert "server_started_iso" in body

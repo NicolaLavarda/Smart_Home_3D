@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import re
+import subprocess
 import threading
 import time
 import urllib.error
@@ -13,6 +14,7 @@ import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 import numpy as np
@@ -58,7 +60,7 @@ from spatial_server.biometrics import (
     TrackBiometricConsensusManager,
     TrackBiometricUpdate,
 )
-from spatial_server.config import SpatialServerConfig, _normalize_ha_url
+from spatial_server.config import REPO_ROOT, SpatialServerConfig, _normalize_ha_url
 from spatial_server.security import (
     AuthError,
     HAUserPrincipal,
@@ -104,6 +106,64 @@ from spatial_server.tracking import IMultiTargetTracker3D, Kalman3DMultiTracker,
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("spatial_server")
+
+
+def _get_git_version_info(repo_root: Path, limit: int = 10) -> dict[str, Any]:
+    """Read current Git commit, dirty state, and recent commits for production diagnostics."""
+    safe_limit = max(1, min(50, int(limit)))
+
+    def _run_git(args: list[str]) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    try:
+        commit = _run_git(["rev-parse", "HEAD"])
+        short_commit = _run_git(["rev-parse", "--short", "HEAD"])
+        branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+        dirty = bool(_run_git(["status", "--porcelain", "--untracked-files=no"]))
+        log_raw = _run_git(["log", f"-n{safe_limit}", "--format=%H\x1f%h\x1f%cI\x1f%s"])
+        recent_commits: list[dict[str, str]] = []
+        for line in log_raw.splitlines():
+            parts = line.split("\x1f", 3)
+            if len(parts) == 4:
+                recent_commits.append(
+                    {
+                        "commit": parts[0],
+                        "short_commit": parts[1],
+                        "committed_at": parts[2],
+                        "subject": parts[3],
+                    }
+                )
+        head_meta = recent_commits[0] if recent_commits else {}
+        return {
+            "available": True,
+            "commit": commit,
+            "short_commit": short_commit,
+            "branch": branch,
+            "dirty": dirty,
+            "committed_at": head_meta.get("committed_at"),
+            "subject": head_meta.get("subject"),
+            "recent_commits": recent_commits,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "commit": None,
+            "short_commit": None,
+            "branch": None,
+            "dirty": None,
+            "committed_at": None,
+            "subject": None,
+            "recent_commits": [],
+            "error": str(exc),
+        }
 
 
 class IngestionModeRequest(BaseModel):
@@ -210,6 +270,8 @@ class SpatialPipelineService:
                 setattr(snap_provider, "_substream_fallback_getter", self.get_latest_substream_frame)
 
         self.ingestion_mode: str = config.default_ingestion_mode
+        self.started_at: float = time.time()
+        self.started_iso: str = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         self.active_sources: list[IDetectionSource] = []
         self.ws_clients: set[WebSocket] = set()
         self._pending_persist: list[TrackedEntity3D] = []
@@ -437,6 +499,7 @@ class SpatialPipelineService:
             self.research_collector.start(
                 session_meta={
                     "ingestion_mode": self.ingestion_mode,
+                    "git": _get_git_version_info(REPO_ROOT, limit=3),
                     "cameras": list(self.optical_models.keys()),
                     "openvino_device": self.config.openvino_device,
                     "openvino_target_fps": self.config.openvino_target_fps,
@@ -2021,6 +2084,22 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
                 if service.research_collector is not None
                 else {"enabled": False}
             ),
+            "git": _get_git_version_info(REPO_ROOT, limit=5),
+        }
+
+    @app.get("/api/v1/version")
+    async def get_server_version(
+        limit: int = Query(default=10, ge=1, le=50),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        """Return currently running Git commit, recent commits/update timestamps, and server start time."""
+        git_info = _get_git_version_info(REPO_ROOT, limit=limit)
+        return {
+            "status": "ok",
+            "server_started_at": round(service.started_at, 3),
+            "server_started_iso": service.started_iso,
+            "dev_mode": service.config.dev_mode,
+            **git_info,
         }
 
     @app.get("/api/v1/research/status")
