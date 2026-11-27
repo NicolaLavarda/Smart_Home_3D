@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import logging
 import os
 import sys
@@ -177,6 +178,9 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         self._mean_luma: float = 0.0
         self._mean_saturation: float = 0.0
         self._is_night_ir: bool = False
+        self._fps_lock = threading.Lock()
+        self._read_ts_window: deque[float] = deque(maxlen=240)
+        self._infer_ts_window: deque[float] = deque(maxlen=120)
         if shared_compiled_ov is not None:
             if hasattr(shared_compiled_ov, "run") and hasattr(shared_compiled_ov, "get_inputs"):
                 self._ort_session = shared_compiled_ov
@@ -251,9 +255,13 @@ class OpenVINORtspDetectionSource(IDetectionSource):
         try:
             prop = compiled.get_property("EXECUTION_DEVICES")
             if isinstance(prop, (list, tuple)) and prop:
-                exec_dev = "+".join(str(p) for p in prop)
+                cleaned = [str(p).strip("()[]'\" ") for p in prop if str(p).strip("()[]'\" ")]
+                if cleaned:
+                    exec_dev = "+".join(cleaned)
             elif prop:
-                exec_dev = str(prop)
+                cleaned_single = str(prop).strip("()[]'\" ")
+                if cleaned_single:
+                    exec_dev = cleaned_single
         except Exception:
             pass
         return compiled, exec_dev
@@ -392,12 +400,40 @@ class OpenVINORtspDetectionSource(IDetectionSource):
     def get_target_fps(self) -> float:
         return float(getattr(self, "_target_fps", 1.0 / max(self.frame_interval_s, 1e-3)))
 
+    @staticmethod
+    def _compute_window_fps(timestamps: deque[float], now_mono: float, window_s: float = 6.0) -> float:
+        cutoff = now_mono - window_s
+        recent = [t for t in timestamps if t >= cutoff]
+        if not recent:
+            return 0.0
+        if len(recent) == 1:
+            age = now_mono - recent[0]
+            return round(1.0 / max(1.0, age), 2) if age <= window_s else 0.0
+        span = max(0.25, recent[-1] - recent[0])
+        raw_fps = (len(recent) - 1) / span
+        # If stream stalled recently, taper down gently toward len / window_s
+        idle_gap = max(0.0, now_mono - recent[-1])
+        if idle_gap > 1.5:
+            raw_fps = min(raw_fps, len(recent) / max(1.0, now_mono - recent[0]))
+        return round(max(0.0, raw_fps), 2)
+
     def get_runtime_stats(self) -> dict[str, Any]:
+        now_mono = time.monotonic()
+        fps_lock = getattr(self, "_fps_lock", None)
+        if fps_lock is not None:
+            with fps_lock:
+                actual_infer_fps = self._compute_window_fps(self._infer_ts_window, now_mono)
+                actual_read_fps = self._compute_window_fps(self._read_ts_window, now_mono)
+        else:
+            actual_infer_fps = 0.0
+            actual_read_fps = 0.0
         return {
             "camera_id": self.camera_id,
             "rtsp_connected": self._rtsp_connected,
             "backend": self._backend_name,
             "target_fps": round(self.get_target_fps(), 3),
+            "actual_infer_fps": actual_infer_fps,
+            "actual_read_fps": actual_read_fps,
             "frames_read": self._frames_read,
             "frames_inferred": self._frames_inferred,
             "raw_detections_total": self._raw_detections_total,
@@ -498,6 +534,9 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                 self._frames_read += 1
                 self._last_frame_ts = time.time()
                 now_mono = time.monotonic()
+                if getattr(self, "_fps_lock", None) is not None:
+                    with self._fps_lock:
+                        self._read_ts_window.append(now_mono)
                 if now_mono - last_infer_t < self.frame_interval_s:
                     await asyncio.sleep(0)
                     continue
@@ -524,6 +563,9 @@ class OpenVINORtspDetectionSource(IDetectionSource):
                 self._infer_ms_ema = infer_ms if self._infer_ms_ema <= 0.0 else (0.8 * self._infer_ms_ema + 0.2 * infer_ms)
                 self._frames_inferred += 1
                 self._raw_detections_total += len(events)
+                if getattr(self, "_fps_lock", None) is not None:
+                    with self._fps_lock:
+                        self._infer_ts_window.append(time.monotonic())
                 if self._frames_inferred == 1 or (self._frames_inferred % 10 == 0):
                     try:
                         small = cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA)

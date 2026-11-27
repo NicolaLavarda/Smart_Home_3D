@@ -23,6 +23,7 @@ import { deviceRegistry } from './devices/DeviceRegistry.js';
 import { TopBar } from './ui/TopBar.js';
 import { NavigationFabHub } from './ui/NavigationFabHub.js';
 import { SecurityFabHub } from './ui/SecurityFabHub.js';
+import { SystemMetricsPanel } from './ui/SystemMetricsPanel.js';
 import { PwaUpdatePrompt } from './ui/PwaUpdatePrompt.js';
 import { icon } from './ui/icons.js';
 
@@ -196,6 +197,12 @@ async function bootstrap() {
     uiLayer,
   });
 
+  const systemMetricsPanel = new SystemMetricsPanel({
+    spatialStreamClient,
+    haClient,
+    uiLayer,
+  });
+
   const secCamCtrl = deviceRegistry.get('security_camera');
   if (secCamCtrl) {
     secCamCtrl.setServices({
@@ -219,6 +226,7 @@ async function bootstrap() {
     haClient,
     calibrationAssistant,
     automationStudio,
+    systemMetricsPanel,
     assetLoader,
     deviceModals,
     cameraCatalog,
@@ -232,18 +240,21 @@ async function bootstrap() {
     const anyDrawerOpen =
       modalContainer.classList.contains('open') ||
       Boolean(calibrationAssistant?.isOpen) ||
-      Boolean(automationStudio?.isOpen);
+      Boolean(automationStudio?.isOpen) ||
+      Boolean(systemMetricsPanel?.isOpen);
     const secStripActive = Boolean(securityFabHub?.isStrip);
     const secExpanded = Boolean(securityFabHub?.isExpanded);
     const navExpanded = Boolean(navFabHub?.isOpen);
 
     uiLayer?.classList.toggle('sheet-open', anyDrawerOpen);
     uiLayer?.classList.toggle('studio-open', Boolean(automationStudio?.isOpen));
+    uiLayer?.classList.toggle('metrics-open', Boolean(systemMetricsPanel?.isOpen));
     uiLayer?.classList.toggle('sec-strip-active', secStripActive);
     uiLayer?.classList.toggle('sec-expanded-active', secExpanded);
     uiLayer?.classList.toggle('nav-expanded-active', navExpanded);
     topBar?.calibBtn?.classList.toggle('active', Boolean(calibrationAssistant?.isOpen));
     topBar?.automationsBtn?.classList.toggle('active', Boolean(automationStudio?.isOpen));
+    topBar?.metricsBtn?.classList.toggle('active', Boolean(systemMetricsPanel?.isOpen));
   };
 
   navFabHub = new NavigationFabHub(navHubContainer, {
@@ -302,6 +313,9 @@ async function bootstrap() {
       if (automationStudio?.isOpen) {
         automationStudio.close();
       }
+      if (systemMetricsPanel?.isOpen) {
+        systemMetricsPanel.close();
+      }
       navFabHub?.close();
       if (window.innerWidth <= 1024 && securityFabHub?.isExpanded) {
         securityFabHub.close();
@@ -319,6 +333,9 @@ async function bootstrap() {
       }
       if (automationStudio?.isOpen) {
         automationStudio.close();
+      }
+      if (systemMetricsPanel?.isOpen) {
+        systemMetricsPanel.close();
       }
       navFabHub?.close();
       if (securityFabHub?.isExpanded) {
@@ -339,6 +356,29 @@ async function bootstrap() {
       }
       if (calibrationAssistant?.isOpen) {
         calibrationAssistant.close();
+      }
+      if (systemMetricsPanel?.isOpen) {
+        systemMetricsPanel.close();
+      }
+      navFabHub?.close();
+      if (window.innerWidth <= 1024 && securityFabHub?.isExpanded) {
+        securityFabHub.close();
+      }
+      syncUiLayerState();
+    },
+    onClose: syncUiLayerState,
+  });
+
+  systemMetricsPanel.setLifecycleHooks({
+    onOpen: () => {
+      if (modalContainer.classList.contains('open')) {
+        deviceModals.close();
+      }
+      if (calibrationAssistant?.isOpen) {
+        calibrationAssistant.close();
+      }
+      if (automationStudio?.isOpen) {
+        automationStudio.close();
       }
       navFabHub?.close();
       if (window.innerWidth <= 1024 && securityFabHub?.isExpanded) {

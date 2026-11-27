@@ -167,7 +167,8 @@
   /* Bottom-sheet adaptation for Drawers, Calibration & Automation Studio */
   .modal-drawer,
   .calibration-panel,
-  .auto-studio-drawer {
+  .auto-studio-drawer,
+  .sys-metrics-drawer {
     position: fixed;
     top: auto;
     left: 0;
@@ -194,7 +195,8 @@
 
   .modal-drawer::before,
   .calibration-panel::before,
-  .auto-studio-drawer::before {
+  .auto-studio-drawer::before,
+  .sys-metrics-drawer::before {
     content: '';
     display: block;
     width: 38px;
@@ -216,7 +218,8 @@
 
   .modal-drawer.collapsed,
   .calibration-panel.collapsed,
-  .auto-studio-drawer.collapsed {
+  .auto-studio-drawer.collapsed,
+  .sys-metrics-drawer.collapsed {
     top: auto;
     bottom: 0;
     padding: 8px 0 max(10px, env(safe-area-inset-bottom, 0px)) 0;
@@ -664,6 +667,7 @@
   .m3-security-panel,
   .m3-fab,
   .auto-studio-drawer,
+  .sys-metrics-drawer,
   .m3-alarm-modal-overlay {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;

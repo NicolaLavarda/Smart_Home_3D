@@ -9,6 +9,7 @@ export class TopBar {
     haClient,
     calibrationAssistant = null,
     automationStudio = null,
+    systemMetricsPanel = null,
     assetLoader = null,
     deviceModals = null,
     cameraCatalog = null,
@@ -21,6 +22,7 @@ export class TopBar {
     this.haClient = haClient;
     this.calibrationAssistant = calibrationAssistant;
     this.automationStudio = automationStudio;
+    this.systemMetricsPanel = systemMetricsPanel;
     this.assetLoader = assetLoader;
     this.deviceModals = deviceModals;
     this.cameraCatalog = cameraCatalog;
@@ -79,6 +81,10 @@ export class TopBar {
               ${icon('sliders-horizontal', { size: 15 })}
               <span>Calibra Cam</span>
             </button>
+            <button class="settings-dropdown-item" id="btn-open-system-metrics" role="menuitem" title="Apri monitoraggio CPU, GPU e FPS riconoscimento del server" hidden disabled style="display: none;">
+              ${icon('activity', { size: 15 })}
+              <span>Prestazioni Server</span>
+            </button>
             <button class="settings-dropdown-item auth-login" id="btn-ha-auth-action" role="menuitem" title="Accedi con Home Assistant">
               ${icon('log-in', { size: 15 })}
               <span>Accedi con Home Assistant</span>
@@ -104,6 +110,7 @@ export class TopBar {
     this.userRoleEl = this.container.querySelector('#top-user-role');
     this.automationsBtn = this.container.querySelector('#btn-open-automations');
     this.calibBtn = this.container.querySelector('#btn-open-cam-calib');
+    this.metricsBtn = this.container.querySelector('#btn-open-system-metrics');
     this.authActionBtn = this.container.querySelector('#btn-ha-auth-action');
     this.badgesBtn = this.container.querySelector('#btn-toggle-badges');
     this.perfDividerEl = this.container.querySelector('#top-perf-divider');
@@ -184,6 +191,16 @@ export class TopBar {
       }
     }
 
+    if (this.metricsBtn) {
+      const canViewMetrics = isAdmin || isMock;
+      this.metricsBtn.hidden = !canViewMetrics;
+      this.metricsBtn.disabled = !canViewMetrics;
+      this.metricsBtn.style.display = canViewMetrics ? '' : 'none';
+      if (!canViewMetrics) {
+        this.metricsBtn.classList.remove('active');
+      }
+    }
+
     if (this.perfDetailsEl) {
       this.perfDetailsEl.hidden = !isAdmin;
       this.perfDetailsEl.style.display = isAdmin ? '' : 'none';
@@ -198,6 +215,9 @@ export class TopBar {
 
     if (!isAdmin && !isMock && this.automationStudio?.isOpen) {
       this.automationStudio.close();
+    }
+    if (!isAdmin && !isMock && this.systemMetricsPanel?.isOpen) {
+      this.systemMetricsPanel.close();
     }
     if (!isAdmin && this.calibrationAssistant?.isOpen) {
       this.calibrationAssistant.close();
@@ -283,6 +303,9 @@ export class TopBar {
       if (willOpen && this.calibBtn) {
         this.calibBtn.classList.toggle('active', Boolean(this.calibrationAssistant?.isOpen));
       }
+      if (willOpen && this.metricsBtn) {
+        this.metricsBtn.classList.toggle('active', Boolean(this.systemMetricsPanel?.isOpen));
+      }
       if (willOpen && this.perfStatsEl && typeof this.sceneManager?.getPerfStats === 'function') {
         const s = this.sceneManager.getPerfStats();
         const gpuShort = String(s.gpu || 'unknown').replace(/^ANGLE \(([^,]+),\s*/i, '').replace(/\)$/, '').slice(0, 42);
@@ -353,6 +376,27 @@ export class TopBar {
       } else {
         this.calibrationAssistant.open(targetCam);
       }
+    });
+
+    // Apertura Pannello Prestazioni Server & FPS (sotto Calibra Cam)
+    this.metricsBtn?.addEventListener('click', () => {
+      this.closeSettingsDropdown();
+      if (!this.haClient?.isAdmin && !this.haClient?.isMockMode) return;
+      if (!this.systemMetricsPanel) return;
+      if (this.systemMetricsPanel.isOpen) {
+        this.systemMetricsPanel.close();
+        this.metricsBtn.classList.remove('active');
+        return;
+      }
+      this.deviceModals?.close();
+      if (this.calibrationAssistant?.isOpen) {
+        this.calibrationAssistant.close();
+      }
+      if (this.automationStudio?.isOpen) {
+        this.automationStudio.close();
+      }
+      this.metricsBtn.classList.add('active');
+      this.systemMetricsPanel.open();
     });
 
     // Azione Login / Logout Home Assistant

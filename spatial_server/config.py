@@ -310,6 +310,11 @@ class SpatialServerConfig:
     research_telemetry_max_mb: float = 250.0
     research_telemetry_retention_days: int = 7
     research_telemetry_save_crops: bool = True
+    metrics_sample_interval_s: float = 2.0
+    metrics_persist_interval_s: float = 15.0
+    metrics_ram_window_s: float = 3600.0
+    metrics_retention_days: int = 7
+    metrics_ha_publish_interval_s: float = 15.0
     reconstruct_person: bool = True
     person_stationary_conf_threshold: Optional[float] = None
     person_moving_conf_threshold: Optional[float] = None
@@ -551,6 +556,11 @@ class SpatialServerConfig:
             research_telemetry_max_mb=max(20.0, float(os.getenv("RESEARCH_TELEMETRY_MAX_MB", "250.0"))),
             research_telemetry_retention_days=max(1, int(os.getenv("RESEARCH_TELEMETRY_RETENTION_DAYS", "7"))),
             research_telemetry_save_crops=_parse_bool_env("RESEARCH_TELEMETRY_SAVE_CROPS", True),
+            metrics_sample_interval_s=max(1.0, float(os.getenv("SPATIAL_METRICS_SAMPLE_INTERVAL_S", "2.0"))),
+            metrics_persist_interval_s=max(2.0, float(os.getenv("SPATIAL_METRICS_PERSIST_INTERVAL_S", "15.0"))),
+            metrics_ram_window_s=max(60.0, float(os.getenv("SPATIAL_METRICS_RAM_WINDOW_S", "3600.0"))),
+            metrics_retention_days=max(1, int(os.getenv("SPATIAL_METRICS_RETENTION_DAYS", "7"))),
+            metrics_ha_publish_interval_s=max(0.0, float(os.getenv("SPATIAL_METRICS_HA_PUBLISH_INTERVAL_S", "15.0"))),
             reconstruct_person=_parse_bool_env("SPATIAL_RECONSTRUCT_PERSON", True),
             person_stationary_conf_threshold=_parse_optional_conf_env("SPATIAL_PERSON_STATIONARY_CONF_THRESHOLD"),
             person_moving_conf_threshold=_parse_optional_conf_env("SPATIAL_PERSON_MOVING_CONF_THRESHOLD"),

@@ -4,5 +4,6 @@
 @import './styles/primitives.css';
 @import './styles/security-hub.css';
 @import './styles/automation-studio.css';
+@import './styles/system-metrics.css';
 @import './styles/devices-and-calibration.css';
 @import './styles/responsive.css';

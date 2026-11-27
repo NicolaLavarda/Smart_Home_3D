@@ -1,0 +1,596 @@
+/* ============================================================================
+   SYSTEM METRICS & CV PERFORMANCE PANEL (Architectural Dark Spatial)
+   ============================================================================ */
+
+.sys-metrics-drawer {
+  position: fixed;
+  top: 76px;
+  right: max(16px, env(safe-area-inset-right, 16px));
+  bottom: max(18px, env(safe-area-inset-bottom, 18px));
+  width: min(560px, calc(100vw - 24px));
+  z-index: var(--z-studio);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-xl);
+  background: var(--md-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--md-outline-variant);
+  box-shadow: var(--md-elevation-3);
+  color: var(--text-main);
+  overflow: hidden;
+}
+
+.sys-metrics-drawer[hidden] {
+  display: none !important;
+}
+
+.ui-layer.metrics-open .nav-hub-root {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px) scale(0.95);
+}
+
+.sys-chart-hover-line[hidden],
+.sys-chart-tooltip[hidden] {
+  display: none !important;
+}
+
+.sys-metrics-drawer.collapsed {
+  top: auto;
+  bottom: max(18px, env(safe-area-inset-bottom, 18px));
+  height: auto;
+  max-height: none;
+}
+
+.sys-metrics-drawer.collapsed .sys-metrics-toolbar,
+.sys-metrics-drawer.collapsed .sys-metrics-body {
+  display: none !important;
+}
+
+.sys-metrics-drawer.collapsed .sys-metrics-header {
+  border-bottom: none;
+}
+
+.sys-metrics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--md-outline-variant);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.sys-metrics-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sys-metrics-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sys-metrics-title-icon {
+  color: var(--md-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sys-metrics-title {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-main);
+}
+
+.sys-metrics-sub {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sys-live-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--md-outline-variant);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+
+.sys-live-pill.online {
+  background: var(--md-tertiary-container);
+  border-color: rgba(52, 211, 153, 0.4);
+  color: var(--md-on-tertiary-container);
+}
+
+.sys-live-pill.demo {
+  background: var(--md-primary-container);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: var(--md-on-primary-container);
+}
+
+.sys-live-pill.offline {
+  background: var(--md-error-container);
+  border-color: rgba(244, 63, 94, 0.4);
+  color: var(--md-on-error-container);
+}
+
+.sys-metrics-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sys-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--md-outline-variant);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+
+.sys-icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-main);
+}
+
+.sys-icon-btn:active {
+  transform: scale(0.97);
+}
+
+.sys-icon-btn.spinning svg {
+  animation: sysMetricsSpin 0.8s linear infinite;
+}
+
+@keyframes sysMetricsSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.sys-metrics-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--md-outline-variant);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.sys-win-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: var(--md-surface-container-low);
+  border: 1px solid var(--md-outline-variant);
+}
+
+.sys-win-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+
+.sys-win-btn:hover {
+  color: var(--text-main);
+  background: var(--surface-subtle);
+}
+
+.sys-win-btn:active {
+  transform: scale(0.97);
+}
+
+.sys-win-btn.active {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+
+.sys-metrics-res-badge {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sys-metrics-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.sys-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sys-kpi-card {
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--md-surface-container);
+  border: 1px solid var(--md-outline-variant);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sys-kpi-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.sys-kpi-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+
+.sys-kpi-unit {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.sys-kpi-sub {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sys-chart-card {
+  padding: 12px 12px 10px;
+  border-radius: var(--r-md);
+  background: var(--md-surface-container);
+  border: 1px solid var(--md-outline-variant);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sys-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sys-chart-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.sys-chart-stat {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sys-chart-svg-wrap {
+  position: relative;
+  width: 100%;
+  height: 128px;
+  touch-action: pan-y;
+}
+
+.sys-chart-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.sys-chart-grid {
+  stroke: rgba(226, 232, 240, 0.08);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.sys-chart-axis-txt {
+  fill: #94a3b8;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.sys-chart-hover-line {
+  stroke: rgba(226, 232, 240, 0.45);
+  stroke-width: 1;
+}
+
+.sys-chart-tooltip {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  padding: 3px 8px;
+  border-radius: var(--r-xs);
+  background: rgba(11, 15, 23, 0.94);
+  border: 1px solid var(--md-outline);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--text-main);
+  pointer-events: none;
+}
+
+.sys-chart-empty,
+.sys-loading {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sys-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.sys-leg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sys-leg-item i {
+  width: 9px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.sys-cam-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.sys-cam-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-xs);
+  background: var(--md-surface-container-low);
+  border: 1px solid var(--md-outline-variant);
+  font-size: 11px;
+}
+
+.sys-cam-name {
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sys-cam-vals {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.sys-cam-tier {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.sys-cam-pill.tier-person .sys-cam-tier {
+  background: var(--md-tertiary-container);
+  color: var(--md-on-tertiary-container);
+}
+
+.sys-cam-pill.tier-vehicle .sys-cam-tier {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fde68a;
+}
+
+.sys-cam-pill.rtsp-offline {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.sys-cam-pill.rtsp-offline .sys-cam-tier {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
+.sys-cam-err-note {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #fca5a5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sys-entities-details {
+  border-radius: var(--r-md);
+  background: var(--md-surface-container);
+  border: 1px solid var(--md-outline-variant);
+  padding: 10px 12px;
+}
+
+.sys-entities-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.sys-bridge-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sys-bridge-pill {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: var(--surface-subtle);
+  border: 1px solid var(--md-outline-variant);
+  color: var(--text-muted);
+}
+
+.sys-bridge-pill.on {
+  background: var(--md-tertiary-container);
+  border-color: rgba(52, 211, 153, 0.35);
+  color: var(--md-on-tertiary-container);
+}
+
+.sys-entities-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sys-entity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--r-xs);
+  background: var(--md-surface-container-low);
+  border: 1px solid var(--md-outline-variant);
+}
+
+.sys-entity-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sys-entity-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+.sys-entity-id {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sys-entity-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sys-entity-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--md-primary);
+}
+
+.sys-copy-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--md-outline-variant);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sys-copy-btn.copied {
+  background: var(--md-tertiary-container);
+  color: var(--md-on-tertiary-container);
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+@media (max-width: 520px) {
+  .sys-cam-strip {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sys-icon-btn.spinning svg {
+    animation: none;
+  }
+}

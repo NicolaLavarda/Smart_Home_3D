@@ -38,6 +38,7 @@ class HomeAssistantMqttBridge:
         self._connected = False
         self._running = False
         self._task: Optional[asyncio.Task[None]] = None
+        self._published_telemetry_slugs: set[str] = set()
 
     def is_enabled(self) -> bool:
         return bool(self.config.ha_mqtt_bridge_enabled and (self.config.mqtt_host or "").strip())
@@ -122,6 +123,56 @@ class HomeAssistantMqttBridge:
         )
         await client.publish(TOPIC_ALARM_STATE, payload=self.alarm_state, qos=1, retain=True)
 
+    async def publish_telemetry_entities(self, entities: list[dict[str, Any]]) -> int:
+        if not self._connected or self._client is None or not entities:
+            return 0
+        device_block = {
+            "identifiers": ["smart_home_3d_spatial"],
+            "name": "Smart Home 3D",
+            "manufacturer": "Smart Home 3D",
+            "model": "Spatial CV Engine",
+        }
+        published = 0
+        for ent in entities:
+            slug = str(ent.get("slug") or "").strip()
+            if not slug:
+                continue
+            state_topic = f"sh3d/telemetry/{slug}/state"
+            attr_topic = f"sh3d/telemetry/{slug}/attributes"
+            try:
+                if slug not in self._published_telemetry_slugs:
+                    cfg_payload: dict[str, Any] = {
+                        "name": str(ent.get("name") or slug),
+                        "unique_id": f"sh3d_{slug}",
+                        "default_entity_id": f"sensor.sh3d_{slug}",
+                        "state_topic": state_topic,
+                        "json_attributes_topic": attr_topic,
+                        "device": device_block,
+                    }
+                    if ent.get("unit_of_measurement"):
+                        cfg_payload["unit_of_measurement"] = str(ent["unit_of_measurement"])
+                    if ent.get("state_class"):
+                        cfg_payload["state_class"] = str(ent["state_class"])
+                    if ent.get("icon"):
+                        cfg_payload["icon"] = str(ent["icon"])
+                    await self._client.publish(
+                        f"homeassistant/sensor/smart_home_3d/{slug}/config",
+                        payload=json.dumps(cfg_payload, ensure_ascii=False),
+                        qos=1,
+                        retain=True,
+                    )
+                    self._published_telemetry_slugs.add(slug)
+
+                state_val = ent.get("state")
+                state_str = "unavailable" if state_val is None else str(state_val)
+                attrs_json = json.dumps(ent.get("attributes") or {}, ensure_ascii=False, separators=(",", ":"))
+                await self._client.publish(state_topic, payload=state_str, qos=0, retain=True)
+                await self._client.publish(attr_topic, payload=attrs_json, qos=0, retain=True)
+                published += 1
+            except Exception as exc:
+                logger.debug("MQTT publish_telemetry_entities(%s) failed: %s", slug, exc)
+        return published
+
     async def _mqtt_loop(self) -> None:
         import aiomqtt
 
@@ -136,6 +187,7 @@ class HomeAssistantMqttBridge:
                 ) as client:
                     self._client = client
                     self._connected = True
+                    self._published_telemetry_slugs.clear()
                     backoff = 3.0
                     await self._publish_discovery(client)
                     await client.subscribe(TOPIC_ALARM_SET)

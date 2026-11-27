@@ -379,6 +379,26 @@ export class SpatialStreamClient {
     return data;
   }
 
+  async fetchMetricsEntities() {
+    return await this.requestJson('/api/v1/metrics/entities', {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 3500,
+    });
+  }
+
+  async fetchMetricsHistory({ windowS = 300, maxPoints = 180 } = {}) {
+    const params = new URLSearchParams({
+      window_s: String(Math.max(30, Number(windowS) || 300)),
+      max_points: String(Math.max(20, Math.min(500, Number(maxPoints) || 180))),
+    });
+    return await this.requestJson(`/api/v1/metrics/history?${params.toString()}`, {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 6000,
+    });
+  }
+
   async fetchTracks(tStart, tEnd, classes = null, limit = 15000, filters = null) {
     const params = new URLSearchParams({
       t_start: String(tStart),

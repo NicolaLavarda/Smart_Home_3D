@@ -87,6 +87,7 @@ from spatial_server.ingestion import (
     SyntheticWalkSimulatorSource,
 )
 from spatial_server.research import ProductionResearchCollector
+from spatial_server.telemetry import TelemetryMetricsService
 from spatial_server.optics import (
     CameraCalibrationSolver,
     EquirectangularPanoramicOpticalModel,
@@ -280,6 +281,8 @@ class SpatialPipelineService:
         self._pipeline_lock = asyncio.Lock()
         self.raw_detections_count: int = 0
         self.raycast_misses_count: int = 0
+        self.batches_processed_count: int = 0
+        self.det_counts_by_category: dict[str, int] = {"person": 0, "vehicle": 0, "animal": 0}
         self.last_detection_info: Optional[dict[str, Any]] = None
         self._last_miss_warn_ts: float = 0.0
         self._persist_anchors: dict[int, _PersistAnchor] = {}
@@ -382,6 +385,68 @@ class SpatialPipelineService:
             if eff_research
             else None
         )
+        self.telemetry_service = TelemetryMetricsService(
+            sample_interval_s=config.metrics_sample_interval_s,
+            persist_interval_s=config.metrics_persist_interval_s,
+            ram_window_s=config.metrics_ram_window_s,
+            retention_days=config.metrics_retention_days,
+            ha_publish_interval_s=config.metrics_ha_publish_interval_s,
+            state_provider=self._collect_telemetry_inputs,
+            repository=self.repository,
+            on_entities_updated=self._on_telemetry_entities_updated,
+        )
+
+    def _collect_telemetry_inputs(self) -> dict[str, Any]:
+        cam_stats = [
+            src.get_runtime_stats()
+            for src in list(self.active_sources)
+            if hasattr(src, "get_runtime_stats")
+        ]
+        active_tracks = self.tracker.get_active_tracks()
+        tracks_by_cat = {"person": 0, "vehicle": 0, "animal": 0}
+        for tr in active_tracks:
+            if tr.class_label == "person":
+                tracks_by_cat["person"] += 1
+            elif tr.class_label in ("car", "truck", "motorbike"):
+                tracks_by_cat["vehicle"] += 1
+            else:
+                tracks_by_cat["animal"] += 1
+        bio_diag = (
+            self.biometric_coordinator.get_diagnostics()
+            if self.biometric_coordinator is not None
+            else {}
+        )
+        rec_diag = (
+            self.recorder_coordinator.get_diagnostics()
+            if self.recorder_coordinator is not None
+            else {}
+        )
+        return {
+            "ingestion_mode": self.ingestion_mode,
+            "camera_stats": cam_stats,
+            "fps_snapshot": self.fps_scheduler.get_snapshot(),
+            "active_tracks_count": len(active_tracks),
+            "tracks_by_category": tracks_by_cat,
+            "biometrics_diag": bio_diag,
+            "nvr_ram_buffer_mb": float(rec_diag.get("ram_buffer_total_mb") or 0.0),
+            "ws_clients_count": len(self.ws_clients),
+            "counters": {
+                "person_detections": self.det_counts_by_category.get("person", 0),
+                "vehicle_detections": self.det_counts_by_category.get("vehicle", 0),
+                "animal_detections": self.det_counts_by_category.get("animal", 0),
+                "biometrics_evaluated": int(bio_diag.get("evaluated_total") or 0),
+                "batches_processed": self.batches_processed_count,
+            },
+        }
+
+    async def _on_telemetry_entities_updated(self, entities: list[dict[str, Any]], publish_ha: bool) -> None:
+        self.automation_engine.sync_telemetry_states(entities)
+        if not publish_ha:
+            return
+        if self.mqtt_bridge.is_connected():
+            await self.mqtt_bridge.publish_telemetry_entities(entities)
+        elif self.ha_bridge.is_connected():
+            await self.ha_bridge.publish_sensor_states(entities)
 
     async def _on_ha_bridge_states_batch(self, states: dict[str, dict[str, Any]], trigger_on_diff: bool) -> None:
         await self.automation_engine.sync_ha_states_batch(states, trigger_on_diff=trigger_on_diff)
@@ -519,8 +584,10 @@ class SpatialPipelineService:
         await self.automation_engine.start()
         self._flush_task = asyncio.create_task(self._db_flush_loop())
         await self.set_ingestion_mode(self.ingestion_mode)
+        await self.telemetry_service.start()
 
     async def stop(self) -> None:
+        await self.telemetry_service.stop()
         await self._stop_sources()
         await self.automation_engine.stop()
         await self.ha_bridge.stop()
@@ -935,6 +1002,14 @@ class SpatialPipelineService:
         obs_meta: list[tuple[DetectionEvent, float]] = []
         now_ts = max(e.timestamp for e in events)
         self.raw_detections_count += len(events)
+        self.batches_processed_count += 1
+        for evt in events:
+            if evt.class_label == "person":
+                self.det_counts_by_category["person"] += 1
+            elif evt.class_label in ("car", "truck", "motorbike"):
+                self.det_counts_by_category["vehicle"] += 1
+            else:
+                self.det_counts_by_category["animal"] += 1
 
         for evt in events:
             model = self.optical_models.get(evt.camera_id)
@@ -1689,6 +1764,12 @@ class SpatialPipelineService:
                             extra_relpaths=scene_rels,
                         ),
                     )
+                    cutoff_metrics = time.time() - self.config.metrics_retention_days * 86400
+                    await loop.run_in_executor(
+                        None,
+                        self.repository.prune_system_metrics_older_than,
+                        cutoff_metrics,
+                    )
                     last_prune = now_mono
             except asyncio.CancelledError:
                 break
@@ -2084,8 +2165,53 @@ def create_app(config: Optional[SpatialServerConfig] = None) -> FastAPI:
                 if service.research_collector is not None
                 else {"enabled": False}
             ),
+            "system_metrics": service.telemetry_service.get_latest_snapshot().to_dict(),
             "git": _get_git_version_info(REPO_ROOT, limit=5),
         }
+
+    @app.get("/api/v1/metrics/entities")
+    async def get_metrics_entities(
+        response: Response,
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        """Return current PC Fisso & Spatial CV telemetry entities (for UI, HA, and automations)."""
+        snap = service.telemetry_service.collect_sample_once()
+        entities = service.telemetry_service.build_entities(snap)
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "ok",
+            "timestamp": round(snap.timestamp, 3),
+            "current": snap.to_dict(),
+            "entities": entities,
+            "bridges": {
+                "ha_bridge_connected": service.ha_bridge.is_connected(),
+                "mqtt_bridge_connected": service.mqtt_bridge.is_connected(),
+                "ha_publish_interval_s": service.config.metrics_ha_publish_interval_s,
+            },
+            "sampling": {
+                "sample_interval_s": service.config.metrics_sample_interval_s,
+                "persist_interval_s": service.config.metrics_persist_interval_s,
+                "ram_window_s": service.config.metrics_ram_window_s,
+                "retention_days": service.config.metrics_retention_days,
+            },
+        }
+
+    @app.get("/api/v1/metrics/history")
+    async def get_metrics_history(
+        response: Response,
+        window_s: int = Query(default=300, ge=30, le=30 * 86400),
+        max_points: int = Query(default=180, ge=20, le=500),
+        _user: HAUserPrincipal = Depends(require_authenticated_user),
+    ) -> dict[str, Any]:
+        """Return time-series PC CPU/GPU/RAM & CV recognition FPS/latency metrics."""
+        payload = service.telemetry_service.query_timeseries(window_s=window_s, max_points=max_points)
+        payload["bridges"] = {
+            "ha_bridge_connected": service.ha_bridge.is_connected(),
+            "mqtt_bridge_connected": service.mqtt_bridge.is_connected(),
+            "ha_publish_interval_s": service.config.metrics_ha_publish_interval_s,
+        }
+        response.headers["Cache-Control"] = "no-store"
+        return payload
 
     @app.get("/api/v1/version")
     async def get_server_version(

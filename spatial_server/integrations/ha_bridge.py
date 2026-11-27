@@ -59,6 +59,7 @@ class HomeAssistantBridgeService:
         self._tts_entities: list[dict[str, str]] = []
         self._action_entities: list[dict[str, str]] = []
         self._states_snapshot: dict[str, dict[str, Any]] = {}
+        self._last_published_sensor_states: dict[str, tuple[str, float]] = {}
 
     def _candidate_base_urls(self) -> list[str]:
         candidates: list[str] = []
@@ -203,6 +204,50 @@ class HomeAssistantBridgeService:
             except Exception as exc:
                 last_err = f"{type(exc).__name__} ({base})"
         return False, last_err
+
+    async def publish_sensor_states(self, entities: list[dict[str, Any]]) -> int:
+        """Publish spatial server diagnostic sensor entities directly to Home Assistant REST `/api/states`."""
+        token = (self.config.ha_token or "").strip()
+        if not self._connected or not token or not entities:
+            return 0
+        bases = self._candidate_base_urls()
+        if not bases:
+            return 0
+
+        base = self._active_base_url if self._active_base_url in bases else bases[0]
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        published = 0
+        for ent in entities:
+            eid = str(ent.get("entity_id") or "").strip()
+            if not eid or "." not in eid:
+                continue
+            state_val = ent.get("state")
+            state_str = "unavailable" if state_val is None else str(state_val)
+            attrs: dict[str, Any] = dict(ent.get("attributes") or {})
+            attrs["friendly_name"] = str(ent.get("name") or eid)
+            if ent.get("unit_of_measurement"):
+                attrs["unit_of_measurement"] = str(ent["unit_of_measurement"])
+            if ent.get("state_class"):
+                attrs["state_class"] = str(ent["state_class"])
+            if ent.get("icon"):
+                attrs["icon"] = str(ent["icon"])
+            attrs["source"] = "smart_home_3d"
+            try:
+                resp = await self._http_client.post(
+                    f"{base}/api/states/{eid}",
+                    json={"state": state_str, "attributes": attrs},
+                    headers=headers,
+                )
+                if 200 <= resp.status_code < 300:
+                    self._last_published_sensor_states[eid] = (state_str, float(ent.get("updated_at") or 0.0))
+                    published += 1
+            except Exception as exc:
+                logger.debug("HA publish_sensor_states(%s) skipped: %s", eid, exc)
+                break
+        return published
 
     async def handle_notification_action_event(self, event_data: dict[str, Any]) -> None:
         action_name = str((event_data or {}).get("action") or "").strip()

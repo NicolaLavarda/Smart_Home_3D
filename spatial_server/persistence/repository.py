@@ -235,6 +235,45 @@ class SQLiteWALTrackRepository(ITrackRepository):
             cur.execute("CREATE INDEX IF NOT EXISTS idx_scene_events_importance ON scene_events(importance, started_at DESC);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_scene_events_status ON scene_events(status, ended_at DESC);")
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS system_metrics_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    cpu_pct REAL NOT NULL,
+                    gpu_pct REAL,
+                    gpu_mem_mb REAL,
+                    ram_pct REAL NOT NULL,
+                    ram_used_mb REAL NOT NULL,
+                    proc_cpu_pct REAL NOT NULL,
+                    proc_rss_mb REAL NOT NULL,
+                    cv_fps_total REAL NOT NULL,
+                    cv_fps_target REAL NOT NULL,
+                    cv_fps_person REAL NOT NULL,
+                    cv_fps_vehicle REAL NOT NULL,
+                    cv_fps_idle REAL NOT NULL,
+                    cv_read_fps REAL NOT NULL,
+                    cv_infer_ms REAL NOT NULL,
+                    cv_infer_ms_max REAL NOT NULL,
+                    person_det_fps REAL NOT NULL,
+                    vehicle_det_fps REAL NOT NULL,
+                    animal_det_fps REAL NOT NULL,
+                    bio_fps REAL NOT NULL,
+                    bio_face_ms REAL NOT NULL,
+                    bio_alpr_ms REAL NOT NULL,
+                    bio_queue REAL NOT NULL,
+                    tracks_total REAL NOT NULL,
+                    tracks_person REAL NOT NULL,
+                    tracks_vehicle REAL NOT NULL,
+                    tracks_animal REAL NOT NULL,
+                    nvr_ram_mb REAL NOT NULL,
+                    ws_clients REAL NOT NULL,
+                    cameras_json TEXT NOT NULL DEFAULT '{}'
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sys_metrics_ts ON system_metrics_history(timestamp);")
+
             try:
                 cur.execute(
                     """
@@ -1376,6 +1415,232 @@ class SQLiteWALTrackRepository(ITrackRepository):
             if deleted > 0:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             return deleted, relpaths
+
+    # --- System & CV Telemetry Persistence ---
+
+    def append_system_metrics_sample(self, sample: dict[str, Any]) -> int:
+        ts = float(sample.get("t") or sample.get("timestamp") or time.time())
+        cams_json = json.dumps(sample.get("cameras") or {}, ensure_ascii=False, separators=(",", ":"))
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO system_metrics_history (
+                    timestamp, cpu_pct, gpu_pct, gpu_mem_mb, ram_pct, ram_used_mb,
+                    proc_cpu_pct, proc_rss_mb, cv_fps_total, cv_fps_target,
+                    cv_fps_person, cv_fps_vehicle, cv_fps_idle, cv_read_fps,
+                    cv_infer_ms, cv_infer_ms_max, person_det_fps, vehicle_det_fps,
+                    animal_det_fps, bio_fps, bio_face_ms, bio_alpr_ms, bio_queue,
+                    tracks_total, tracks_person, tracks_vehicle, tracks_animal,
+                    nvr_ram_mb, ws_clients, cameras_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    ts,
+                    float(sample.get("cpu_pct") or 0.0),
+                    float(sample["gpu_pct"]) if sample.get("gpu_pct") is not None else None,
+                    float(sample["gpu_mem_mb"]) if sample.get("gpu_mem_mb") is not None else None,
+                    float(sample.get("ram_pct") or 0.0),
+                    float(sample.get("ram_used_mb") or 0.0),
+                    float(sample.get("proc_cpu_pct") or 0.0),
+                    float(sample.get("proc_rss_mb") or 0.0),
+                    float(sample.get("cv_fps_total") or 0.0),
+                    float(sample.get("cv_fps_target") or 0.0),
+                    float(sample.get("cv_fps_person") or 0.0),
+                    float(sample.get("cv_fps_vehicle") or 0.0),
+                    float(sample.get("cv_fps_idle") or 0.0),
+                    float(sample.get("cv_read_fps") or 0.0),
+                    float(sample.get("cv_infer_ms") or 0.0),
+                    float(sample.get("cv_infer_ms_max") or 0.0),
+                    float(sample.get("person_det_fps") or 0.0),
+                    float(sample.get("vehicle_det_fps") or 0.0),
+                    float(sample.get("animal_det_fps") or 0.0),
+                    float(sample.get("bio_fps") or 0.0),
+                    float(sample.get("bio_face_ms") or 0.0),
+                    float(sample.get("bio_alpr_ms") or 0.0),
+                    float(sample.get("bio_queue") or 0.0),
+                    float(sample.get("tracks_total") or 0.0),
+                    float(sample.get("tracks_person") or 0.0),
+                    float(sample.get("tracks_vehicle") or 0.0),
+                    float(sample.get("tracks_animal") or 0.0),
+                    float(sample.get("nvr_ram_mb") or 0.0),
+                    float(sample.get("ws_clients") or 0.0),
+                    cams_json,
+                ),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid or 0)
+
+    def query_system_metrics(
+        self,
+        t_start: float,
+        t_end: float,
+        *,
+        max_points: int = 180,
+    ) -> list[dict[str, Any]]:
+        start_f = float(t_start)
+        end_f = float(t_end)
+        eff_max = max(10, min(int(max_points), 500))
+
+        with self._lock:
+            cnt_row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM system_metrics_history WHERE timestamp >= ? AND timestamp <= ?;",
+                (start_f, end_f),
+            ).fetchone()
+            total_rows = int(cnt_row["cnt"] if cnt_row else 0)
+            if total_rows == 0:
+                return []
+
+            if total_rows <= eff_max:
+                rows = self._conn.execute(
+                    """
+                    SELECT *
+                    FROM system_metrics_history
+                    WHERE timestamp >= ? AND timestamp <= ?
+                    ORDER BY timestamp ASC;
+                    """,
+                    (start_f, end_f),
+                ).fetchall()
+                out: list[dict[str, Any]] = []
+                for r in rows:
+                    try:
+                        cams = json.loads(r["cameras_json"] or "{}")
+                    except Exception:
+                        cams = {}
+                    ts_val = round(float(r["timestamp"]), 3)
+                    out.append(
+                        {
+                            "t": ts_val,
+                            "timestamp": ts_val,
+                            "cpu_pct": round(float(r["cpu_pct"]), 1),
+                            "gpu_pct": round(float(r["gpu_pct"]), 1) if r["gpu_pct"] is not None else None,
+                            "gpu_mem_mb": round(float(r["gpu_mem_mb"]), 1) if r["gpu_mem_mb"] is not None else None,
+                            "ram_pct": round(float(r["ram_pct"]), 1),
+                            "ram_used_mb": round(float(r["ram_used_mb"]), 1),
+                            "proc_cpu_pct": round(float(r["proc_cpu_pct"]), 1),
+                            "proc_rss_mb": round(float(r["proc_rss_mb"]), 1),
+                            "cv_fps_total": round(float(r["cv_fps_total"]), 2),
+                            "cv_fps_target": round(float(r["cv_fps_target"]), 2),
+                            "cv_fps_person": round(float(r["cv_fps_person"]), 2),
+                            "cv_fps_vehicle": round(float(r["cv_fps_vehicle"]), 2),
+                            "cv_fps_idle": round(float(r["cv_fps_idle"]), 2),
+                            "cv_read_fps": round(float(r["cv_read_fps"]), 2),
+                            "cv_infer_ms": round(float(r["cv_infer_ms"]), 2),
+                            "cv_infer_ms_max": round(float(r["cv_infer_ms_max"]), 2),
+                            "person_det_fps": round(float(r["person_det_fps"]), 2),
+                            "vehicle_det_fps": round(float(r["vehicle_det_fps"]), 2),
+                            "animal_det_fps": round(float(r["animal_det_fps"]), 2),
+                            "bio_fps": round(float(r["bio_fps"]), 2),
+                            "bio_face_ms": round(float(r["bio_face_ms"]), 2),
+                            "bio_alpr_ms": round(float(r["bio_alpr_ms"]), 2),
+                            "bio_queue": round(float(r["bio_queue"]), 1),
+                            "tracks_total": round(float(r["tracks_total"]), 1),
+                            "tracks_person": round(float(r["tracks_person"]), 1),
+                            "tracks_vehicle": round(float(r["tracks_vehicle"]), 1),
+                            "tracks_animal": round(float(r["tracks_animal"]), 1),
+                            "nvr_ram_mb": round(float(r["nvr_ram_mb"]), 1),
+                            "ws_clients": round(float(r["ws_clients"]), 1),
+                            "cameras": cams,
+                        }
+                    )
+                return out
+
+            span = max(end_f - start_f, 1.0)
+            step = span / float(eff_max)
+            rows = self._conn.execute(
+                """
+                SELECT
+                    CAST((timestamp - ?) / ? AS INTEGER) AS bucket_idx,
+                    AVG(timestamp) AS avg_ts,
+                    AVG(cpu_pct) AS cpu_pct,
+                    AVG(gpu_pct) AS gpu_pct,
+                    AVG(gpu_mem_mb) AS gpu_mem_mb,
+                    AVG(ram_pct) AS ram_pct,
+                    AVG(ram_used_mb) AS ram_used_mb,
+                    AVG(proc_cpu_pct) AS proc_cpu_pct,
+                    AVG(proc_rss_mb) AS proc_rss_mb,
+                    AVG(cv_fps_total) AS cv_fps_total,
+                    AVG(cv_fps_target) AS cv_fps_target,
+                    AVG(cv_fps_person) AS cv_fps_person,
+                    AVG(cv_fps_vehicle) AS cv_fps_vehicle,
+                    AVG(cv_fps_idle) AS cv_fps_idle,
+                    AVG(cv_read_fps) AS cv_read_fps,
+                    AVG(cv_infer_ms) AS cv_infer_ms,
+                    MAX(cv_infer_ms_max) AS cv_infer_ms_max,
+                    AVG(person_det_fps) AS person_det_fps,
+                    AVG(vehicle_det_fps) AS vehicle_det_fps,
+                    AVG(animal_det_fps) AS animal_det_fps,
+                    AVG(bio_fps) AS bio_fps,
+                    AVG(bio_face_ms) AS bio_face_ms,
+                    AVG(bio_alpr_ms) AS bio_alpr_ms,
+                    AVG(bio_queue) AS bio_queue,
+                    AVG(tracks_total) AS tracks_total,
+                    AVG(tracks_person) AS tracks_person,
+                    AVG(tracks_vehicle) AS tracks_vehicle,
+                    AVG(tracks_animal) AS tracks_animal,
+                    AVG(nvr_ram_mb) AS nvr_ram_mb,
+                    AVG(ws_clients) AS ws_clients
+                FROM system_metrics_history
+                WHERE timestamp >= ? AND timestamp <= ?
+                GROUP BY bucket_idx
+                ORDER BY bucket_idx ASC;
+                """,
+                (start_f, step, start_f, end_f),
+            ).fetchall()
+
+        out_agg: list[dict[str, Any]] = []
+        for r in rows:
+            ts_val = round(float(r["avg_ts"]), 3)
+            out_agg.append(
+                {
+                    "t": ts_val,
+                    "timestamp": ts_val,
+                    "cpu_pct": round(float(r["cpu_pct"]), 1),
+                    "gpu_pct": round(float(r["gpu_pct"]), 1) if r["gpu_pct"] is not None else None,
+                    "gpu_mem_mb": round(float(r["gpu_mem_mb"]), 1) if r["gpu_mem_mb"] is not None else None,
+                    "ram_pct": round(float(r["ram_pct"]), 1),
+                    "ram_used_mb": round(float(r["ram_used_mb"]), 1),
+                    "proc_cpu_pct": round(float(r["proc_cpu_pct"]), 1),
+                    "proc_rss_mb": round(float(r["proc_rss_mb"]), 1),
+                    "cv_fps_total": round(float(r["cv_fps_total"]), 2),
+                    "cv_fps_target": round(float(r["cv_fps_target"]), 2),
+                    "cv_fps_person": round(float(r["cv_fps_person"]), 2),
+                    "cv_fps_vehicle": round(float(r["cv_fps_vehicle"]), 2),
+                    "cv_fps_idle": round(float(r["cv_fps_idle"]), 2),
+                    "cv_read_fps": round(float(r["cv_read_fps"]), 2),
+                    "cv_infer_ms": round(float(r["cv_infer_ms"]), 2),
+                    "cv_infer_ms_max": round(float(r["cv_infer_ms_max"]), 2),
+                    "person_det_fps": round(float(r["person_det_fps"]), 2),
+                    "vehicle_det_fps": round(float(r["vehicle_det_fps"]), 2),
+                    "animal_det_fps": round(float(r["animal_det_fps"]), 2),
+                    "bio_fps": round(float(r["bio_fps"]), 2),
+                    "bio_face_ms": round(float(r["bio_face_ms"]), 2),
+                    "bio_alpr_ms": round(float(r["bio_alpr_ms"]), 2),
+                    "bio_queue": round(float(r["bio_queue"]), 1),
+                    "tracks_total": round(float(r["tracks_total"]), 1),
+                    "tracks_person": round(float(r["tracks_person"]), 1),
+                    "tracks_vehicle": round(float(r["tracks_vehicle"]), 1),
+                    "tracks_animal": round(float(r["tracks_animal"]), 1),
+                    "nvr_ram_mb": round(float(r["nvr_ram_mb"]), 1),
+                    "ws_clients": round(float(r["ws_clients"]), 1),
+                }
+            )
+        return out_agg
+
+    def get_system_metrics_count(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS cnt FROM system_metrics_history;").fetchone()
+            return int(row["cnt"] if row else 0)
+
+    def prune_system_metrics_older_than(self, cutoff_timestamp: float) -> int:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("DELETE FROM system_metrics_history WHERE timestamp < ?;", (float(cutoff_timestamp),))
+            deleted = int(cur.rowcount or 0)
+            self._conn.commit()
+            if deleted > 0:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            return deleted
 
     def close(self) -> None:
         with self._lock:

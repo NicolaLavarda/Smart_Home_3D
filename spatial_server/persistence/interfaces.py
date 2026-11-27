@@ -238,4 +238,29 @@ class ITrackRepository(ABC):
         """Delete expired scene_events rows and return (deleted_count, snapshot_relpaths)."""
         return (0, [])
 
+    # --- System & CV Telemetry Persistence ---
+
+    def append_system_metrics_sample(self, sample: dict[str, Any]) -> int:
+        """Persist one downsampled PC/CV telemetry sample row."""
+        return 0
+
+    def query_system_metrics(
+        self,
+        t_start: float,
+        t_end: float,
+        *,
+        max_points: int = 180,
+    ) -> list[dict[str, Any]]:
+        """Query persisted system metrics across [t_start, t_end] downsampled to <= max_points."""
+        return []
+
+    def get_system_metrics_count(self) -> int:
+        """Return total persisted system metrics samples."""
+        return 0
+
+    def prune_system_metrics_older_than(self, cutoff_timestamp: float) -> int:
+        """Delete expired system metrics rows older than cutoff_timestamp."""
+        return 0
+
+
 

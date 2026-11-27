@@ -321,6 +321,7 @@ class AutomationEngineService:
         self.virtual_entities: dict[str, VirtualEntityDefinition] = {}
         self.rules: dict[str, AutomationRuleDefinition] = {}
         self.ha_states: dict[str, EntityStateSnapshot] = {}
+        self._telemetry_states: dict[str, EntityStateSnapshot] = {}
 
         # Per-(rule_id, trigger_id) stateful evaluator memory
         self._trigger_runtime_state: dict[tuple[str, str], dict[str, Any]] = {}
@@ -791,7 +792,7 @@ class AutomationEngineService:
             kinematics_buffer=self.kinematics_buffer,
             zones=self.zones,
             virtual_entities=self.virtual_entities,
-            ha_states=self.ha_states,
+            ha_states={**self._telemetry_states, **self.ha_states},
             astronomical_clock=self.astronomical_clock,
             known_identities_lower=self._get_known_identities_lower(),
             whitelisted_plates_upper=self._get_whitelisted_plates_upper(),
@@ -802,6 +803,25 @@ class AutomationEngineService:
             scene_event=eff_scene_ev,
             scene_lifecycle_events=list(scene_lifecycle_events or []),
         )
+
+    def sync_telemetry_states(self, entities: list[dict[str, Any]]) -> None:
+        """Mirror server telemetry sensor entities into in-memory evaluation state without touching SQLite."""
+        now_ts = time.time()
+        for ent in entities:
+            eid = str(ent.get("entity_id") or "").strip()
+            if not eid:
+                continue
+            state_val = ent.get("state")
+            state_str = "unavailable" if state_val is None else str(state_val)
+            prev = self._telemetry_states.get(eid)
+            changed_at = prev.last_changed if (prev is not None and prev.state == state_str) else float(ent.get("updated_at") or now_ts)
+            self._telemetry_states[eid] = EntityStateSnapshot(
+                entity_id=eid,
+                state=state_str,
+                attributes=dict(ent.get("attributes") or {}),
+                last_changed=changed_at,
+                source="telemetry",
+            )
 
     def _active_scene_event_id(self, ctx: EvaluationContext) -> Optional[str]:
         if ctx.scene_event is not None:
